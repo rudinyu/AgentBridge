@@ -171,7 +171,7 @@ public enum AgentBridgeError: Error, LocalizedError, Equatable {
         switch self {
         case .invalidInput(let message): message
         case .missingExecutable(let provider): "找不到 \(provider.rawValue) CLI，請在設定中指定執行檔路徑。"
-        case .unsupportedAPIUsage: "AgentBridge 0.2.0 不支援這項 API 付費操作；本次未呼叫模型服務。"
+        case .unsupportedAPIUsage: "AgentBridge 0.3.0 不支援這項 API 付費操作；本次未呼叫模型服務。"
         case .unauthenticated(let provider, let reason): "\(provider.rawValue) 沒有可確認的訂閱登入：\(reason)"
         case .unsupportedProviderOutput(let provider): "\(provider.rawValue) CLI 回傳無法確認成功的輸出格式。"
         case .providerFailed(let provider, let reason): "\(provider.rawValue) 執行失敗：\(reason)"

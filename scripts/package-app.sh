@@ -36,16 +36,41 @@ if [[ -z "$RESOURCE_BUNDLE" ]]; then
 fi
 cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/SwiftTerm_SwiftTerm.bundle"
 cp "$ROOT/LICENSES/SwiftTerm-LICENSE.txt" "$APP/Contents/Resources/SwiftTerm-LICENSE.txt"
+ICON_SOURCE="$ROOT/Assets/AppIcon-1024.png"
+ICONSET="$ROOT/build/tmp/AgentBridge-$$.iconset"
+if [[ ! -f "$ICON_SOURCE" ]]; then
+  printf 'Missing app icon source: %s\n' "$ICON_SOURCE" >&2
+  exit 1
+fi
+mkdir "$ICONSET"
+trap 'rm -rf "$ICONSET"' EXIT
+make_icon() {
+  local pixels="$1"
+  local filename="$2"
+  sips -z "$pixels" "$pixels" "$ICON_SOURCE" --out "$ICONSET/$filename" >/dev/null
+}
+make_icon 16 icon_16x16.png
+make_icon 32 icon_16x16@2x.png
+make_icon 32 icon_32x32.png
+make_icon 64 icon_32x32@2x.png
+make_icon 128 icon_128x128.png
+make_icon 256 icon_128x128@2x.png
+make_icon 256 icon_256x256.png
+make_icon 512 icon_256x256@2x.png
+make_icon 512 icon_512x512.png
+make_icon 1024 icon_512x512@2x.png
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AgentBridge.icns"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>AgentBridgeApp</string>
+  <key>CFBundleIconFile</key><string>AgentBridge.icns</string>
   <key>CFBundleIdentifier</key><string>org.agentbridge.app</string>
   <key>CFBundleName</key><string>AgentBridge</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.2.0</string>
+  <key>CFBundleShortVersionString</key><string>0.3.0</string>
   <key>CFBundleVersion</key><string>2</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>

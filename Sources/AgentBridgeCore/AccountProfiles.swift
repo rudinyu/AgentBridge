@@ -170,11 +170,11 @@ public final class AccountProfileStore: @unchecked Sendable {
     }
 
     /// Creates a separate provider configuration directory. Custom profiles
-    /// start with shared memory disabled and are not selected automatically.
+    /// allow shared memory by default and are not selected automatically.
     public func create(
         name: String,
         provider: AgentProvider,
-        allowsSharedMemory: Bool = false
+        allowsSharedMemory: Bool = true
     ) throws -> AccountProfile {
         let normalizedName = try Self.normalizedName(name)
         return try withStoreLock {
@@ -242,7 +242,7 @@ public final class AccountProfileStore: @unchecked Sendable {
     }
 
     /// Updates shared-memory consent for either a custom profile or a built-in
-    /// provider profile. Custom profiles are opt-in; built-ins start enabled.
+    /// provider profile. New custom profiles and built-ins start enabled.
     public func setSharedMemoryAllowed(id: UUID, allowed: Bool) throws {
         try withStoreLock {
             var document = try readDocument()

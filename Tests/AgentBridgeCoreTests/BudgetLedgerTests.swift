@@ -88,6 +88,30 @@ final class BudgetLedgerTests: XCTestCase {
         }
     }
 
+    func testManualSessionSettlementListsPendingReservationAndIsIdempotent() throws {
+        let root = try makeTemporaryRoot()
+        defer { removeTemporaryRoot(root) }
+        let ledger = try BudgetLedger(rootURL: root, monthlyLimitUSD: 25)
+        let sessionID = UUID()
+        let reservation = try ledger.reserve(sessionID: sessionID, requestedUSD: 2, explicitlyAuthorized: true)
+
+        XCTAssertEqual(try ledger.unresolvedReservations().map(\.sessionID), [sessionID])
+        XCTAssertTrue(try ledger.reconcile(sessionID: sessionID, actualUSD: 1.25))
+        XCTAssertTrue(try ledger.reconcile(sessionID: sessionID, actualUSD: 1.25))
+        XCTAssertFalse(try ledger.reconcile(sessionID: UUID(), actualUSD: 1.25))
+        XCTAssertTrue(try ledger.unresolvedReservations().isEmpty)
+        XCTAssertEqual(try ledger.snapshot().usedUSD, 1.25, accuracy: 0.000_001)
+        XCTAssertEqual(try ledger.snapshot().reservedUSD, 0, accuracy: 0.000_001)
+        XCTAssertThrowsError(try ledger.reconcile(sessionID: sessionID, actualUSD: 1.5)) {
+            XCTAssertEqual($0 as? BudgetLedgerError, .conflictingReconciliation(reservation.id))
+        }
+        for invalid in [-0.01, .infinity, .nan] {
+            XCTAssertThrowsError(try ledger.reconcile(sessionID: sessionID, actualUSD: invalid)) {
+                XCTAssertEqual($0 as? BudgetLedgerError, .invalidActualCost)
+            }
+        }
+    }
+
     func testOutstandingReservationCarriesAcrossMonthAndCostUsesReconciliationMonth() throws {
         let root = try makeTemporaryRoot()
         defer { removeTemporaryRoot(root) }

@@ -163,6 +163,40 @@ public enum ProviderCommandBuilder {
         return arguments
     }
 
+    /// Starts the native Codex TUI in an empty directory with read-only
+    /// permissions. No prompt or subcommand is supplied so slash commands
+    /// remain available for user invocation.
+    public static func codexUsageArguments(workingDirectory: String) throws -> [String] {
+        try validateWorkingDirectory(workingDirectory)
+        return [
+            "--no-daemon",
+            "--disable", "hooks", "--disable", "plugins", "--disable", "apps",
+            "--disable", "skill_mcp_dependency_install", "--disable", "in_app_browser",
+            "--sandbox", "read-only", "--ask-for-approval", "never", "--cd", workingDirectory,
+            "-c", "forced_login_method=\"chatgpt\"",
+            "-c", "model_provider=\"openai\""
+        ]
+    }
+
+    /// Starts Claude Code's native TUI without loading user customizations or
+    /// tools. Deliberately leaves slash commands enabled for /usage.
+    public static func claudeUsageArguments() -> [String] {
+        [
+            "--restricted", "--safe-mode", "--setting-sources", "",
+            "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
+            "--no-chrome", "--no-session-persistence",
+            "--settings", "{\"disableAllHooks\":true,\"apiKeyHelper\":\"\",\"forceLoginMethod\":\"claudeai\"}",
+            "--permission-mode", "plan", "--tools", ""
+        ]
+    }
+
+    private static func validateWorkingDirectory(_ value: String) throws {
+        guard value.hasPrefix("/"), !value.contains("\0"),
+              !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+            throw AgentBridgeError.invalidInput("Usage TUI working directory is invalid.")
+        }
+    }
+
     private static func validatedContextFilePath(_ path: String) throws -> String {
         guard path.hasPrefix("/"), !path.contains("\0"),
               !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
@@ -611,6 +645,35 @@ public final class ProviderAdapter: Sendable {
         )
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
         guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "互動 CLI 結束代碼 \(result.exitCode)。") }
+        return result
+    }
+
+    public func runUsageTUI(
+        provider: AgentProvider,
+        executableURL: URL,
+        environment: [String: String],
+        workingDirectoryURL: URL,
+        cancellation: CancellationFlag = CancellationFlag()
+    ) async throws -> ProcessResult {
+        let arguments: [String]
+        switch provider {
+        case .codex:
+            arguments = try ProviderCommandBuilder.codexUsageArguments(workingDirectory: workingDirectoryURL.path)
+        case .claude:
+            arguments = ProviderCommandBuilder.claudeUsageArguments()
+        }
+        let result = try await runner.runInteractive(
+            executableURL: executableURL,
+            arguments: arguments,
+            environment: environment,
+            workingDirectoryURL: workingDirectoryURL,
+            cancellationRequestURL: nil,
+            cancellation: cancellation
+        )
+        if result.wasCancelled { throw AgentBridgeError.processCancelled }
+        guard result.exitCode == 0 else {
+            throw AgentBridgeError.providerFailed(provider, "互動 usage CLI 結束代碼 \(result.exitCode)。")
+        }
         return result
     }
 }

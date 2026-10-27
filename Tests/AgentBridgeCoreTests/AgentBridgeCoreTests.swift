@@ -89,6 +89,172 @@ final class AgentBridgeCoreTests: XCTestCase {
         XCTAssertThrowsError(try ProviderCommandBuilder.claudeAPIArguments(workspacePath: workspace, budgetUSD: 1.001))
     }
 
+    func testUsageTUIRefusesAPIAndCrossProviderLaunchesBeforeStartingAProcess() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AgentBridge-UsageTUI-\(UUID().uuidString.lowercased())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try AuditStore(rootURL: root)
+        let service = try BridgeService(store: store)
+        var settings = try service.settings()
+        settings.defaultProvider = .claude
+        settings.usageMode = .api
+        try service.saveSettings(settings)
+
+        do {
+            _ = try await service.runUsageTUI(
+                provider: .claude,
+                profileID: AccountProfile.defaultID(for: .claude)
+            )
+            XCTFail("Claude API mode opened a subscription usage TUI.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch = error else {
+                return XCTFail("Unexpected error for API mode: \(error)")
+            }
+        }
+
+        settings.defaultProvider = .codex
+        settings.usageMode = .subscription
+        try service.saveSettings(settings)
+        do {
+            _ = try await service.runUsageTUI(
+                provider: .claude,
+                profileID: AccountProfile.defaultID(for: .claude)
+            )
+            XCTFail("A non-selected provider opened a usage TUI.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch = error else {
+                return XCTFail("Unexpected error for cross-provider launch: \(error)")
+            }
+        }
+    }
+
+    func testUsageTUIArgumentsAreInteractiveReadOnlyAndKeepSlashCommandsEnabled() throws {
+        let workingDirectory = "/tmp/AgentBridge usage;$(touch /tmp/should-not-exist)"
+        let codex = try ProviderCommandBuilder.codexUsageArguments(workingDirectory: workingDirectory)
+        XCTAssertEqual(codex[codex.firstIndex(of: "--cd")! + 1], workingDirectory)
+        XCTAssertTrue(codex.contains("read-only"))
+        XCTAssertTrue(codex.contains("never"))
+        XCTAssertTrue(codex.contains("--no-daemon"))
+        XCTAssertFalse(codex.contains("exec"))
+        XCTAssertFalse(codex.contains("--ignore-user-config"))
+        XCTAssertTrue(positionalArguments(in: codex, valueOptions: [
+            "--disable", "--sandbox", "--ask-for-approval", "--cd", "-c"
+        ]).isEmpty)
+        XCTAssertThrowsError(try ProviderCommandBuilder.codexUsageArguments(workingDirectory: "relative/path"))
+        XCTAssertThrowsError(try ProviderCommandBuilder.codexUsageArguments(workingDirectory: "/tmp/bad\npath"))
+
+        let claude = ProviderCommandBuilder.claudeUsageArguments()
+        XCTAssertTrue(claude.contains("--restricted"))
+        XCTAssertTrue(claude.contains("--safe-mode"))
+        XCTAssertTrue(claude.contains("--no-session-persistence"))
+        XCTAssertTrue(claude.contains("--permission-mode"))
+        XCTAssertEqual(claude[claude.firstIndex(of: "--permission-mode")! + 1], "plan")
+        XCTAssertEqual(claude[claude.firstIndex(of: "--tools")! + 1], "")
+        XCTAssertTrue(claude.contains("--strict-mcp-config"))
+        XCTAssertFalse(claude.contains("--disable-slash-commands"))
+        XCTAssertFalse(claude.contains("--print"))
+        XCTAssertFalse(claude.contains("-p"))
+        XCTAssertFalse(claude.contains("--console"))
+        XCTAssertTrue(claude.contains(where: { $0.contains("forceLoginMethod") && $0.contains("claudeai") }))
+        XCTAssertTrue(positionalArguments(in: claude, valueOptions: [
+            "--setting-sources", "--mcp-config", "--settings", "--permission-mode", "--tools"
+        ]).isEmpty)
+    }
+
+    func testProviderUsageReportParserRecognizesCodexFixtureWindowsAndPlan() throws {
+        let fixture = """
+        ChatGPT plan: Plus
+        5h limit: 42% used
+        Resets in 2h 10m
+        Weekly limit: 82% remaining
+        Resets in 5d 4h
+        Prompt completion: 99%
+        """
+        let profileID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let capturedAt = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let report = ProviderUsageReportParser.parse(
+            screenText: fixture,
+            provider: .codex,
+            accountProfileID: profileID,
+            accountName: "Personal Codex",
+            capturedAt: capturedAt
+        )
+
+        XCTAssertEqual(report.provider, .codex)
+        XCTAssertEqual(report.accountProfileID, profileID)
+        XCTAssertEqual(report.accountName, "Personal Codex")
+        XCTAssertEqual(report.plan, "Plus")
+        XCTAssertEqual(report.capturedAt, capturedAt)
+        XCTAssertEqual(report.source, "Codex CLI /usage screen")
+        XCTAssertEqual(report.status, .recognizedFields)
+        XCTAssertEqual(report.usageWindows.map(\.id), ["five-hour", "weekly"])
+        XCTAssertEqual(report.usageWindows[0].percentageUsed, 42)
+        XCTAssertEqual(report.usageWindows[0].resetText, "Resets in 2h 10m")
+        XCTAssertEqual(report.usageWindows[1].percentageUsed, 18)
+        XCTAssertEqual(report.usageWindows[1].resetText, "Resets in 5d 4h")
+    }
+
+    func testProviderUsageReportParserRecognizesClaudeFixtureWindowsAndIgnoresUnrelatedPercentages() throws {
+        let fixture = """
+        Claude Code usage
+        Plan: Pro
+        Current session
+        ███████ 37% used
+        Resets in 3h 40m
+        Current week (all models)
+        ████ 23% used
+        Resets in 4d 2h
+        Current week (Sonnet only)
+        ██████ 63% used
+        Resets in 4d 2h
+        Cache hit rate: 91%
+        """
+        let profileID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+
+        let report = ProviderUsageReportParser.parse(
+            screenText: fixture,
+            provider: .claude,
+            accountProfileID: profileID,
+            accountName: "Work Claude"
+        )
+
+        XCTAssertEqual(report.provider, .claude)
+        XCTAssertEqual(report.accountProfileID, profileID)
+        XCTAssertEqual(report.accountName, "Work Claude")
+        XCTAssertEqual(report.plan, "Pro")
+        XCTAssertEqual(report.source, "Claude Code /usage screen")
+        XCTAssertEqual(report.status, .recognizedFields)
+        XCTAssertEqual(report.usageWindows.map(\.id), [
+            "current-session", "current-week-all-models", "current-week-sonnet"
+        ])
+        XCTAssertEqual(report.usageWindows[0].percentageUsed, 37)
+        XCTAssertEqual(report.usageWindows[0].resetText, "Resets in 3h 40m")
+        XCTAssertEqual(report.usageWindows[1].percentageUsed, 23)
+        XCTAssertEqual(report.usageWindows[1].resetText, "Resets in 4d 2h")
+        XCTAssertEqual(report.usageWindows[2].percentageUsed, 63)
+        XCTAssertEqual(report.usageWindows[2].resetText, "Resets in 4d 2h")
+    }
+
+    func testProviderUsageReportParserDoesNotTreatArbitraryPercentagesAsQuota() throws {
+        let report = ProviderUsageReportParser.parse(
+            screenText: """
+            Cache hit rate: 91%
+            Build complete: 100%
+            Last 5h of tasks used 42%
+            15h limit: 88% used
+            Current week (all models): 63% used
+            """,
+            provider: .codex,
+            accountProfileID: UUID(),
+            accountName: "Codex"
+        )
+
+        XCTAssertNil(report.plan)
+        XCTAssertTrue(report.usageWindows.isEmpty)
+        XCTAssertEqual(report.status, .noRecognizedFields)
+    }
+
     func testEnvironmentWhitelistExcludesInheritedSecretsUnlessExplicitAPIRun() throws {
         let base = [
             "HOME": "/Users/tester",
@@ -99,6 +265,9 @@ final class AgentBridgeCoreTests: XCTestCase {
             "CODEX_HOME": "/Users/tester/.codex",
             "OPENAI_API_KEY": "should-not-pass",
             "ANTHROPIC_API_KEY": "also-should-not-pass",
+            "ANTHROPIC_AUTH_TOKEN": "also-not-passed",
+            "CLAUDE_CODE_OAUTH_TOKEN": "not-passed",
+            "CODEX_API_KEY": "not-passed",
             "CLAUDECODE": "nested",
             "AWS_SECRET_ACCESS_KEY": "not-passed",
             "HTTP_PROXY": "http://example.invalid"
@@ -110,12 +279,20 @@ final class AgentBridgeCoreTests: XCTestCase {
         XCTAssertEqual(codex["TMPDIR"], temp.path)
         XCTAssertNil(codex["OPENAI_API_KEY"])
         XCTAssertNil(codex["ANTHROPIC_API_KEY"])
+        XCTAssertNil(codex["ANTHROPIC_AUTH_TOKEN"])
+        XCTAssertNil(codex["CLAUDE_CODE_OAUTH_TOKEN"])
+        XCTAssertNil(codex["CODEX_API_KEY"])
+        XCTAssertNil(codex["CLAUDE_CONFIG_DIR"])
         XCTAssertNil(codex["AWS_SECRET_ACCESS_KEY"])
         XCTAssertNil(codex["HTTP_PROXY"])
         XCTAssertFalse(codex["PATH"]?.contains("/untrusted/path") ?? true)
 
         let subscriptionClaude = RuntimeEnvironment.sanitized(base: base, provider: .claude, privateTemporaryDirectory: temp)
         XCTAssertNil(subscriptionClaude["ANTHROPIC_API_KEY"])
+        XCTAssertNil(subscriptionClaude["ANTHROPIC_AUTH_TOKEN"])
+        XCTAssertNil(subscriptionClaude["CLAUDE_CODE_OAUTH_TOKEN"])
+        XCTAssertNil(subscriptionClaude["CODEX_API_KEY"])
+        XCTAssertNil(subscriptionClaude["CODEX_HOME"])
         let apiClaude = RuntimeEnvironment.sanitized(base: base, provider: .claude, privateTemporaryDirectory: temp, apiKey: "explicit-api-key")
         XCTAssertEqual(apiClaude["ANTHROPIC_API_KEY"], "explicit-api-key")
         let codexWithExplicitKey = RuntimeEnvironment.sanitized(base: base, provider: .codex, privateTemporaryDirectory: temp, apiKey: "explicit-api-key")
@@ -710,6 +887,7 @@ printf '{"type":"result","subtype":"success","result":"%s"}\n' "$response"
         let session = try await service.createSession(sourcePath: source.path, provider: .codex)
         XCTAssertEqual(session.accountProfileID, AccountProfile.defaultID(for: .codex))
         let alternate = try service.createAccountProfile(name: "Separate Codex", provider: .codex)
+        XCTAssertTrue(alternate.allowsSharedMemory)
         try service.selectAccountProfile(id: alternate.id, provider: .codex)
 
         do {

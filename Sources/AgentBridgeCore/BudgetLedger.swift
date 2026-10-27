@@ -145,6 +145,70 @@ public final class BudgetLedger: @unchecked Sendable {
         }
     }
 
+    /// Returns unresolved reservations without exposing or changing the stored
+    /// ledger schema. The session ID is the stable recovery key shared with
+    /// AgentBridge's audit records.
+    public func unresolvedReservations() throws -> [BudgetReservation] {
+        try withLedgerLock {
+            try readDocument().reservations
+                .filter { $0.actualMicros == nil }
+                .map(Self.publicReservation)
+        }
+    }
+
+    /// Checks whether a session has a reservation and rejects a conflicting
+    /// prior settlement without changing the ledger.
+    public func validateSessionReconciliation(sessionID: UUID, actualUSD: Double) throws -> Bool {
+        guard actualUSD.isFinite, actualUSD >= 0,
+              let actual = Self.microDollars(actualUSD, rounding: .up) else {
+            throw BudgetLedgerError.invalidActualCost
+        }
+        return try withLedgerLock {
+            let document = try readDocument()
+            guard let reservation = document.reservations.first(where: { $0.sessionID == sessionID }) else {
+                return false
+            }
+            if let existing = reservation.actualMicros, existing != actual {
+                throw BudgetLedgerError.conflictingReconciliation(reservation.id)
+            }
+            return true
+        }
+    }
+
+    /// Manually settles the reservation for a specific session using an actual
+    /// amount verified by the user against the provider bill. Returns false if
+    /// this monthly ledger has no reservation for the session. Repeating the
+    /// same amount is idempotent; a different amount is rejected.
+    @discardableResult
+    public func reconcile(
+        sessionID: UUID,
+        actualUSD: Double,
+        now: Date = Date()
+    ) throws -> Bool {
+        guard actualUSD.isFinite, actualUSD >= 0,
+              let actual = Self.microDollars(actualUSD, rounding: .up) else {
+            throw BudgetLedgerError.invalidActualCost
+        }
+
+        return try withLedgerLock {
+            var document = try readDocument()
+            guard let index = document.reservations.firstIndex(where: { $0.sessionID == sessionID }) else {
+                return false
+            }
+            if let existing = document.reservations[index].actualMicros {
+                guard existing == actual else {
+                    throw BudgetLedgerError.conflictingReconciliation(document.reservations[index].id)
+                }
+                return true
+            }
+            document.reservations[index].actualMicros = actual
+            document.reservations[index].reconciledAt = now
+            document.reservations[index].chargedMonth = Self.monthKey(now)
+            try writeDocument(document)
+            return true
+        }
+    }
+
     /// Records an explicitly authorized run before any provider process starts.
     /// The run budget itself is not a hard provider limit; twice that amount is
     /// therefore reserved to retain conservative room for an estimated overrun.

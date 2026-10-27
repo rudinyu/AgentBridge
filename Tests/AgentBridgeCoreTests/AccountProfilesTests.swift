@@ -75,26 +75,29 @@ final class AccountProfilesTests: XCTestCase {
         XCTAssertTrue(claudeArguments.contains(where: { $0.contains("forceLoginMethod") && $0.contains("claudeai") }))
     }
 
-    func testSharedMemoryStartsOffForNewProfilesAndCanBeChangedPerProfile() throws {
+    func testSharedMemoryStartsOnForNewProfilesAndCanBeChangedPerProfile() throws {
         let root = try makeTemporaryRoot()
         defer { removeTemporaryRoot(root) }
         let store = try AccountProfileStore(rootURL: root)
         let codexDefault = try store.selected(provider: .codex)
         let claudeDefault = try store.selected(provider: .claude)
         let codexCustom = try store.create(name: "Codex alt", provider: .codex)
-        let claudeCustom = try store.create(name: "Claude alt", provider: .claude, allowsSharedMemory: true)
+        let claudeCustom = try store.create(name: "Claude alt", provider: .claude)
+        let optedOutCustom = try store.create(name: "Codex private", provider: .codex, allowsSharedMemory: false)
 
         XCTAssertTrue(codexDefault.allowsSharedMemory)
         XCTAssertTrue(claudeDefault.allowsSharedMemory)
-        XCTAssertFalse(codexCustom.allowsSharedMemory)
+        XCTAssertTrue(codexCustom.allowsSharedMemory)
         XCTAssertTrue(claudeCustom.allowsSharedMemory)
+        XCTAssertFalse(optedOutCustom.allowsSharedMemory)
 
-        try store.setSharedMemoryAllowed(id: codexCustom.id, allowed: true)
+        try store.setSharedMemoryAllowed(id: codexCustom.id, allowed: false)
         try store.setSharedMemoryAllowed(id: claudeCustom.id, allowed: false)
         try store.setSharedMemoryAllowed(id: AccountProfile.defaultID(for: .codex), allowed: false)
         let reopenedStore = try AccountProfileStore(rootURL: root)
 
-        XCTAssertTrue(try XCTUnwrap(reopenedStore.profiles(provider: .codex).first(where: { $0.id == codexCustom.id })).allowsSharedMemory)
+        XCTAssertFalse(try XCTUnwrap(reopenedStore.profiles(provider: .codex).first(where: { $0.id == codexCustom.id })).allowsSharedMemory)
+        XCTAssertFalse(try XCTUnwrap(reopenedStore.profiles(provider: .codex).first(where: { $0.id == optedOutCustom.id })).allowsSharedMemory)
         XCTAssertFalse(try XCTUnwrap(reopenedStore.profiles(provider: .claude).first(where: { $0.id == claudeCustom.id })).allowsSharedMemory)
         XCTAssertFalse(try reopenedStore.selected(provider: .codex).allowsSharedMemory)
         XCTAssertTrue(try reopenedStore.selected(provider: .claude).allowsSharedMemory)

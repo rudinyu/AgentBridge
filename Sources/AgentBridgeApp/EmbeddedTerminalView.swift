@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import AgentBridgeCore
 import SwiftTerm
 import SwiftUI
 
@@ -31,7 +32,16 @@ struct TerminalLaunchSpec: Equatable, Sendable, Identifiable {
 /// A local ANSI/VT100 view. OSC 52 clipboard requests and terminal links are denied.
 private final class AgentBridgeTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
     private var process: LocalProcess?
+    private let usageCaptureLock = NSLock()
+    private var usageCaptureEnabled = false
+    private var usageCaptureStartedAt: Date?
+    private var usageCaptureExpiresAt: Date?
+    private var usageCaptureGeneration: UInt64 = 0
+    private var usageSnapshotSequence: UInt64 = 0
+    private var pendingUsageScreenSnapshot: DispatchWorkItem?
     var onTermination: (@MainActor (Int32?) -> Void)?
+    var onUsageScreenSnapshot: (@MainActor (String, Date) -> Bool)?
+    var allowsUsageScreenCapture = false
 
     override init(frame: CGRect, font: NSFont? = nil, options: TerminalOptions) {
         super.init(frame: frame, font: font, options: options)
@@ -81,6 +91,132 @@ private final class AgentBridgeTerminalView: TerminalView, TerminalViewDelegate,
         }
     }
 
+    /// Sends only the fixed provider usage command through the active PTY.
+    func sendUsageCommand() {
+        guard allowsUsageScreenCapture, let process, process.running else { return }
+        pendingUsageScreenSnapshot?.cancel()
+        pendingUsageScreenSnapshot = nil
+        usageSnapshotSequence &+= 1
+        let bytes = Array("/usage\r".utf8)
+        usageCaptureLock.lock()
+        usageCaptureEnabled = true
+        usageCaptureGeneration &+= 1
+        let generation = usageCaptureGeneration
+        let startedAt = Date()
+        usageCaptureStartedAt = startedAt
+        let expiration = startedAt.addingTimeInterval(15)
+        usageCaptureExpiresAt = expiration
+        process.send(data: bytes[...])
+        usageCaptureLock.unlock()
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(15)) { [weak self] in
+            self?.expireUsageScreenCapture(generation: generation)
+        }
+    }
+
+    private func shouldCaptureUsageScreen(receivedAt: Date? = nil) -> Bool {
+        usageCaptureLock.lock()
+        defer { usageCaptureLock.unlock() }
+        guard usageCaptureEnabled else { return false }
+        if let receivedAt, let usageCaptureStartedAt, receivedAt < usageCaptureStartedAt {
+            return false
+        }
+        if let usageCaptureExpiresAt, Date() >= usageCaptureExpiresAt {
+            usageCaptureEnabled = false
+            usageCaptureStartedAt = nil
+            self.usageCaptureExpiresAt = nil
+            usageCaptureGeneration &+= 1
+            return false
+        }
+        return true
+    }
+
+    fileprivate func disableUsageScreenCapture() {
+        usageCaptureLock.lock()
+        usageCaptureEnabled = false
+        usageCaptureStartedAt = nil
+        usageCaptureExpiresAt = nil
+        usageCaptureGeneration &+= 1
+        usageCaptureLock.unlock()
+        DispatchQueue.main.async { [weak self] in
+            self?.pendingUsageScreenSnapshot?.cancel()
+            self?.pendingUsageScreenSnapshot = nil
+        }
+    }
+
+    /// Copies only the currently visible SwiftTerm rows, with strict row,
+    /// column, and byte bounds. The returned string is kept only for the
+    /// short in-memory debounce before parsing.
+    private func visibleScreenText() -> String {
+        let terminal = self.terminal!
+        let rowCount = min(max(terminal.rows, 0), 120)
+        let columnCount = min(max(terminal.cols, 0), 240)
+        let maximumBytes = ProviderUsageReportParser.maximumScreenBytes
+        var lines: [String] = []
+        var totalBytes = 0
+
+        for row in 0..<rowCount {
+            guard let line = terminal.getLine(row: row) else { continue }
+            let rendered = line.translateToString(
+                trimRight: true,
+                startCol: 0,
+                endCol: columnCount,
+                skipNullCellsFollowingWide: true,
+                characterProvider: { terminal.getCharacter(for: $0) }
+            )
+            var boundedLine = ""
+            for character in rendered {
+                let characterBytes = String(character).utf8.count
+                guard totalBytes + characterBytes <= maximumBytes else { break }
+                boundedLine.append(character)
+                totalBytes += characterBytes
+            }
+            lines.append(boundedLine)
+            guard totalBytes < maximumBytes else { break }
+            totalBytes += 1 // newline separator
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func scheduleUsageScreenSnapshot() {
+        guard allowsUsageScreenCapture, shouldCaptureUsageScreen() else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.shouldCaptureUsageScreen() else { return }
+            self.pendingUsageScreenSnapshot?.cancel()
+            self.usageSnapshotSequence &+= 1
+            let sequence = self.usageSnapshotSequence
+            let work = DispatchWorkItem { [weak self] in
+                guard let self,
+                      self.usageSnapshotSequence == sequence,
+                      self.shouldCaptureUsageScreen() else { return }
+                self.pendingUsageScreenSnapshot = nil
+                let screenText = self.visibleScreenText()
+                let capturedAt = Date()
+                let usageValuesRecognized = self.onUsageScreenSnapshot?(screenText, capturedAt) ?? false
+                if usageValuesRecognized { self.disableUsageScreenCapture() }
+            }
+            self.pendingUsageScreenSnapshot = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(800), execute: work)
+        }
+    }
+
+    private func expireUsageScreenCapture(generation: UInt64) {
+        usageCaptureLock.lock()
+        guard usageCaptureGeneration == generation,
+              usageCaptureEnabled,
+              let expiration = usageCaptureExpiresAt,
+              Date() >= expiration else {
+            usageCaptureLock.unlock()
+            return
+        }
+        usageCaptureEnabled = false
+        usageCaptureStartedAt = nil
+        usageCaptureExpiresAt = nil
+        usageCaptureGeneration &+= 1
+        usageCaptureLock.unlock()
+        pendingUsageScreenSnapshot?.cancel()
+        pendingUsageScreenSnapshot = nil
+    }
+
     private func updatePseudoTerminalSize() {
         guard let process, process.running, process.childfd >= 0 else { return }
         var size = windowSize()
@@ -122,12 +258,17 @@ private final class AgentBridgeTerminalView: TerminalView, TerminalViewDelegate,
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        disableUsageScreenCapture()
         guard let onTermination else { return }
         Task { @MainActor in onTermination(exitCode) }
     }
 
     func dataReceived(slice: ArraySlice<UInt8>) {
+        let receivedAt = Date()
         feed(byteArray: slice)
+        if shouldCaptureUsageScreen(receivedAt: receivedAt) {
+            scheduleUsageScreenSnapshot()
+        }
     }
 
     func getWindowSize() -> winsize { windowSize() }
@@ -135,10 +276,18 @@ private final class AgentBridgeTerminalView: TerminalView, TerminalViewDelegate,
 
 struct EmbeddedTerminalView: NSViewRepresentable {
     let launch: TerminalLaunchSpec
+    let usageCommandRequest: Int
+    let allowsUsageScreenCapture: Bool
+    let onUsageScreenText: @MainActor (String, Date) -> Bool
     let onTermination: @MainActor (Int32?) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onTermination: onTermination)
+        Coordinator(
+            onTermination: onTermination,
+            usageCommandRequest: usageCommandRequest,
+            allowsUsageScreenCapture: allowsUsageScreenCapture,
+            onUsageScreenText: onUsageScreenText
+        )
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -153,6 +302,10 @@ struct EmbeddedTerminalView: NSViewRepresentable {
         terminal.onTermination = { [weak coordinator] exitCode in
             coordinator?.processTerminated(exitCode)
         }
+        terminal.allowsUsageScreenCapture = allowsUsageScreenCapture
+        terminal.onUsageScreenSnapshot = { [weak coordinator] screenText, capturedAt in
+            coordinator?.usageScreenDidUpdate(screenText, capturedAt: capturedAt) ?? false
+        }
         coordinator.terminal = terminal
         DispatchQueue.main.async { [weak terminal] in
             guard let terminal else { return }
@@ -162,10 +315,14 @@ struct EmbeddedTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.onTermination = onTermination
+        let coordinator = context.coordinator
+        coordinator.onTermination = onTermination
+        coordinator.onUsageScreenText = onUsageScreenText
+        coordinator.sendUsageCommandIfRequested(usageCommandRequest)
     }
 
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.terminal?.disableUsageScreenCapture()
         coordinator.terminal?.terminateWithEscalation()
         coordinator.terminal = nil
     }
@@ -174,9 +331,30 @@ struct EmbeddedTerminalView: NSViewRepresentable {
     final class Coordinator: NSObject {
         fileprivate weak var terminal: AgentBridgeTerminalView?
         var onTermination: @MainActor (Int32?) -> Void
+        var onUsageScreenText: @MainActor (String, Date) -> Bool
+        private var usageCommandRequest: Int
+        private let allowsUsageScreenCapture: Bool
 
-        init(onTermination: @escaping @MainActor (Int32?) -> Void) {
+        init(
+            onTermination: @escaping @MainActor (Int32?) -> Void,
+            usageCommandRequest: Int,
+            allowsUsageScreenCapture: Bool,
+            onUsageScreenText: @escaping @MainActor (String, Date) -> Bool
+        ) {
             self.onTermination = onTermination
+            self.usageCommandRequest = usageCommandRequest
+            self.allowsUsageScreenCapture = allowsUsageScreenCapture
+            self.onUsageScreenText = onUsageScreenText
+        }
+
+        func sendUsageCommandIfRequested(_ request: Int) {
+            guard allowsUsageScreenCapture, request != usageCommandRequest else { return }
+            usageCommandRequest = request
+            terminal?.sendUsageCommand()
+        }
+
+        func usageScreenDidUpdate(_ screenText: String, capturedAt: Date) -> Bool {
+            onUsageScreenText(screenText, capturedAt)
         }
 
         func processTerminated(_ exitCode: Int32?) {

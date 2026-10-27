@@ -16,7 +16,7 @@ enum AgentBridgeCLI {
     private static func dispatch(_ arguments: [String]) async throws {
         guard let command = arguments.first else { printHelp(); return }
         if ["help", "--help", "-h"].contains(command) { printHelp(); return }
-        if command == "version" || command == "--version" { print("AgentBridge 0.2.0"); return }
+        if command == "version" || command == "--version" { print("AgentBridge 0.3.0"); return }
 
         let root = try RuntimePaths.applicationSupportRoot()
         let store = try AuditStore(rootURL: root)
@@ -41,19 +41,21 @@ enum AgentBridgeCLI {
             try await runCommand(Array(arguments.dropFirst()), service: service)
         case "interactive":
             try await interactiveCommand(Array(arguments.dropFirst()), service: service)
+        case "usage-tui":
+            try await usageTUICommand(Array(arguments.dropFirst()), service: service)
         case "cancel":
             try cancelCommand(Array(arguments.dropFirst()), service: service)
         case "events":
             try showEvents(Array(arguments.dropFirst()), service: service)
         case "budget":
-            try showBudget(service: service)
+            try budgetCommand(Array(arguments.dropFirst()), service: service)
         default:
             throw AgentBridgeError.invalidInput("不認識的命令 \(command)。使用 `agentbridge help` 查看用法。")
         }
     }
 
     private static func doctor(service: BridgeService) async throws {
-        print("AgentBridge 0.2.0")
+        print("AgentBridge 0.3.0")
         let settings = try service.settings()
         print("登入模式：\(settings.usageMode == .subscription ? "官方 CLI 訂閱登入" : "Claude API（每次執行需單次預算與確認）")")
         for provider in AgentProvider.allCases {
@@ -70,8 +72,12 @@ enum AgentBridgeCLI {
                 else { print("\(provider.rawValue): \(error.localizedDescription)") }
             }
         }
-        let snapshot = try service.budgetSnapshot()
-        print(String(format: "Claude API 月度帳本（UTC 月）：已用 US$%.2f，暫留 US$%.2f，可用 US$%.2f。", snapshot.usedUSD, snapshot.reservedUSD, snapshot.availableUSD))
+        do {
+            let snapshot = try service.budgetSnapshot()
+            print(String(format: "Claude API 月度帳本（UTC 月）：已用 US$%.2f，暫留 US$%.2f，可用 US$%.2f。", snapshot.usedUSD, snapshot.reservedUSD, snapshot.availableUSD))
+        } catch UsageControlError.apiMonthlyLimitRequired {
+            print("目前選取的 Claude 帳戶尚未設定本機 API 月上限；設定前不會啟用 API 執行。")
+        }
     }
 
     private static func settingsCommand(_ arguments: [String], service: BridgeService) throws {
@@ -230,6 +236,20 @@ enum AgentBridgeCLI {
         _ = try await service.runInteractive(sessionID: sessionID, profileID: profileID, cancellation: cancellation)
     }
 
+    private static func usageTUICommand(_ arguments: [String], service: BridgeService) async throws {
+        guard arguments.count == 4,
+              arguments[0] == "--provider",
+              let provider = AgentProvider(rawValue: arguments[1]),
+              arguments[2] == "--profile",
+              let profileID = UUID(uuidString: arguments[3]) else {
+            throw AgentBridgeError.invalidInput("用法：agentbridge usage-tui --provider codex|claude --profile PROFILE-ID")
+        }
+        let cancellation = CancellationFlag()
+        let signalSources = makeCancellationSignalSources(cancellation)
+        defer { signalSources.forEach { $0.cancel() } }
+        _ = try await service.runUsageTUI(provider: provider, profileID: profileID, cancellation: cancellation)
+    }
+
     private static func profilesCommand(_ arguments: [String], service: BridgeService) throws {
         guard let action = arguments.first else {
             throw AgentBridgeError.invalidInput("用法：agentbridge profiles list|create|select|memory ...")
@@ -250,7 +270,7 @@ enum AgentBridgeCLI {
         case "create":
             var provider: AgentProvider?
             var name: String?
-            var allowsSharedMemory = false
+            var allowsSharedMemory = true
             var index = 1
             while index < arguments.count {
                 switch arguments[index] {
@@ -375,6 +395,37 @@ enum AgentBridgeCLI {
         print("帳本只計算 AgentBridge API 呼叫；供應商顯示的費用以最終帳單為準。")
     }
 
+    private static func budgetCommand(_ arguments: [String], service: BridgeService) throws {
+        guard arguments.first == "reconcile" else {
+            guard arguments.isEmpty else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge budget reconcile SESSION-ID --profile PROFILE-ID --actual-usd USD --confirm")
+            }
+            try showBudget(service: service)
+            return
+        }
+        guard arguments.count == 7,
+              let sessionID = UUID(uuidString: arguments[1]),
+              arguments[2] == "--profile",
+              let profileID = UUID(uuidString: arguments[3]),
+              arguments[4] == "--actual-usd",
+              let actualUSD = Double(arguments[5]),
+              arguments[6] == "--confirm" else {
+            throw AgentBridgeError.invalidInput("用法：agentbridge budget reconcile SESSION-ID --profile PROFILE-ID --actual-usd USD --confirm")
+        }
+        let profile = try service.accountProfile(id: profileID)
+        guard profile.provider == .claude else { throw AgentBridgeError.unsupportedAPIUsage }
+        let result = try service.reconcileAPIUsageFromProviderBill(
+            profileID: profileID,
+            sessionID: sessionID,
+            actualUSD: actualUSD,
+            explicitlyConfirmed: true
+        )
+        print(String(format: "已依使用者確認的 Anthropic 帳單金額 US$%.6f 手動結算。", actualUSD))
+        print("Claude 帳戶：\(profile.name)（\(profile.id.uuidString.lowercased())）")
+        print("工作階段：\(sessionID.uuidString.lowercased())")
+        print("月度帳本：\(result.monthlyLedgerSettled ? "已結算" : "無此預留")；每日/工作階段帳本：\(result.dailySessionLedgerSettled ? "已結算" : "無此預留")。")
+    }
+
     private static func parseProvider(_ value: String) throws -> AgentProvider {
         guard let provider = AgentProvider(rawValue: value) else {
             throw AgentBridgeError.invalidInput("供應商必須是 codex 或 claude。")
@@ -398,7 +449,7 @@ enum AgentBridgeCLI {
 
     private static func printHelp() {
         print("""
-        AgentBridge 0.2.0 — macOS Codex / Claude CLI 工作階段管理
+        AgentBridge 0.3.0 — macOS Codex / Claude CLI 工作階段管理
 
         命令：
           agentbridge doctor
@@ -406,7 +457,7 @@ enum AgentBridgeCLI {
           agentbridge settings usage subscription|api
           agentbridge settings binary codex|claude /absolute/path/to/cli|auto
           agentbridge profiles list [codex|claude]
-          agentbridge profiles create --provider codex|claude --name NAME [--share-memory]
+          agentbridge profiles create --provider codex|claude --name NAME [--share-memory]（共用記憶預設開啟）
           agentbridge profiles select --provider codex|claude PROFILE-ID
           agentbridge profiles memory PROFILE-ID on|off
           agentbridge profile-login PROFILE-ID
@@ -414,18 +465,22 @@ enum AgentBridgeCLI {
           agentbridge sessions
           agentbridge run SESSION-ID [--api-budget USD --confirm-api-spend --api-key-env ANTHROPIC_API_KEY]
           agentbridge interactive SESSION-ID [--profile PROFILE-ID]
+          agentbridge usage-tui --provider codex|claude --profile PROFILE-ID
           agentbridge memory show SESSION-ID
           agentbridge memory notes SESSION-ID < notes.txt
           agentbridge memory clear SESSION-ID --confirm
           agentbridge cancel SESSION-ID
           agentbridge events SESSION-ID
           agentbridge budget
+          agentbridge budget reconcile SESSION-ID --profile PROFILE-ID --actual-usd USD --confirm
 
         `run` 從標準輸入讀取最多 256 KiB 的提示文字，不會把提示放在程序參數或稽核檔。
+        `budget reconcile` 只手動結算停止中的 Claude API 工作階段；先對照 Anthropic 帳單，再輸入實際美元金額並明確指定 `--confirm`。不會呼叫 provider；兩本帳本皆可按同一金額安全重試。
         API 模式需先選擇 usage api，並在每次執行提供上限、環境變數名稱與明確確認。
+        usage-tui 只在目前選取的 provider 帳戶為訂閱登入時啟動其原生 CLI；等待登入完成並看到可輸入提示符後，再由 App 的固定按鈕送出 /usage。此畫面不會被解析或存入 AgentBridge。
         自訂帳戶有各自的供應商設定資料夾；請建立設定後在互動 Terminal 執行 profile-login。
         `session create --interactive` 建立隔離 Codex 或 Claude Terminal 工作區，仍受人工核准與綁定帳戶限制。
-        App 聊天回合可在明確開啟共享記憶的帳戶間共用；原生 Terminal 的使用者輸入與輸出不會被擷取。
+        新帳戶預設開啟共用記憶；`--share-memory` 可作為明確開啟標記。App 與 CLI 的唯讀聊天回合可在允許共用記憶的帳戶設定間共用；原生 Terminal 的使用者輸入與輸出不會被擷取。
         `memory show/notes/clear` 只管理 App 保存的同專案同提交記憶；clear 需要 `--confirm`。
         """)
     }
