@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 — 2026-10-27
+
+- Made English the default app language and added bundled English and Traditional Chinese UI localization with a persisted in-app language picker.
+- Updated the app package to include and resolve both localization resource sets.
+
+## 0.3.0 — 2026-10-26
+
+- Added provider usage reporting and local usage controls, plus bilingual documentation and the app icon.
+
 ## 0.2.0 — 2026-10-26
 
 - Added provider account profiles with isolated CLI configuration directories and in-app interactive login.

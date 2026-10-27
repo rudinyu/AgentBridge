@@ -19,6 +19,9 @@ struct AgentBridgeApp: App {
 
 @MainActor
 final class AppModel: ObservableObject {
+    @Published var appLanguage: AppLanguage {
+        didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: AppLanguage.preferenceKey) }
+    }
     @Published var settings = BridgeSettings()
     @Published var sessions: [SessionRecord] = []
     @Published var events: [AuditEvent] = []
@@ -83,6 +86,10 @@ final class AppModel: ObservableObject {
 
     var terminalSessionIDForView: UUID? { activeTerminalSessionID }
 
+    func localized(_ source: String) -> String {
+        AppLocalization.display(source, language: appLanguage)
+    }
+
     var canSendUsageCommand: Bool {
         terminalIsUsageTUI
             && terminalRunning
@@ -91,6 +98,7 @@ final class AppModel: ObservableObject {
     }
 
     init() {
+        appLanguage = AppLanguage.saved
         do {
             let root = try RuntimePaths.applicationSupportRoot()
             let store = try AuditStore(rootURL: root)
@@ -134,7 +142,7 @@ final class AppModel: ObservableObject {
 
     func profileName(for session: SessionRecord) -> String {
         let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
-        return accountProfiles[session.provider]?.first(where: { $0.id == profileID })?.name ?? "目前本機登入"
+        return accountProfiles[session.provider]?.first(where: { $0.id == profileID })?.name ?? localized("目前本機登入")
     }
 
     func refresh(forceUsageStatistics: Bool = false) {
@@ -570,11 +578,13 @@ final class AppModel: ObservableObject {
         guard let service, let profile = selectedAccountProfile else { return }
         persistUsageControls(updated, service: service, profile: profile, updateStatus: false)
         guard usageControls.macOSNotificationsEnabled else { return }
+        let notificationTitle = localized("AgentBridge 用量提醒")
+        let notificationBody = localized(message)
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
             let content = UNMutableNotificationContent()
-            content.title = "AgentBridge 用量提醒"
-            content.body = message
+            content.title = notificationTitle
+            content.body = notificationBody
             content.sound = .default
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
@@ -614,8 +624,8 @@ final class AppModel: ObservableObject {
 
     func chooseRepository() {
         let panel = NSOpenPanel()
-        panel.title = "選擇 Git 儲存庫根目錄"
-        panel.message = "AgentBridge 會複製目前提交版本到私有隔離工作區。來源的未提交變更不會複製。"
+        panel.title = localized("選擇 Git 儲存庫根目錄")
+        panel.message = localized("AgentBridge 會複製目前提交版本到私有隔離工作區。來源的未提交變更不會複製。")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
@@ -1120,10 +1130,11 @@ struct ContentView: View {
         }
         .frame(minWidth: 1160, minHeight: 780)
         .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.locale, model.appLanguage.locale)
         .alert("AgentBridge", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("好", role: .cancel) { model.errorMessage = nil }
         } message: {
-            Text(model.errorMessage ?? "")
+            Text(model.localized(model.errorMessage ?? ""))
         }
         .alert("清除此專案的共用記憶？", isPresented: $model.confirmClearMemory) {
             Button("清除記憶", role: .destructive) { model.clearSharedMemory() }
@@ -1145,6 +1156,11 @@ struct ContentView: View {
                 Text("Codex 與 Claude 共用專案記憶").font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            Picker("語言", selection: $model.appLanguage) {
+                Text("English").tag(AppLanguage.english)
+                Text("繁體中文").tag(AppLanguage.traditionalChinese)
+            }
+            .pickerStyle(.menu)
             if let session = model.selectedSession {
                 Text("\(session.provider.rawValue.capitalized) · \(model.selectedSessionProfileName)")
                     .font(.caption.weight(.medium))
@@ -1209,7 +1225,7 @@ struct ContentView: View {
                     apiReconciliationPanel
                 }
                 if let alert = model.usageAlerts.first {
-                    Label(alert, systemImage: "bell.badge")
+                    Label(model.localized(alert), systemImage: "bell.badge")
                         .font(.caption2)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1220,7 +1236,7 @@ struct ContentView: View {
                 ))
                 .font(.caption2)
                 if !model.usageControlStatus.isEmpty {
-                    Text(model.usageControlStatus)
+                    Text(model.localized(model.usageControlStatus))
                         .font(.caption2).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1237,7 +1253,7 @@ struct ContentView: View {
                     Text("選擇此帳戶綁定的工作階段，並依 Anthropic 帳單輸入實際費用。這只更新本機帳本，不會呼叫 provider；只有帳單明確顯示零費用時才輸入 0。若狀態仍是執行中，系統會先確認沒有作用中的執行鎖；只有中斷後殘留的狀態才會標記失敗並結算。若一個帳本先完成，使用相同金額重試即可。")
                         .font(.caption2).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("帳戶：\(model.selectedAccountProfile?.name ?? "Claude")")
+                    Text(String(format: model.localized("帳戶：%@"), model.selectedAccountProfile?.name ?? "Claude"))
                         .font(.caption2.weight(.semibold))
                     ForEach(model.apiReconciliationCandidates) { candidate in
                         Button {
@@ -1249,12 +1265,14 @@ struct ContentView: View {
                                     Text(URL(fileURLWithPath: candidate.session.sourceRepositoryPath).lastPathComponent)
                                         .fontWeight(.medium)
                                     Spacer()
-                                    Text(candidate.session.status.rawValue)
+                                    Text(model.localized(candidate.session.status.rawValue.capitalized))
                                         .foregroundStyle(candidate.session.status == .running ? .orange : .secondary)
                                 }
                                 Text(candidate.session.id.uuidString.lowercased())
                                     .font(.system(size: 8, design: .monospaced)).foregroundStyle(.tertiary)
-                                Text("月度預留：\(candidate.monthlyLedgerUnresolved ? "未結算" : "無待結算") · 每日/工作階段預留：\(candidate.dailySessionLedgerUnresolved ? "未結算" : "無待結算")")
+                                Text(String(format: model.localized("月度預留：%@ · 每日/工作階段預留：%@"),
+                                            model.localized(candidate.monthlyLedgerUnresolved ? "未結算" : "無待結算"),
+                                            model.localized(candidate.dailySessionLedgerUnresolved ? "未結算" : "無待結算")))
                                     .font(.system(size: 8)).foregroundStyle(.secondary)
                             }
                             .contentShape(Rectangle())
@@ -1274,7 +1292,7 @@ struct ContentView: View {
                         .disabled(model.selectedAPIReconciliationCandidate == nil
                             || !model.apiReconciliationConfirmed)
                     if !model.apiReconciliationStatus.isEmpty {
-                        Text(model.apiReconciliationStatus)
+                        Text(model.localized(model.apiReconciliationStatus))
                             .font(.caption2)
                             .foregroundStyle(model.apiReconciliationStatus.contains("已手動結算") ? Color.secondary : Color.orange)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1298,8 +1316,8 @@ struct ContentView: View {
                 }
                 Chart(activity.sevenDayBuckets) { bucket in
                     BarMark(
-                        x: .value("24 小時區間", bucket.index),
-                        y: .value("AgentBridge 啟動", bucket.runCount)
+                        x: .value(model.localized("24 小時區間"), bucket.index),
+                        y: .value(model.localized("AgentBridge 啟動"), bucket.runCount)
                     )
                     .foregroundStyle(Color.accentColor.gradient)
                 }
@@ -1308,17 +1326,21 @@ struct ContentView: View {
                         AxisValueLabel {
                             if let index = value.as(Int.self),
                                let bucket = activity.sevenDayBuckets.first(where: { $0.index == index }) {
-                                Text(bucket.label).font(.system(size: 8))
+                                Text(model.localized(bucket.label)).font(.system(size: 8))
                             }
                         }
                     }
                 }
                 .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) }
                 .frame(height: 82)
-                Text("近 24 小時：\(activity.subscriptionDailyRuns) 次 · 目前 AgentBridge 工作階段：\(activity.subscriptionSessionRuns) 次。只統計此 \(activity.provider.rawValue.capitalized) 帳戶的本機執行嘗試，不是供應商額度或帳戶總用量；互動終端回合不會被讀取。")
+                Text(String(format: model.localized("近 24 小時：%@ 次 · 目前 AgentBridge 工作階段：%@ 次。只統計此 %@ 帳戶的本機執行嘗試，不是供應商額度或帳戶總用量；互動終端回合不會被讀取。"),
+                            String(activity.subscriptionDailyRuns),
+                            String(activity.subscriptionSessionRuns),
+                            activity.provider.rawValue.capitalized))
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("本機統計更新於 \(activity.generatedAt, style: .time)")
+                Text(String(format: model.localized("本機統計更新於 %@"),
+                            activity.generatedAt.formatted(Date.FormatStyle(time: .shortened).locale(model.appLanguage.locale))))
                     .font(.system(size: 8)).foregroundStyle(.tertiary)
             } else {
                 ProgressView("載入本機活動記錄…").controlSize(.small)
@@ -1375,7 +1397,10 @@ struct ContentView: View {
                     Label("已達 AgentBridge 本機月上限；新的 API 執行會被阻擋。", systemImage: "xmark.octagon.fill")
                         .font(.caption2).foregroundStyle(.red)
                 }
-                Text(String(format: "UTC %@ · 本機月上限 $%.2f。此帳本與 Anthropic provider credit/帳單分開。%@", budget.month, budget.monthlyLimitUSD, model.selectedAccountProfile?.id == AccountProfile.defaultID(for: .claude) ? "內建帳戶沿用舊版帳本；舊紀錄的帳戶歸屬無法還原。新帳戶各自使用獨立帳本。" : "此 Claude 帳戶使用獨立帳本；App 與 CLI 共用。"))
+                let builtInLedgerNote = model.selectedAccountProfile?.id == AccountProfile.defaultID(for: .claude)
+                    ? "內建帳戶沿用舊版帳本；舊紀錄的帳戶歸屬無法還原。新帳戶各自使用獨立帳本。"
+                    : "此 Claude 帳戶使用獨立帳本；App 與 CLI 共用。"
+                Text(String(format: model.localized("UTC %@ · 本機月上限 $%.2f。此帳本與 Anthropic provider credit/帳單分開。%@"), budget.month, budget.monthlyLimitUSD, model.localized(builtInLedgerNote)))
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -1384,9 +1409,12 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let activity = model.usageStatistics {
-                Text("此帳戶近 24 小時 API 啟動：\(activity.apiDailyRuns) 次 · 目前工作階段：\(activity.apiSessionRuns) 次")
+                Text(String(format: model.localized("此帳戶近 24 小時 API 啟動：%@ 次 · 目前工作階段：%@ 次"),
+                            String(activity.apiDailyRuns),
+                            String(activity.apiSessionRuns)))
                     .font(.caption2).foregroundStyle(.secondary)
-                Text("本機統計更新於 \(activity.generatedAt, style: .time)")
+                Text(String(format: model.localized("本機統計更新於 %@"),
+                            activity.generatedAt.formatted(Date.FormatStyle(time: .shortened).locale(model.appLanguage.locale))))
                     .font(.system(size: 8)).foregroundStyle(.tertiary)
             }
             if let costs = model.apiCostSnapshot {
@@ -1458,9 +1486,9 @@ struct ContentView: View {
 
     private func usageMetric(_ title: String, value: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(model.localized(title)).font(.caption2).foregroundStyle(.secondary)
             Text(value).font(.headline.monospacedDigit())
-            Text(detail).font(.system(size: 8)).foregroundStyle(.tertiary)
+            Text(model.localized(detail)).font(.system(size: 8)).foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(7)
@@ -1469,7 +1497,7 @@ struct ContentView: View {
 
     private func apiDollarLimitInputRow(_ title: String, text: Binding<String>) -> some View {
         HStack {
-            Text(title).font(.caption2)
+            Text(model.localized(title)).font(.caption2)
             Spacer(minLength: 4)
             TextField("不限", text: text)
                 .textFieldStyle(.roundedBorder)
@@ -1482,25 +1510,34 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 5) {
                 usageReportField("Provider / 供應商", report.provider.rawValue.capitalized)
                 usageReportField("Selected account / 選取帳戶", report.accountName)
-                usageReportField("Plan / 方案", report.plan ?? "Not provided / 未提供")
+                usageReportField("Plan / 方案", report.plan ?? "Not provided / 未提供", localizeValue: report.plan == nil)
                 if report.usageWindows.isEmpty {
-                    usageReportField("Usage windows / 用量視窗", "Not provided / 未提供")
+                    usageReportField("Usage windows / 用量視窗", "Not provided / 未提供", localizeValue: true)
                 } else {
                     ForEach(report.usageWindows) { window in
                         Divider()
-                        Text(window.label).font(.caption.weight(.semibold))
-                        usageReportField("Used / 已使用", formattedUsagePercentage(window.percentageUsed))
-                        usageReportField("Reset / 重置", window.resetText ?? "Not provided / 未提供")
+                        Text(model.localized(window.label)).font(.caption.weight(.semibold))
+                        usageReportField(
+                            "Used / 已使用",
+                            formattedUsagePercentage(window.percentageUsed),
+                            localizeValue: window.percentageUsed == nil
+                        )
+                        usageReportField(
+                            "Reset / 重置",
+                            window.resetText ?? "Not provided / 未提供",
+                            localizeValue: window.resetText == nil
+                        )
                     }
                 }
-                usageReportField("Source / 來源", report.source)
+                usageReportField("Source / 來源", model.localized(report.source))
                 usageReportField(
                     "Status / 狀態",
                     report.status == .recognizedFields
                         ? "Some fields recognized / 已辨識部分欄位"
-                        : "No recognized fields / 未辨識到欄位"
+                        : "No recognized fields / 未辨識到欄位",
+                    localizeValue: true
                 )
-                usageReportField("Captured / 擷取時間", report.capturedAt.formatted(date: .abbreviated, time: .shortened))
+                usageReportField("Captured / 擷取時間", report.capturedAt.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(model.appLanguage.locale)))
                 Text("Best-effort screen reading, not a stable API. Keep the official TUI visible to verify these fields. / 依畫面盡力辨識，非穩定 API；請保留官方 TUI 畫面核對。")
                     .font(.system(size: 8)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1508,11 +1545,11 @@ struct ContentView: View {
         }
     }
 
-    private func usageReportField(_ title: String, _ value: String) -> some View {
+    private func usageReportField(_ title: String, _ value: String, localizeValue: Bool = false) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(model.localized(title)).font(.caption2).foregroundStyle(.secondary)
             Spacer(minLength: 4)
-            Text(value).font(.caption2.monospacedDigit()).multilineTextAlignment(.trailing)
+            Text(localizeValue ? model.localized(value) : value).font(.caption2.monospacedDigit()).multilineTextAlignment(.trailing)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1526,14 +1563,14 @@ struct ContentView: View {
         let committed = used + reserved
         return VStack(alignment: .leading, spacing: 3) {
             HStack {
-                Text(title)
+                Text(model.localized(title))
                 Spacer(minLength: 4)
                 Text(String(format: "$%.2f / $%.2f", committed, limit)).fontWeight(.semibold)
             }
             .font(.caption2)
             ProgressView(value: min(1, committed / limit))
                 .tint(committed >= limit ? .red : .accentColor)
-            Text(String(format: "已用 $%.2f · 保留 $%.2f · 可用 $%.2f", used, reserved, max(0, limit - committed)))
+            Text(String(format: model.localized("已用 $%.2f · 保留 $%.2f · 可用 $%.2f"), used, reserved, max(0, limit - committed)))
                 .font(.system(size: 8)).foregroundStyle(.secondary)
             if committed >= limit {
                 Label("已達本機 USD 上限；新的 API 執行會被阻擋。", systemImage: "xmark.octagon.fill")
@@ -1544,7 +1581,7 @@ struct ContentView: View {
 
     private func usageLimitRow(_ title: String, keyPath: WritableKeyPath<UsageControlSettings, Int?>) -> some View {
         HStack {
-            Text(title).font(.caption2)
+            Text(model.localized(title)).font(.caption2)
             Spacer(minLength: 4)
             TextField("0 = 不限", value: usageLimitBinding(keyPath), format: .number)
                 .textFieldStyle(.roundedBorder)
@@ -1576,7 +1613,7 @@ struct ContentView: View {
                         }
                     }
                     if let assessment = model.selectedProfileAuthentication {
-                        Label(assessment.message, systemImage: assessment.confirmedSubscription ? "checkmark.seal" : "exclamationmark.shield")
+                        Label(model.localized(assessment.message), systemImage: assessment.confirmedSubscription ? "checkmark.seal" : "exclamationmark.shield")
                             .font(.caption).foregroundStyle(assessment.confirmedSubscription ? Color.secondary : Color.orange)
                     } else {
                         Text("尚未檢查此帳戶的登入方式與方案。")
@@ -1642,7 +1679,7 @@ struct ContentView: View {
                                 Text("Terminal").font(.caption2).padding(.horizontal, 5).padding(.vertical, 2).background(.quaternary, in: Capsule())
                             }
                         }
-                        Text("\(model.profileName(for: session)) · \(session.status.rawValue)")
+                        Text("\(model.profileName(for: session)) · \(model.localized(session.status.rawValue.capitalized))")
                             .font(.caption).foregroundStyle(.secondary)
                         Text("\(session.snapshotCommit.prefix(12)) · \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)")
                             .font(.caption2).foregroundStyle(.tertiary)
@@ -1689,7 +1726,7 @@ struct ContentView: View {
             }
             Spacer()
             if let assessment = model.selectedSessionAuthentication {
-                Label(assessment.message, systemImage: assessment.confirmedSubscription ? "checkmark.seal" : "exclamationmark.shield")
+                Label(model.localized(assessment.message), systemImage: assessment.confirmedSubscription ? "checkmark.seal" : "exclamationmark.shield")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Button("本機終端機") { model.openLocalShell() }
@@ -1712,12 +1749,17 @@ struct ContentView: View {
                         .font(.subheadline.weight(.semibold))
                     Spacer()
                     if let memory = model.memorySnapshot {
-                        Text("修訂 \(memory.revision) · \(memory.turns.count) 則對話\(memory.wasTruncated ? " · 顯示最近內容" : "")")
+                        Text(String(format: model.localized("修訂 %@ · %@ 則對話%@"),
+                                    String(memory.revision),
+                                    String(memory.turns.count),
+                                    memory.wasTruncated ? model.localized(" · 顯示最近內容") : ""))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 if let memory = model.memorySnapshot {
-                    Text("來源 \(URL(fileURLWithPath: memory.scope.repositoryPath).lastPathComponent) · 固定提交 \(memory.scope.snapshotCommit.prefix(12))")
+                    Text(String(format: model.localized("來源 %@ · 固定提交 %@"),
+                                URL(fileURLWithPath: memory.scope.repositoryPath).lastPathComponent,
+                                String(memory.scope.snapshotCommit.prefix(12))))
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
                 if let profile = model.selectedAccountProfile, !profile.allowsSharedMemory {
@@ -1750,7 +1792,7 @@ struct ContentView: View {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     if let turns = model.memorySnapshot?.turns, !turns.isEmpty {
                         ForEach(turns) { turn in
-                            messageBubble(label: "你", text: turn.userText, alignment: .trailing, color: Color.accentColor.opacity(0.12), id: "user-\(turn.id)")
+                            messageBubble(label: model.localized("你"), text: turn.userText, alignment: .trailing, color: Color.accentColor.opacity(0.12), id: "user-\(turn.id)")
                             messageBubble(label: turn.provider.rawValue.capitalized, text: turn.assistantText, alignment: .leading, color: Color(nsColor: .controlBackgroundColor), id: "assistant-\(turn.id)")
                         }
                     } else {
@@ -1760,7 +1802,7 @@ struct ContentView: View {
                     if model.isRunning {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text(model.status).font(.caption).foregroundStyle(.secondary)
+                            Text(model.localized(model.status)).font(.caption).foregroundStyle(.secondary)
                         }
                         .padding(.horizontal, 12).padding(.vertical, 8)
                         .id("running-indicator")
@@ -1811,7 +1853,7 @@ struct ContentView: View {
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
                     .overlay(RoundedRectangle(cornerRadius: 9).stroke(.quaternary))
                 VStack(spacing: 7) {
-                    Button(model.isClaudeAPIRunContext ? "執行 Claude API" : "傳送") { model.runPrompt() }
+                    Button(model.localized(model.isClaudeAPIRunContext ? "執行 Claude API" : "傳送")) { model.runPrompt() }
                         .buttonStyle(.borderedProminent)
                         .disabled(model.isRunning || model.isSwitchingTarget || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.settings.usageMode == .api && (!model.isClaudeAPIRunContext || model.budgetSnapshot == nil)) || (model.isClaudeAPIRunContext && model.usageControls.disableFutureAPI))
                     if model.isRunning { Button("取消") { model.cancelRun() } }
@@ -1848,7 +1890,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "terminal")
-                Text(launch.title).font(.subheadline.weight(.semibold))
+                Text(model.localized(launch.title)).font(.subheadline.weight(.semibold))
                 if model.terminalRunning { ProgressView().controlSize(.small) }
                 Spacer()
                 if model.terminalRunning && !model.terminalIsProfileLogin,
@@ -1859,7 +1901,7 @@ struct ContentView: View {
                     Button("送出 /usage") { model.requestUsageCommand() }
                         .help("只送出固定的 /usage 命令與 Enter；請先等待 CLI 顯示可輸入提示符並完成登入。")
                 }
-                Button(model.terminalRunning ? (model.terminalNeedsManualStop ? "結束後關閉" : "取消並關閉") : "關閉終端") { model.closeEmbeddedTerminal() }
+                Button(model.localized(model.terminalRunning ? (model.terminalNeedsManualStop ? "結束後關閉" : "取消並關閉") : "關閉終端")) { model.closeEmbeddedTerminal() }
             }
             .padding(.horizontal, 10).padding(.vertical, 8)
             EmbeddedTerminalView(
@@ -1897,9 +1939,9 @@ struct ContentView: View {
     private var statusBar: some View {
         HStack(spacing: 8) {
             if model.isRunning || model.isSwitchingTarget || model.terminalRunning { ProgressView().controlSize(.small) }
-            Text(model.status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text(model.localized(model.status)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
-            Text("AgentBridge 0.3.0").font(.caption2).foregroundStyle(.tertiary)
+            Text("AgentBridge 0.4.0").font(.caption2).foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 14).padding(.vertical, 7)
     }

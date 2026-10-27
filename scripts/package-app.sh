@@ -36,6 +36,20 @@ if [[ -z "$RESOURCE_BUNDLE" ]]; then
 fi
 cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/SwiftTerm_SwiftTerm.bundle"
 cp "$ROOT/LICENSES/SwiftTerm-LICENSE.txt" "$APP/Contents/Resources/SwiftTerm-LICENSE.txt"
+APP_RESOURCE_BUNDLE="$(find "$ROOT/build/swiftpm" -type d -path '*/release/AgentBridge_AgentBridgeApp.bundle' -print | LC_ALL=C sort | sed -n '1p')"
+if [[ -z "$APP_RESOURCE_BUNDLE" ]]; then
+  printf 'Missing AgentBridgeApp resource bundle in the SwiftPM build output.\n' >&2
+  exit 1
+fi
+cp -R "$APP_RESOURCE_BUNDLE" "$APP/Contents/Resources/AgentBridge_AgentBridgeApp.bundle"
+for localization in en zh-Hant; do
+  LOCALIZATION_SOURCE="$ROOT/Sources/AgentBridgeApp/Resources/$localization.lproj"
+  if [[ ! -d "$LOCALIZATION_SOURCE" ]]; then
+    printf 'Missing app localization resources: %s\n' "$LOCALIZATION_SOURCE" >&2
+    exit 1
+  fi
+  cp -R "$LOCALIZATION_SOURCE" "$APP/Contents/Resources/$localization.lproj"
+done
 ICON_SOURCE="$ROOT/Assets/AppIcon-1024.png"
 ICONSET="$ROOT/build/tmp/AgentBridge-$$.iconset"
 if [[ ! -f "$ICON_SOURCE" ]]; then
@@ -70,8 +84,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key><string>org.agentbridge.app</string>
   <key>CFBundleName</key><string>AgentBridge</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.3.0</string>
-  <key>CFBundleVersion</key><string>2</string>
+  <key>CFBundleShortVersionString</key><string>0.4.0</string>
+  <key>CFBundleVersion</key><string>3</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hant</string></array>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>

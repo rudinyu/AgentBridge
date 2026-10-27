@@ -1,6 +1,6 @@
 # AgentBridge: How to Use
 
-[繁體中文](HOW_TO_USE.zh-TW.md)
+[Traditional Chinese](HOW_TO_USE.zh-TW.md)
 
 This guide covers setup, sign-in, starting conversations, switching providers and accounts, shared memory, and enabling Claude API when needed. The app and CLI share local settings, sessions, memory, and the API budget ledger.
 
@@ -24,9 +24,9 @@ open build/AgentBridge.app
 
 The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built the app, open `build/AgentBridge.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
 
-### 2. Check CLI sign-in and plan
+### 2. Choose a language and check CLI sign-in
 
-The app's controls are currently displayed in Traditional Chinese. In this guide, each UI control is shown as “Chinese label” (English meaning). When the app opens, choose Codex or Claude under “助理” (Assistant), then click “檢查登入與方案” (Check login and plan) in the upper-right corner. The app displays only account and plan fields confirmed by the official CLI. If the Codex CLI does not report a plan name, AgentBridge does not guess one.
+Fresh installs use English. To change the app language at any time, choose **English** or **Traditional Chinese** from the language menu in the app header; the selection is saved and takes effect immediately. When the app opens, choose Codex or Claude under **Assistant**, then click **Check Sign-in and Plan** in the upper-right corner. The app displays only account and plan fields confirmed by the official CLI. If the Codex CLI does not report a plan name, AgentBridge does not guess one.
 
 You can also check the environment and sign-in status from the CLI:
 
@@ -36,15 +36,15 @@ CLI=build/swiftpm/debug/agentbridge
 "$CLI" profiles list
 ```
 
-If a CLI cannot be found, enter its executable path in “CLI 執行檔” (CLI Executables), or set it with `agentbridge settings binary codex|claude /absolute/path/to/cli`. The official CLI manages its own login data; AgentBridge does not copy existing credentials.
+If a CLI cannot be found, enter its executable path under **CLI Executables**, or set it with `agentbridge settings binary codex|claude /absolute/path/to/cli`. The official CLI manages its own login data; AgentBridge does not copy existing credentials.
 
 ### 3. Start a read-only App conversation
 
-1. Choose Codex or Claude under “助理” (Assistant). Codex only offers official CLI subscription login.
-2. Confirm the account under “官方 CLI 帳戶” (Official CLI Accounts). To use another account, add and sign in to it first as described below.
-3. Enter the Git repository path under “專案” (Project), or click “選擇儲存庫…” (Choose Repository…).
-4. Leave “互動終端工作階段” (Interactive terminal session) off and click “建立同一專案的新工作階段” (Create a new session for this project). This creates a read-only chat session.
-5. Enter a prompt on the right and click “傳送” (Send). A successfully completed turn is saved to shared memory for this repository and pinned commit.
+1. Choose Codex or Claude under **Assistant**. Codex only offers official CLI subscription login.
+2. Confirm the account under **Official CLI Accounts**. To use another account, add and sign in to it first as described below.
+3. Enter the Git repository path under **Project**, or click **Choose Repository…**.
+4. Leave **Interactive Terminal Session** off and click **Create a New Session for This Project**. This creates a read-only chat session.
+5. Enter a prompt on the right and click **Send**. A successfully completed turn is saved to shared memory for this repository and pinned commit.
 
 Each session pins the source `HEAD` at creation and runs in an isolated clone owned by AgentBridge. Uncommitted and untracked files are not copied. If the source commit later changes, an existing session keeps its original snapshot. A new session uses the new source commit and a separate memory scope. AgentBridge does not merge or push workspace changes automatically.
 
@@ -52,9 +52,9 @@ Each session pins the source `HEAD` at creation and runs in an isolated clone ow
 
 Adding an account does not sign in again to or change the current local account:
 
-1. Enter a display name under “官方 CLI 帳戶” (Official CLI Accounts). “建立後允許共用專案記憶” (Allow sharing project memory after creation) is checked by default. Clear it first if this account should not load or save project memory, then click “新增並切換帳戶” (Add and switch account).
-2. Under the new account, click “在 App 內登入此帳戶” (Sign in to this account in the app) and complete the provider's official sign-in flow in the embedded terminal.
-3. After sign-in, click “檢查登入與方案” (Check login and plan). The app shows the account and plan information reported by the official CLI.
+1. Enter a display name under **Official CLI Accounts**. **Allow shared project memory after creation (on by default)** is checked by default. Clear it first if this account should not load or save project memory, then click **Add and Switch Account**.
+2. Under the new account, click **Sign In to This Account in the App** and complete the provider's official sign-in flow in the embedded terminal.
+3. After sign-in, click **Check Sign-in and Plan**. The app shows the account and plan information reported by the official CLI.
 4. New sessions are bound to the selected account when created. To switch accounts, select the other account and create or switch to a session bound to it.
 
 The built-in “Current local login” profile uses the existing official CLI login. Each new account has a separate CLI configuration directory and must be signed in separately. Changing the selected account does not change the account bound to an existing session; select the original account to continue that session.
@@ -70,25 +70,25 @@ CLI=build/swiftpm/debug/agentbridge
 "$CLI" profiles select --provider claude PROFILE_ID
 ```
 
-New accounts are allowed to use shared memory by default. To stop sharing for an account, clear “允許此帳戶載入與保存專案共用記憶” (Allow this account to load and save project memory) in the app or run `agentbridge profiles memory PROFILE_ID off`. This stops that account from automatically loading or saving turns, but does not delete existing memory. Updating the app does not change existing accounts' saved preference.
+New accounts are allowed to use shared memory by default. To stop sharing for an account, clear **Allow this account to load and save shared project memory** in the app or run `agentbridge profiles memory PROFILE_ID off`. This stops that account from automatically loading or saving turns, but does not delete existing memory. Updating the app does not change existing accounts' saved preference.
 
 ### 5. Switch between Codex and Claude with shared memory
 
 Shared memory is scoped by source repository path and pinned commit. Successful read-only conversations from the app or CLI are added when the account allows sharing. When you switch from Codex to Claude or back, both can use the same completed App/CLI conversations and notes if the sessions use the same source path and commit. New accounts share memory by default; sharing can be disabled per account.
 
-Use “專案共用記憶” (Project Shared Memory) to review chat turns. Open “記憶備註與終端機交接” (Memory Notes and Terminal Handoff) to save material for another assistant. Successful read-only App and CLI turns are added automatically when the account has consented. Native Codex and Claude TUI input and output are not captured; write any handoff details you need into the notes yourself. Clearing memory deletes chat memory and notes for that source and pinned commit. It does not delete provider-owned session data.
+Use **Shared Project Memory** to review chat turns. Open **Memory Notes and Terminal Handoff** to save material for another assistant. Successful read-only App and CLI turns are added automatically when the account has consented. Native Codex and Claude TUI input and output are not captured; write any handoff details you need into the notes yourself. Clearing memory deletes chat memory and notes for that source and pinned commit. It does not delete provider-owned session data.
 
 ### 6. Use the native interactive terminal
 
 To use the native interactive Codex or Claude interface:
 
 1. Make sure subscription login is selected. Claude API mode does not support the interactive terminal.
-2. Enable “互動終端工作階段” (Interactive terminal session) and create the session.
-3. Click “開啟內嵌終端機” (Open embedded terminal) and enter prompts and control the next steps in the provider TUI.
+2. Enable **Interactive Terminal Session** and create the session.
+3. Click **Open Embedded Terminal** and enter prompts and control the next steps in the provider TUI.
 
 This differs from the read-only chat on the right. Codex interactive sessions keep the read-only sandbox. Claude uses its native Manual permission flow; a user-approved action may change the isolated clone, read files outside the workspace, or access the network. Terminal transcripts stay in the current screen and are not written to AgentBridge memory or audit logs.
 
-The upper-right “本機終端機” (Local Terminal) action opens a shell at the repository clone, but it runs with the current macOS user's permissions and may access files outside the clone or use the network. The Git clone is not an operating-system sandbox.
+The upper-right **Local Terminal** action opens a shell at the repository clone, but it runs with the current macOS user's permissions and may access files outside the clone or use the network. The Git clone is not an operating-system sandbox.
 
 ### 7. Usage dashboard and local run limits
 
@@ -145,7 +145,7 @@ The CLI also supports `agentbridge cancel SESSION_ID` to cancel a run, `agentbri
 
 ### 10. Troubleshooting
 
-- **Provider CLI not found:** Set its path in “CLI 執行檔” (CLI Executables), or add the official CLI to a path visible to the login environment, then click “檢查登入與方案” (Check login and plan).
+- **Provider CLI not found:** Set its path under **CLI Executables**, or add the official CLI to a path visible to the login environment, then click **Check Sign-in and Plan**.
 - **Not signed in or plan not confirmed:** Complete subscription login in the provider's official CLI. For a new account, use AgentBridge's login terminal, then check again.
 - **An existing session does not run after switching accounts:** A session is bound to the account used at creation. Switch back to that account or create a session under the selected account.
 - **A new commit does not show older memory:** Memory is isolated by pinned commit. Confirm both sessions use the same repository path and commit.

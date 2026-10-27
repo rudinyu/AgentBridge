@@ -4,13 +4,15 @@
 
 - **Status:** Proposed
 - **Basis:** [Product Gap Study](PRODUCT_GAP_STUDY.md), AgentBridge 0.2.0 baseline
-- **Last reviewed:** 2026-10-26
+- **Last reviewed:** 2026-10-27
 
 ### Product goal
 
 Make AgentBridge the local-first workspace shared by Codex and Claude Code. Users should be able to choose a real signed-in account and plan, work in an isolated workspace, understand the agent's actions, review each change, and explicitly accept the result. Keep using the providers' official CLIs and sign-in flows; do not copy provider credentials or rebuild their native interactive TUIs.
 
-### Implementation status — 2026-10-26
+### Implementation status — 2026-10-27
+
+AgentBridge 0.4.0 uses English by default and supports English and Traditional Chinese throughout the app UI. Users can change and save the language in the app header; the localization resources are bundled with the packaged app. Additional languages can be added with a matching localization resource and language-picker option.
 
 MUST-10 is partially implemented in the current checkout:
 
@@ -37,7 +39,7 @@ Every item below is a release requirement. Do not claim safe code modification i
 | **MUST-08** | **Cross-provider shared memory and handoff** | Share memory across App/CLI and Codex/Claude using the same canonical repository path and pinned commit. New accounts share by default and can explicitly opt out. Before each run, show which memory will go to which provider; identify memory provenance and account scope. Do not scrape native TUI transcripts. Let users save a handoff summary with goal, decisions, completed/remaining work, files, commit, and verification results. |
 | **MUST-09** | **Claude API authorization and spend ledger** | Subscription login is the default; subscription quota exhaustion must never trigger paid API use. Show API controls only when Claude API is explicitly selected; Codex must never show them. Require a per-call key, spend confirmation, and run cap; keep the key process-scoped. Share the ledger between App and CLI, scoped to the selected Claude account profile; never merge accounts by display name. The user's current Team account has a stated US$140 monthly allowance and uses that as its default local cap. A new Claude account must have its own cap explicitly configured and cannot inherit the other account's allowance. Reserve concurrent spend before launch, block a run that exceeds the remaining cap, and never treat unknown cost as zero. Explain that this local ledger cannot see use outside AgentBridge and is not an Anthropic hard cap. |
 | **MUST-10** | **Quota visibility, alerts, and usage controls** | Keep provider-reported subscription quotas separate from AgentBridge-tracked API spend. For the selected account and plan, show every provider-reported usage window separately—such as a 5-hour/session window and a weekly window—with usage/remaining amount, reset time, source, and last refresh. Plan windows vary by provider and plan; show only windows the provider confirms, and do not assume every plan has both. Use a documented, supported CLI status/usage interface; do not scrape private account endpoints or native TUI transcripts. If there is no supported numeric data, say “Unavailable” and offer the official status/usage command as a manual check. Keep AgentBridge-tracked runs/turns in a separately labeled local meter; never present them as account-wide usage because provider allowances may be shared with other provider apps. Send configurable in-app and macOS alerts at 50%, 75%, and 90% for each measurable window, once per window period; if only exhaustion/reset is reported, alert on that signal. Show each window's independent reset time where available. At 90%, allow the user to require confirmation before the next AgentBridge-managed run; at confirmed exhaustion, pause/block new AgentBridge-managed runs until reset or an explicit user choice. Never switch to paid API or another account automatically. For each Claude API billing account/budget pool, show the local monthly cap, spent, reserved, remaining AgentBridge budget, and reset date/time; do not label local remaining budget as provider credit balance. Default one-time API budget alerts at 50%, 75%, and 90%, plus an alert and hard block at the cap. Allow per-account monthly, daily, per-session, and per-run caps; require explicit configuration for additional billing accounts. Limit concurrent paid calls to one by default and reserve across App and CLI before launch. For subscription runs, allow account-level daily/session run or turn limits for AgentBridge-managed chat. Native interactive TUI usage cannot be fully metered or capped by AgentBridge; disclose this before launch. Let users adjust warning thresholds and disable future Claude API calls. Muting notifications must not disable limits or hard blocks. Reject an over-limit run before launch. Audit cap changes, reservations, settlements, alerts, and blocked runs without recording secrets. Warn that canceling an active call cannot reverse charges already incurred. |
-| **MUST-11** | **Separate language files and a distributable app** | Keep English in the canonical README.md, ARCHITECTURE.md, FEATURE_PLAN.md, and HOW_TO_USE.md files, with separate `.zh-TW.md` counterparts; update user flows and safety limits with each relevant feature. Before public distribution, sign with Developer ID, notarize/staple, and verify Gatekeeper installation. Do not describe an unsigned development build as a ready-to-install release. |
+| **MUST-11** | **Localized UI, separate language files, and a distributable app** | Default the app UI to English and include English and Traditional Chinese localizations with a saved in-app language picker. Keep English in the canonical README.md, ARCHITECTURE.md, FEATURE_PLAN.md, and HOW_TO_USE.md files, with separate `.zh-TW.md` counterparts; update user flows and safety limits with each relevant feature. Before public distribution, sign with Developer ID, notarize/staple, and verify Gatekeeper installation. Do not describe an unsigned development build as a ready-to-install release. |
 
 ### Required end-to-end workflow
 
@@ -69,7 +71,7 @@ Every item below is a release requirement. Do not claim safe code modification i
 - Background task center, parallel write agents, scheduling, mobile/remote monitoring.
 - Browser automation, web preview, screenshot/recording artifacts. The first release should fully support text artifacts such as plans, diffs, command output, and test reports.
 - Skills/MCP/hooks catalog, GitHub issues/PRs, and Linear/Slack integrations.
-- Attachments, images, drag-and-drop, advanced search, bulk rename/archive, historical usage analytics/export, collapsible panels, and a fully localized English UI.
+- Attachments, images, drag-and-drop, advanced search, bulk rename/archive, historical usage analytics/export, collapsible panels, and localizations beyond English and Traditional Chinese.
 - A third model provider. First complete safe changes, review, handoff, and spend control for Codex and Claude.
 
 ### Explicit non-goals
