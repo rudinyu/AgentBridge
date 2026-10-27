@@ -4,6 +4,7 @@ import Darwin
 import AgentBridgeCore
 import Charts
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
 
 @main
@@ -26,7 +27,10 @@ final class AppModel: ObservableObject {
     @Published var sessions: [SessionRecord] = []
     @Published var events: [AuditEvent] = []
     @Published var selectedSessionID: UUID?
+    @Published var requestedAccessMode: AccessMode = .readOnly
     @Published var repositoryPath = ""
+    @Published var workspaceRootPath = ""
+    @Published var isChangingWorkspaceRoot = false
     @Published var codexPath = ""
     @Published var claudePath = ""
     @Published var prompt = ""
@@ -34,7 +38,26 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var outputText = ""
     @Published var isRunning = false
-    @Published var interactiveMode = false
+    @Published var changePlanTitle = ""
+    @Published var changePlanSummary = ""
+    @Published var changePlanStepsText = ""
+    @Published var changeDiff: WorkspaceChangeDiff?
+    @Published var verificationResult: VerificationResult?
+    @Published var branchName = ""
+    @Published var customVerifierPath = ""
+    @Published var customVerifierArgumentsText = ""
+    @Published var isVerifying = false
+    @Published var taskRecords: [ParallelTaskRecord] = []
+    @Published var projectMemoryHandoffs: [ProjectMemoryHandoff] = []
+    @Published var memoryHandoffTargetSessionID: UUID?
+    @Published var selectedMemoryTurnIDs = Set<UUID>()
+    @Published var includeMemoryNotes = false
+    @Published var extensionDescriptors: [ExtensionDescriptor] = []
+    @Published var selectedExtensionID = ""
+    @Published var selectedExtensionPermissions = Set<ExtensionPermission>()
+    @Published var extensionPathScopesText = ""
+    @Published var extensionHostScopesText = ""
+    @Published var isImportingExtensionDescriptor = false
     @Published var apiBudget = ""
     @Published var apiKey = ""
     @Published var confirmAPIRun = false
@@ -73,7 +96,7 @@ final class AppModel: ObservableObject {
 
     private var service: BridgeService?
     private var store: AuditStore?
-    private var cancellation: CancellationFlag?
+    private var activeRunFlags: [UUID: CancellationFlag] = [:]
     private var activeRunSessionID: UUID?
     private var activeTerminalProfileID: UUID?
     private var activeTerminalSessionID: UUID?
@@ -100,19 +123,42 @@ final class AppModel: ObservableObject {
     init() {
         appLanguage = AppLanguage.saved
         do {
-            let root = try RuntimePaths.applicationSupportRoot()
-            let store = try AuditStore(rootURL: root)
+            guard try RuntimePaths.workspaceRootConfiguration() != nil else {
+                status = "請選擇工作區資料根目錄以開始。"
+                return
+            }
+            let root = try RuntimePaths.requireWorkspaceRoot()
+            let store = try RuntimePaths.makeAuditStore()
             let service = try BridgeService(store: store)
             self.store = store
             self.service = service
+            workspaceRootPath = root.path
             refresh()
         } catch {
+            if let root = try? RuntimePaths.requireWorkspaceRoot() { workspaceRootPath = root.path }
             errorMessage = error.localizedDescription
         }
     }
 
     var selectedSession: SessionRecord? {
         sessions.first(where: { $0.id == selectedSessionID })
+    }
+
+    var selectedSessionIsRunning: Bool {
+        selectedSession.map { activeRunFlags[$0.id] != nil } ?? false
+    }
+
+    var canStartAnotherRun: Bool {
+        activeRunFlags.count < 3 && selectedSession.map { activeRunFlags[$0.id] == nil } == true
+    }
+
+    var verifiedCurrentDiff: Bool {
+        guard let session = selectedSession, let diff = changeDiff,
+              session.verificationPassed == true,
+              session.verificationDiffDigest == diff.digest,
+              let verifiedAt = session.verificationCompletedAt,
+              let lastChangeAt = session.lastChangeRunAt else { return false }
+        return verifiedAt >= lastChangeAt
     }
 
     var isClaudeAPIRunContext: Bool {
@@ -163,6 +209,8 @@ final class AppModel: ObservableObject {
                 selectedProfileIDs[provider] = try service.selectedAccountProfile(provider: provider).id
             }
             sessions = try service.sessions()
+            taskRecords = try service.taskRecords()
+            extensionDescriptors = try service.extensionDescriptors()
             if selectedSessionID == nil, let first = sessions.first {
                 selectedSessionID = first.id
                 refreshSelectedEvents()
@@ -280,6 +328,23 @@ final class AppModel: ObservableObject {
             let snapshot = try service.sharedMemory(sessionID: selectedSessionID)
             if memorySnapshot?.scope.key != snapshot.scope.key { memoryNotes = snapshot.notes }
             memorySnapshot = snapshot
+            projectMemoryHandoffs = try service.projectMemoryHandoffs(sessionID: selectedSessionID)
+            taskRecords = try service.taskRecords()
+            if selectedSession?.policy.accessMode == .isolatedChanges,
+               activeRunFlags[selectedSessionID] == nil,
+               selectedSession?.status != .running {
+                Task { @MainActor [weak self] in
+                    guard let self, let service = self.service else { return }
+                    do {
+                        let diff = try await service.changesDiff(sessionID: selectedSessionID)
+                        if self.selectedSessionID == selectedSessionID { self.changeDiff = diff }
+                    } catch {
+                        if self.selectedSessionID == selectedSessionID { self.errorMessage = error.localizedDescription }
+                    }
+                }
+            } else {
+                changeDiff = nil
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -287,6 +352,18 @@ final class AppModel: ObservableObject {
 
     func selectedSessionDidChange() {
         clearAPIAuthorization()
+        if let plan = selectedSession?.changePlan {
+            changePlanTitle = plan.title
+            changePlanSummary = plan.summary
+            changePlanStepsText = plan.steps.joined(separator: "\n")
+        } else {
+            changePlanTitle = ""
+            changePlanSummary = ""
+            changePlanStepsText = ""
+        }
+        selectedMemoryTurnIDs = []
+        memoryHandoffTargetSessionID = nil
+        loadSelectedExtensionGrant()
         refreshSelectedEvents()
         if let service {
             do {
@@ -305,7 +382,7 @@ final class AppModel: ObservableObject {
         if provider == .codex, settings.usageMode == .api {
             settings.usageMode = .subscription
         }
-        if provider == .codex { interactiveMode = false }
+        if provider == .codex && settings.usageMode == .api { requestedAccessMode = .readOnly }
         clearAPIAuthorization()
         do {
             updateBinaryPathsInSettings()
@@ -329,7 +406,7 @@ final class AppModel: ObservableObject {
               let service else { return }
         let previous = settings
         settings.usageMode = usageMode
-        if usageMode == .api { interactiveMode = false }
+        if usageMode == .api { requestedAccessMode = .readOnly }
         clearAPIAuthorization()
         do {
             updateBinaryPathsInSettings()
@@ -632,6 +709,46 @@ final class AppModel: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url { repositoryPath = url.path }
     }
 
+    func chooseWorkspaceRoot() {
+        guard !isChangingWorkspaceRoot, !isRunning, !terminalRunning else { return }
+        let panel = NSOpenPanel()
+        panel.title = localized("選擇工作區資料根目錄")
+        panel.message = localized("AgentBridge 會在此資料夾保存隔離工作區與共用記憶；私人設定和用量資料仍保留在 Application Support。")
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        isChangingWorkspaceRoot = true
+        status = localized("正在安全複製現有工作區與共用記憶…")
+        Task {
+            do {
+                let privateRoot = try RuntimePaths.applicationSupportRoot()
+                let selected = try await WorkspaceRootCoordinator.changeRoot(to: url, privateRootURL: privateRoot)
+                let store = try RuntimePaths.makeAuditStore()
+                let service = try BridgeService(store: store)
+                self.store = store
+                self.service = service
+                workspaceRootPath = selected.path
+                errorMessage = nil
+                status = localized("工作區資料根目錄已更新；舊資料仍保留在原位置。")
+                refresh(forceUsageStatistics: true)
+            } catch {
+                errorMessage = error.localizedDescription
+                if let root = try? RuntimePaths.requireWorkspaceRoot(),
+                   let store = try? RuntimePaths.makeAuditStore(),
+                   let service = try? BridgeService(store: store) {
+                    self.store = store
+                    self.service = service
+                    workspaceRootPath = root.path
+                    refresh(forceUsageStatistics: true)
+                }
+            }
+            isChangingWorkspaceRoot = false
+        }
+    }
+
     func saveSettings() {
         guard let service else { return }
         do {
@@ -668,7 +785,14 @@ final class AppModel: ObservableObject {
         guard let service else { return }
         let provider = settings.defaultProvider
         guard !repositoryPath.isEmpty else { errorMessage = "請先選擇 Git 儲存庫。"; return }
-        guard !interactiveMode || settings.usageMode == .subscription else { errorMessage = "互動模式目前只支援訂閱登入。"; return }
+        guard requestedAccessMode != .interactiveManualApproval || settings.usageMode == .subscription else {
+            errorMessage = "互動模式目前只支援訂閱登入。"
+            return
+        }
+        guard requestedAccessMode != .isolatedChanges || settings.usageMode == .subscription else {
+            errorMessage = "隔離變更模式只支援訂閱登入；Claude API 只能建立唯讀工作階段。"
+            return
+        }
         do {
             try service.saveSettings(settings)
         } catch {
@@ -676,14 +800,14 @@ final class AppModel: ObservableObject {
             return
         }
         status = "正在建立提交版本的隔離工作區…"
-        let access: AccessMode = interactiveMode ? .interactiveManualApproval : .readOnly
+        let access = requestedAccessMode
         Task {
             do {
                 let session = try await service.createSession(sourcePath: repositoryPath, provider: provider, accessMode: access)
                 status = session.sourceWasDirty ? "工作階段已建立。來源未提交變更已排除。" : "工作階段已建立。"
                 refresh()
                 selectedSessionID = session.id
-                refreshSelectedEvents()
+                selectedSessionDidChange()
             } catch {
                 errorMessage = error.localizedDescription
                 status = "無法建立工作階段。"
@@ -693,6 +817,13 @@ final class AppModel: ObservableObject {
 
     func runPrompt() {
         guard let service, let session = selectedSession else { errorMessage = "請選擇工作階段。"; return }
+        guard session.policy.accessMode == .readOnly else {
+            errorMessage = session.policy.accessMode == .isolatedChanges
+                ? "隔離變更工作階段請先建立、檢視並核准工作計畫，再執行變更。"
+                : "原生互動工作階段請從終端機面板啟動。"
+            return
+        }
+        guard canStartAnotherRun else { errorMessage = "最多可同時執行三個不同工作階段；目前工作階段也不能重複執行。"; return }
         var apiRequest: APIUsageRequest?
         if settings.usageMode == .api {
             guard isClaudeAPIRunContext else {
@@ -707,9 +838,9 @@ final class AppModel: ObservableObject {
         }
         let promptValue = prompt
         let cancellation = CancellationFlag()
-        self.cancellation = cancellation
+        activeRunFlags[session.id] = cancellation
         activeRunSessionID = session.id
-        isRunning = true
+        isRunning = !activeRunFlags.isEmpty
         errorMessage = nil
         outputText = ""
         status = settings.usageMode == .api ? "正在檢查並保留預算…" : "正在執行…"
@@ -717,9 +848,9 @@ final class AppModel: ObservableObject {
         confirmAPIRun = false
         Task { @MainActor [self] in
             defer {
-                isRunning = false
-                self.cancellation = nil
-                activeRunSessionID = nil
+                activeRunFlags.removeValue(forKey: session.id)
+                isRunning = !activeRunFlags.isEmpty
+                activeRunSessionID = activeRunFlags.keys.first
                 refresh(forceUsageStatistics: true)
                 refreshSelectedEvents()
                 apiKey = ""
@@ -741,12 +872,329 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func saveChangePlan() {
+        guard let service, let session = selectedSession,
+              session.policy.accessMode == .isolatedChanges else {
+            errorMessage = "請先建立隔離變更工作階段。"
+            return
+        }
+        let steps = changePlanStepsText
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        do {
+            let plan = try service.createChangePlan(
+                sessionID: session.id,
+                title: changePlanTitle,
+                summary: changePlanSummary,
+                steps: steps
+            )
+            changePlanTitle = plan.title
+            changePlanSummary = plan.summary
+            changePlanStepsText = plan.steps.joined(separator: "\n")
+            status = "計畫已保存為待檢視狀態；尚未授權寫入。"
+            refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func approveChangePlan() {
+        guard let service, let session = selectedSession, let plan = session.changePlan else {
+            errorMessage = "請先保存一份工作計畫。"
+            return
+        }
+        do {
+            _ = try service.approveChangePlan(sessionID: session.id, planID: plan.id, reviewedDigest: plan.reviewDigest)
+            status = "已明確核准目前顯示的計畫；現在可以執行隔離變更。"
+            refresh()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func runApprovedChanges() {
+        guard let service, let session = selectedSession,
+              let plan = session.changePlan,
+              session.approvedChangePlanDigest == plan.reviewDigest else {
+            errorMessage = "請先保存並明確核准目前的工作計畫。"
+            return
+        }
+        guard settings.usageMode == .subscription else {
+            errorMessage = "隔離變更只支援官方 CLI 訂閱登入。"
+            return
+        }
+        guard canStartAnotherRun else { errorMessage = "最多可同時執行三個不同工作階段；目前工作階段也不能重複執行。"; return }
+        let promptValue = prompt
+        guard !promptValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "請輸入要交給助理的變更要求。"
+            return
+        }
+        let cancellation = CancellationFlag()
+        activeRunFlags[session.id] = cancellation
+        activeRunSessionID = session.id
+        isRunning = true
+        errorMessage = nil
+        status = "正在隔離工作區執行已核准的變更…"
+        Task { @MainActor [self] in
+            defer {
+                activeRunFlags.removeValue(forKey: session.id)
+                isRunning = !activeRunFlags.isEmpty
+                activeRunSessionID = activeRunFlags.keys.first
+                refresh()
+                refreshSelectedEvents()
+            }
+            do {
+                let output = try await service.runChanges(
+                    sessionID: session.id,
+                    prompt: promptValue,
+                    planID: plan.id,
+                    reviewedDigest: plan.reviewDigest,
+                    cancellation: cancellation
+                ) { [weak self] message in
+                    Task { @MainActor [weak self] in
+                        self?.status = message
+                        self?.refreshSelectedEvents()
+                    }
+                }
+                outputText = output.text
+                prompt = ""
+                status = "CLI 回報變更執行完成；請檢視完整檔案差異。"
+            } catch {
+                errorMessage = error.localizedDescription
+                status = "變更執行結束。"
+            }
+        }
+    }
+
+    func restoreChangeFile(_ path: String) {
+        guard let service, let session = selectedSession else { return }
+        Task { @MainActor [weak self] in
+            do {
+                try await service.restoreChangeFiles(sessionID: session.id, filePaths: [path])
+                self?.refreshSelectedEvents()
+                self?.refresh()
+            } catch { self?.errorMessage = error.localizedDescription }
+        }
+    }
+
+    func restoreAllChangeFiles() {
+        guard let service, let session = selectedSession else { return }
+        Task { @MainActor [weak self] in
+            do {
+                try await service.restoreAllChanges(sessionID: session.id)
+                self?.refreshSelectedEvents()
+                self?.refresh()
+            } catch { self?.errorMessage = error.localizedDescription }
+        }
+    }
+
+    func exportChangePatch() {
+        guard let service, let session = selectedSession else { return }
+        Task { @MainActor [weak self] in
+            do {
+                let patch = try await service.exportChangePatch(sessionID: session.id)
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = "AgentBridge-\(session.id.uuidString.prefix(8)).patch"
+                panel.allowedContentTypes = [.plainText]
+                guard panel.runModal() == .OK, let url = panel.url else { return }
+                try patch.write(to: url, options: .atomic)
+                self?.status = "已匯出 \(patch.count) 位元組補丁。"
+                self?.refreshSelectedEvents()
+            } catch { self?.errorMessage = error.localizedDescription }
+        }
+    }
+
+    func runVerification(custom: Bool = false) {
+        guard let service, let session = selectedSession,
+              session.policy.accessMode == .isolatedChanges else { return }
+        guard !isRunning || activeRunFlags[session.id] == nil else {
+            errorMessage = "此工作階段目前已有執行中的工作。"
+            return
+        }
+        guard activeRunFlags.count < 3 else { errorMessage = "最多可同時執行三項工作。"; return }
+        let executable = custom ? URL(fileURLWithPath: customVerifierPath) : nil
+        let arguments = custom ? customVerifierArgumentsText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) : []
+        let cancellation = CancellationFlag()
+        activeRunFlags[session.id] = cancellation
+        activeRunSessionID = session.id
+        isRunning = true
+        isVerifying = true
+        verificationResult = nil
+        Task { @MainActor [self] in
+            defer {
+                activeRunFlags.removeValue(forKey: session.id)
+                isRunning = !activeRunFlags.isEmpty
+                isVerifying = false
+                activeRunSessionID = activeRunFlags.keys.first
+                refresh()
+                refreshSelectedEvents()
+            }
+            do {
+                let result = try await service.runVerification(
+                    sessionID: session.id,
+                    customExecutableURL: executable,
+                    arguments: arguments,
+                    customCommandApproved: custom,
+                    cancellation: cancellation
+                )
+                verificationResult = result
+                status = result.succeeded
+                    ? "驗證 CLI 回報成功；退出代碼 0，耗時 \(String(format: "%.2f", result.durationSeconds)) 秒。"
+                    : "驗證未通過或未完成；請查看 CLI 輸出與活動記錄。"
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func chooseCustomVerifier() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose Executable"
+        if panel.runModal() == .OK, let url = panel.url { customVerifierPath = url.path }
+    }
+
+    func acceptChanges() {
+        guard let service, let session = selectedSession else { return }
+        Task { @MainActor [weak self] in
+            do {
+                _ = try await service.acceptChanges(sessionID: session.id)
+                self?.status = "已接受目前已驗證的差異；來源儲存庫仍未修改。"
+                self?.refresh()
+            } catch { self?.errorMessage = error.localizedDescription }
+        }
+    }
+
+    func applyChangesToBranch() {
+        guard let service, let session = selectedSession else { return }
+        let requestedBranchName = branchName
+        Task { @MainActor [weak self] in
+            do {
+                let result = try await service.applyChangesToLocalBranch(sessionID: session.id, branchName: requestedBranchName)
+                self?.status = "已建立未提交工作樹：\(result.worktreePath)；沒有建立提交、推送或合併。"
+                self?.refresh()
+            } catch { self?.errorMessage = error.localizedDescription }
+        }
+    }
+
+    func carryForwardSelectedMemory() {
+        guard let service, let source = selectedSession,
+              let targetID = memoryHandoffTargetSessionID else { return }
+        do {
+            if includeMemoryNotes {
+                try service.setSharedMemoryNotes(sessionID: source.id, notes: memoryNotes)
+            }
+            let handoff = try service.carryForwardProjectMemory(
+                sourceSessionID: source.id,
+                targetSessionID: targetID,
+                selectedTurnIDs: selectedMemoryTurnIDs,
+                includeNotes: includeMemoryNotes
+            )
+            projectMemoryHandoffs = try service.projectMemoryHandoffs(sessionID: source.id)
+            status = "已建立明確記憶交接：\(handoff.sourceCommit.prefix(12)) → \(handoff.targetCommit.prefix(12))。"
+            selectedMemoryTurnIDs = []
+            includeMemoryNotes = false
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    var memoryHandoffTargets: [SessionRecord] {
+        guard let source = selectedSession else { return [] }
+        return sessions.filter { candidate in
+            guard candidate.id != source.id,
+                  candidate.snapshotCommit.lowercased() != source.snapshotCommit.lowercased() else { return false }
+            let sourcePath = URL(fileURLWithPath: source.sourceRepositoryPath, isDirectory: true).standardizedFileURL.resolvingSymlinksInPath().path
+            let candidatePath = URL(fileURLWithPath: candidate.sourceRepositoryPath, isDirectory: true).standardizedFileURL.resolvingSymlinksInPath().path
+            return sourcePath == candidatePath
+        }
+    }
+
+    var selectedMemoryTargetCanReceiveHandoff: Bool {
+        guard let target = sessions.first(where: { $0.id == memoryHandoffTargetSessionID }) else { return false }
+        let boundProfileID = target.accountProfileID ?? AccountProfile.defaultID(for: target.provider)
+        return selectedProfileIDs[target.provider] == boundProfileID
+            && (accountProfiles[target.provider]?.first(where: { $0.id == boundProfileID })?.allowsSharedMemory ?? false)
+    }
+
+    var selectedExtensionDescriptor: ExtensionDescriptor? {
+        extensionDescriptors.first(where: { $0.id == selectedExtensionID })
+    }
+
+    var selectedExtensionGrant: ExtensionGrant? {
+        guard let service, let session = selectedSession, !selectedExtensionID.isEmpty,
+              let projectID = try? service.extensionProjectID(sessionID: session.id) else { return nil }
+        return try? service.extensionGrant(extensionID: selectedExtensionID, projectID: projectID)
+    }
+
+    func selectedExtensionDidChange() {
+        loadSelectedExtensionGrant()
+    }
+
+    private func loadSelectedExtensionGrant() {
+        guard let grant = selectedExtensionGrant else {
+            selectedExtensionPermissions = []
+            extensionPathScopesText = ""
+            extensionHostScopesText = ""
+            return
+        }
+        selectedExtensionPermissions = Set(grant.permissions)
+        extensionPathScopesText = grant.allowedRelativePaths.joined(separator: "\n")
+        extensionHostScopesText = grant.allowedHosts.joined(separator: "\n")
+    }
+
+    func importExtensionDescriptor(_ result: Result<[URL], Error>) {
+        do {
+            let urls = try result.get()
+            guard let url = urls.first else { return }
+            let access = url.startAccessingSecurityScopedResource()
+            defer { if access { url.stopAccessingSecurityScopedResource() } }
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            guard data.count <= 64 * 1_024 else { throw AgentBridgeError.invalidInput("Descriptor files must be 64 KiB or smaller.") }
+            let descriptor = try JSONDecoder().decode(ExtensionDescriptor.self, from: data)
+            let source: ExtensionImportSource = descriptor.kind == .skill ? .localMetadata : .localMetadata
+            _ = try service?.importExtensionDescriptor(descriptor, source: source, sourceReference: url.path)
+            extensionDescriptors = try service?.extensionDescriptors() ?? []
+            selectedExtensionID = descriptor.id
+            status = "已匯入惰性擴充功能中繼資料；未執行任何指令或腳本。"
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func grantSelectedExtension() {
+        guard let service, let session = selectedSession, !selectedExtensionID.isEmpty else { return }
+        do {
+            let projectID = try service.extensionProjectID(sessionID: session.id)
+            let paths = extensionPathScopesText.split(whereSeparator: \.isNewline).map(String.init)
+            let hosts = extensionHostScopesText.split(whereSeparator: \.isNewline).map(String.init)
+            _ = try service.grantExtensionPermissions(
+                extensionID: selectedExtensionID,
+                projectID: projectID,
+                permissions: selectedExtensionPermissions.sorted { $0.rawValue < $1.rawValue },
+                allowedRelativePaths: paths,
+                allowedHosts: hosts
+            )
+            status = "已保存此專案的窄範圍政策中繼資料；擴充功能仍未啟用或執行。"
+            refresh()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func revokeSelectedExtension() {
+        guard let service, let session = selectedSession, !selectedExtensionID.isEmpty else { return }
+        do {
+            let projectID = try service.extensionProjectID(sessionID: session.id)
+            _ = try service.revokeExtensionPermissions(extensionID: selectedExtensionID, projectID: projectID)
+            status = "已撤銷此專案的擴充功能權限政策。"
+            refresh()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
     func cancelRun() {
-        if let activeRunSessionID { cancelSession(activeRunSessionID) }
+        if let selectedSessionID, activeRunFlags[selectedSessionID] != nil { cancelSession(selectedSessionID) }
     }
 
     func cancelSession(_ id: UUID) {
-        if activeRunSessionID == id { cancellation?.cancel() }
+        activeRunFlags[id]?.cancel()
         do {
             try service?.cancel(sessionID: id)
             status = "已送出取消請求…"
@@ -979,9 +1427,13 @@ final class AppModel: ObservableObject {
 
     private func selectOrCreateSession(for provider: AgentProvider, anchoredTo anchor: SessionRecord) {
         guard let profileID = selectedProfileIDs[provider], let service else { return }
-        let access = anchor.policy.accessMode == .interactiveManualApproval && settings.usageMode == .subscription
-            ? AccessMode.interactiveManualApproval
-            : AccessMode.readOnly
+        let access: AccessMode
+        if settings.usageMode == .subscription,
+           (anchor.policy.accessMode == .interactiveManualApproval || anchor.policy.accessMode == .isolatedChanges) {
+            access = anchor.policy.accessMode
+        } else {
+            access = .readOnly
+        }
         if let match = sessions.first(where: {
             $0.provider == provider
                 && ($0.accountProfileID ?? AccountProfile.defaultID(for: provider)) == profileID
@@ -995,7 +1447,7 @@ final class AppModel: ObservableObject {
             return
         }
         repositoryPath = anchor.sourceRepositoryPath
-        interactiveMode = access == .interactiveManualApproval
+        requestedAccessMode = access
         isSwitchingTarget = true
         status = "正在為所選助理與帳戶建立同一專案的隔離工作區…"
         Task {
@@ -1105,28 +1557,37 @@ struct ContentView: View {
     @StateObject private var model = AppModel()
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            HStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        settingsPanel
-                        usagePanel
-                        accountPanel
-                        workspacePanel
-                        sessionList
+        Group {
+            if model.workspaceRootPath.isEmpty {
+                workspaceRootSetup
+            } else {
+                VStack(spacing: 0) {
+                    header
+                    Divider()
+                    HStack(spacing: 0) {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 12) {
+                                settingsPanel
+                                usagePanel
+                                accountPanel
+                                workspacePanel
+                                sessionList
+                                taskBoardPanel
+                                extensionPolicyPanel
+                            }
+                            .padding(12)
+                        }
+                        .frame(width: 330)
+                        Divider()
+                        conversationPanel
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding(14)
                     }
-                    .padding(12)
+                    Divider()
+                    statusBar
                 }
-                .frame(width: 330)
-                Divider()
-                conversationPanel
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(14)
+                .disabled(model.isChangingWorkspaceRoot)
             }
-            Divider()
-            statusBar
         }
         .frame(minWidth: 1160, minHeight: 780)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -1142,9 +1603,41 @@ struct ContentView: View {
         } message: {
             Text("這會刪除此來源儲存庫與固定提交版本的對話記憶與備註。provider 原生工作階段不會被修改。")
         }
+        .fileImporter(
+            isPresented: $model.isImportingExtensionDescriptor,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false,
+            onCompletion: model.importExtensionDescriptor
+        )
         .onChange(of: model.selectedSessionID) { _, _ in model.selectedSessionDidChange() }
+        .onChange(of: model.selectedExtensionID) { _, _ in model.selectedExtensionDidChange() }
         .onAppear { model.refresh() }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
+    }
+
+    private var workspaceRootSetup: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "externaldrive.badge.plus")
+                .font(.system(size: 42))
+                .foregroundStyle(.secondary)
+            Text("選擇工作區資料根目錄")
+                .font(.title2.weight(.semibold))
+            Text("首次使用前，請選擇或建立一個資料夾。AgentBridge 會在裡面保存隔離工作區和共用記憶；App 設定、獨立帳戶的 CLI profile 資料夾與用量帳本仍留在 Application Support。內建帳戶沿用 provider CLI 原有的登入資料夾。")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 520)
+            Button("選擇或建立資料根目錄…") { model.chooseWorkspaceRoot() }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.isChangingWorkspaceRoot)
+            if model.isChangingWorkspaceRoot {
+                ProgressView("正在安全複製現有工作區與共用記憶…")
+            }
+            Text(model.localized(model.status))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(36)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var header: some View {
@@ -1648,12 +2141,35 @@ struct ContentView: View {
     private var workspacePanel: some View {
         GroupBox("專案") {
             VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("資料根目錄").font(.caption.weight(.semibold))
+                        Text(model.workspaceRootPath)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                    Spacer(minLength: 0)
+                    Button("變更…") { model.chooseWorkspaceRoot() }
+                        .disabled(model.isChangingWorkspaceRoot || model.isRunning || model.terminalRunning)
+                }
                 TextField("Git 儲存庫路徑", text: $model.repositoryPath)
                 Button("選擇儲存庫…") { model.chooseRepository() }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Toggle("互動終端工作階段", isOn: $model.interactiveMode)
-                    .disabled(model.settings.defaultProvider == .claude && model.settings.usageMode == .api)
-                    .font(.caption)
+                Picker("新工作階段存取模式", selection: $model.requestedAccessMode) {
+                    Text("唯讀（預設）").tag(AccessMode.readOnly)
+                    Text("隔離變更（需先核准計畫）").tag(AccessMode.isolatedChanges)
+                        .disabled(model.settings.usageMode == .api)
+                    Text("原生互動終端").tag(AccessMode.interactiveManualApproval)
+                        .disabled(model.settings.usageMode == .api)
+                }
+                .font(.caption)
+                if model.settings.usageMode == .api {
+                    Text("Claude API 只提供唯讀工作階段；隔離變更與互動終端僅支援官方 CLI 訂閱登入。")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 Button("建立同一專案的新工作階段") { model.createSession() }
                     .disabled(model.repositoryPath.isEmpty || model.isSwitchingTarget)
                 Text("AgentBridge 固定提交版本並在自己的隔離工作區執行。相同來源與提交版本在 Codex、Claude 間共用聊天記憶。")
@@ -1677,6 +2193,8 @@ struct ContentView: View {
                                 .font(.headline)
                             if session.policy.accessMode == .interactiveManualApproval {
                                 Text("Terminal").font(.caption2).padding(.horizontal, 5).padding(.vertical, 2).background(.quaternary, in: Capsule())
+                            } else if session.policy.accessMode == .isolatedChanges {
+                                Text("Isolated changes").font(.caption2).padding(.horizontal, 5).padding(.vertical, 2).background(.orange.opacity(0.14), in: Capsule())
                             }
                         }
                         Text("\(model.profileName(for: session)) · \(model.localized(session.status.rawValue.capitalized))")
@@ -1700,8 +2218,13 @@ struct ContentView: View {
                 if session.policy.accessMode == .readOnly {
                     chatTimeline
                     composer(session)
+                    activityTimeline
+                } else if session.policy.accessMode == .isolatedChanges {
+                    changeWorkflowPanel(session)
+                    activityTimeline
                 } else {
                     interactivePanel(session)
+                    activityTimeline
                 }
             } else {
                 ContentUnavailableView("選擇或建立工作階段", systemImage: "bubble.left.and.bubble.right", description: Text("先選擇 Git 儲存庫，再開始一段固定版本的專案對話。"))
@@ -1781,8 +2304,352 @@ struct ContentView: View {
                     }
                     .padding(.top, 5)
                 }
+                DisclosureGroup("明確交接至另一個提交版本") {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("只會複製你選取的 App 聊天回合與備註。目標工作階段綁定的帳戶必須允許共用記憶；交接會以來源與目標提交版本標記，並作為明確的未信任歷史內容附加到目標提示。")
+                            .font(.caption2).foregroundStyle(.secondary)
+                        if model.memoryHandoffTargets.isEmpty {
+                            Text("需要同一個儲存庫的另一個不同提交版本工作階段。")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Picker("目標工作階段", selection: $model.memoryHandoffTargetSessionID) {
+                                Text("選擇目標").tag(UUID?.none)
+                                ForEach(model.memoryHandoffTargets) { target in
+                                    Text("\(target.provider.rawValue.capitalized) · \(target.snapshotCommit.prefix(12)) · \(model.profileName(for: target))")
+                                        .tag(Optional(target.id))
+                                }
+                            }
+                            if model.memoryHandoffTargetSessionID != nil && !model.selectedMemoryTargetCanReceiveHandoff {
+                                Label("Select the target session’s bound account and allow shared memory before creating this handoff.", systemImage: "lock.fill")
+                                    .font(.caption2).foregroundStyle(.orange)
+                            }
+                            if let turns = model.memorySnapshot?.turns, !turns.isEmpty {
+                                Text("選取要帶入的對話回合")
+                                    .font(.caption.weight(.semibold))
+                                ForEach(turns) { turn in
+                                    Toggle(isOn: Binding(
+                                        get: { model.selectedMemoryTurnIDs.contains(turn.id) },
+                                        set: { selected in
+                                            if selected { model.selectedMemoryTurnIDs.insert(turn.id) }
+                                            else { model.selectedMemoryTurnIDs.remove(turn.id) }
+                                        }
+                                    )) {
+                                        Text("\(turn.provider.rawValue.capitalized) · \(turn.timestamp.formatted(date: .abbreviated, time: .shortened)) · \(turn.userText.prefix(72))")
+                                            .font(.caption2).lineLimit(2)
+                                    }
+                                }
+                            }
+                            Toggle("包含目前已儲存的專案備註", isOn: $model.includeMemoryNotes)
+                                .font(.caption)
+                            Button("建立明確記憶交接") { model.carryForwardSelectedMemory() }
+                                .disabled(model.memoryHandoffTargetSessionID == nil || !model.selectedMemoryTargetCanReceiveHandoff || (model.selectedMemoryTurnIDs.isEmpty && !model.includeMemoryNotes))
+                        }
+                        if !model.projectMemoryHandoffs.isEmpty {
+                            Divider()
+                            Text("此儲存庫的交接記錄")
+                                .font(.caption.weight(.semibold))
+                            ForEach(model.projectMemoryHandoffs.prefix(5)) { handoff in
+                                Text("\(handoff.sourceCommit.prefix(12)) → \(handoff.targetCommit.prefix(12)) · \(handoff.turns.count) turns · \(handoff.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .padding(.top, 5)
+                }
             }
             .padding(.vertical, 2)
+        }
+    }
+
+    private func changeWorkflowPanel(_ session: SessionRecord) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                GroupBox("Isolated changes · review before writing") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("This session writes only inside its isolated workspace. Each change run requires an editable plan, an explicit approval, and official CLI subscription mode. The source repository is not changed by the run.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        TextField("Plan title", text: $model.changePlanTitle)
+                        TextField("Plan summary", text: $model.changePlanSummary, axis: .vertical)
+                            .lineLimit(2...4)
+                        Text("Plan steps · one step per line")
+                            .font(.caption.weight(.semibold))
+                        TextEditor(text: $model.changePlanStepsText)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(minHeight: 70, maxHeight: 130)
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                        HStack {
+                            Button("Save plan for review") { model.saveChangePlan() }
+                            if let plan = session.changePlan {
+                                Text("Plan digest · \(plan.reviewDigest.prefix(16))")
+                                    .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                                Spacer()
+                                if session.approvedChangePlanDigest == plan.reviewDigest {
+                                    Label("Approved", systemImage: "checkmark.seal.fill").font(.caption).foregroundStyle(.green)
+                                } else {
+                                    Button("Approve this displayed plan") { model.approveChangePlan() }
+                                        .buttonStyle(.borderedProminent)
+                                }
+                            }
+                        }
+                        if let plan = session.changePlan,
+                           session.approvedChangePlanDigest != plan.reviewDigest {
+                            Text("The saved plan is pending approval. Editing and saving it again clears any earlier approval.")
+                                .font(.caption2).foregroundStyle(.orange)
+                        }
+                    }
+                }
+
+                GroupBox("Run request") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextEditor(text: $model.prompt)
+                            .font(.system(.body, design: .rounded))
+                            .frame(minHeight: 70, maxHeight: 120)
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                        HStack {
+                            Button("Run approved changes") { model.runApprovedChanges() }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.changePlan == nil || session.approvedChangePlanDigest != session.changePlan?.reviewDigest || model.settings.usageMode != .subscription)
+                            if model.selectedSessionIsRunning { Button("Cancel this session") { model.cancelSession(session.id) } }
+                            Spacer()
+                        }
+                    }
+                }
+
+                verificationPanel(session)
+                changeDiffPanel(session)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func verificationPanel(_ session: SessionRecord) -> some View {
+        GroupBox("Verification") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("The default runs the workspace’s .codex/ci.sh only after you select the button. A custom executable and its separate argv entries run only after you select the explicit approval button; no shell command string is constructed.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                HStack {
+                    Button("Run .codex/ci.sh") { model.runVerification() }
+                        .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || model.changeDiff?.files.isEmpty != false)
+                    if model.selectedSessionIsRunning { Button("Cancel verification") { model.cancelSession(session.id) } }
+                    if model.verifiedCurrentDiff {
+                        Label("Current diff verified", systemImage: "checkmark.seal.fill").font(.caption).foregroundStyle(.green)
+                    } else {
+                        Label("Verification must pass for this exact diff", systemImage: "exclamationmark.shield").font(.caption).foregroundStyle(.orange)
+                    }
+                }
+                DisclosureGroup("Use an approved custom verifier") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            TextField("Absolute executable path", text: $model.customVerifierPath)
+                            Button("Choose…") { model.chooseCustomVerifier() }
+                        }
+                        Text("Arguments · one argv item per line; spaces stay inside that argument")
+                            .font(.caption2).foregroundStyle(.secondary)
+                        TextEditor(text: $model.customVerifierArgumentsText)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(minHeight: 45, maxHeight: 85)
+                        Button("Approve and run this executable with these arguments") { model.runVerification(custom: true) }
+                            .disabled(model.customVerifierPath.isEmpty || !model.canStartAnotherRun || model.changeDiff?.files.isEmpty != false)
+                    }
+                    .padding(.top, 4)
+                }
+                if let result = model.verificationResult {
+                    HStack(spacing: 10) {
+                        Text("Exit: \(result.exitCode.map(String.init) ?? "not reported")")
+                        Text("Duration: \(String(format: "%.3f", result.durationSeconds))s")
+                        Text(result.succeeded ? "CLI reported success" : (result.skippedReason ?? (result.wasCancelled ? "Cancelled" : "Not successful")))
+                    }
+                    .font(.caption.monospacedDigit())
+                    if !result.standardOutput.isEmpty {
+                        Text("Standard output").font(.caption.weight(.semibold))
+                        Text(result.standardOutput).font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if !result.standardError.isEmpty {
+                        Text("Standard error").font(.caption.weight(.semibold))
+                        Text(result.standardError).font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+    }
+
+    private func changeDiffPanel(_ session: SessionRecord) -> some View {
+        GroupBox("Full file diff") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("\(model.changeDiff?.files.count ?? 0) changed files")
+                        .font(.caption.weight(.semibold))
+                    Spacer()
+                    Button("Refresh diff") { model.refreshSelectedEvents() }
+                    Button("Export patch…") { model.exportChangePatch() }
+                        .disabled(model.changeDiff?.files.isEmpty != false)
+                    Button("Restore all", role: .destructive) {
+                        model.restoreAllChangeFiles()
+                    }
+                    .disabled(model.changeDiff?.files.isEmpty != false)
+                }
+                if let diff = model.changeDiff, !diff.files.isEmpty {
+                    ForEach(diff.files, id: \.path) { file in
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(file.path).font(.caption.monospaced()).textSelection(.enabled)
+                                    Text(file.status.rawValue).font(.caption2).foregroundStyle(.secondary)
+                                    Spacer()
+                                    Button("Reject / restore file", role: .destructive) { model.restoreChangeFile(file.path) }
+                                }
+                                if file.isBinary {
+                                    Text("Binary diff; file content is represented as binary.")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                } else {
+                                    ScrollView([.horizontal, .vertical]) {
+                                        Text(file.patch).font(.system(.caption2, design: .monospaced))
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .frame(minHeight: 90, maxHeight: 260)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    ContentUnavailableView("No changes in the isolated workspace", systemImage: "doc.text.magnifyingglass")
+                        .frame(minHeight: 90)
+                }
+                HStack {
+                    Button("Accept this verified diff") { model.acceptChanges() }
+                        .disabled(!model.verifiedCurrentDiff || model.changeDiff?.files.isEmpty != false)
+                    TextField("Local branch name", text: $model.branchName)
+                        .frame(maxWidth: 240)
+                    Button("Apply to branch as an uncommitted worktree") { model.applyChangesToBranch() }
+                        .disabled(!model.verifiedCurrentDiff || model.changeDiff?.files.isEmpty != false || model.branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                Text("Applying checks the source base commit for conflicts and creates an uncommitted isolated worktree. AgentBridge never commits, pushes, or merges.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var activityTimeline: some View {
+        GroupBox("Activity timeline") {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Ordered, redacted audit events. Progress, responses, and claims show what the underlying CLI reported; verification includes the process exit code and elapsed time.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                if model.events.isEmpty {
+                    Text("No activity recorded yet.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 7) {
+                            ForEach(model.events.sorted(by: { $0.timestamp < $1.timestamp }).suffix(80)) { event in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack {
+                                        Text(event.kind).font(.caption.weight(.semibold).monospaced())
+                                        Spacer()
+                                        Text(event.timestamp.formatted(date: .abbreviated, time: .standard))
+                                            .font(.caption2).foregroundStyle(.tertiary)
+                                    }
+                                    Text(event.message).font(.caption2).textSelection(.enabled)
+                                }
+                                .padding(7)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 220)
+                }
+            }
+        }
+    }
+
+    private var taskBoardPanel: some View {
+        GroupBox("Parallel task board") {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("App runs are limited to three different sessions at once. Each session keeps its own cancellation request and run lease.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                if model.taskRecords.isEmpty {
+                    Text("No run records yet.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.taskRecords.prefix(12)) { task in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Text(task.status.rawValue).font(.caption.weight(.semibold))
+                                Text(task.approvalState.rawValue).font(.caption2).foregroundStyle(.secondary)
+                                Spacer()
+                                if task.status == .inProgress {
+                                    Button("Cancel") { model.cancelSession(task.sessionID) }
+                                }
+                            }
+                            Text(task.progressSummary).font(.caption2).textSelection(.enabled)
+                            Text("Session \(task.sessionID.uuidString.lowercased())")
+                                .font(.system(size: 8, design: .monospaced)).foregroundStyle(.tertiary)
+                            ForEach(task.references, id: \.self) { reference in
+                                Text("\(reference.kind.rawValue): \(reference.value)")
+                                    .font(.system(size: 8, design: .monospaced)).foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            }
+        }
+    }
+
+    private var extensionPolicyPanel: some View {
+        GroupBox("Skills / MCP policy metadata") {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Imports are inert descriptors. Grants are narrow per-project policy metadata only; they do not activate or execute provider extensions. Import never runs scripts.")
+                    .font(.caption2).foregroundStyle(.orange)
+                Button("Import descriptor JSON…") { model.isImportingExtensionDescriptor = true }
+                if model.extensionDescriptors.isEmpty {
+                    Text("No descriptors imported.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Picker("Descriptor", selection: $model.selectedExtensionID) {
+                        Text("Select descriptor").tag("")
+                        ForEach(model.extensionDescriptors) { descriptor in
+                            Text("\(descriptor.kind.rawValue.uppercased()) · \(descriptor.name)").tag(descriptor.id)
+                        }
+                    }
+                    if let descriptor = model.selectedExtensionDescriptor {
+                        Text("\(descriptor.id) · v\(descriptor.version)\n\(descriptor.summary)")
+                            .font(.caption2).textSelection(.enabled)
+                        Text("Requested: \(descriptor.requestedPermissions.map(\.rawValue).joined(separator: ", "))")
+                            .font(.system(size: 8, design: .monospaced)).foregroundStyle(.secondary)
+                        if let grant = model.selectedExtensionGrant {
+                            Text("Current project grant: \(grant.permissions.map(\.rawValue).joined(separator: ", "))")
+                                .font(.caption2).foregroundStyle(.green)
+                        } else {
+                            Text("No grant for this project.").font(.caption2).foregroundStyle(.secondary)
+                        }
+                        ForEach(ExtensionPermission.allCases, id: \.self) { permission in
+                            Toggle(permission.rawValue, isOn: Binding(
+                                get: { model.selectedExtensionPermissions.contains(permission) },
+                                set: { enabled in
+                                    if enabled { model.selectedExtensionPermissions.insert(permission) }
+                                    else { model.selectedExtensionPermissions.remove(permission) }
+                                }
+                            ))
+                            .font(.caption2)
+                            .disabled(!descriptor.requestedPermissions.contains(permission))
+                        }
+                        Text("Allowed relative paths · one normalized path per line")
+                            .font(.caption2)
+                        TextEditor(text: $model.extensionPathScopesText).frame(minHeight: 38, maxHeight: 70)
+                        Text("Allowed exact hostnames · one per line")
+                            .font(.caption2)
+                        TextEditor(text: $model.extensionHostScopesText).frame(minHeight: 38, maxHeight: 70)
+                        HStack {
+                            Button("Grant selected scopes") { model.grantSelectedExtension() }
+                            Button("Revoke for this project", role: .destructive) { model.revokeSelectedExtension() }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1799,7 +2666,7 @@ struct ContentView: View {
                         ContentUnavailableView("開始專案對話", systemImage: "text.bubble", description: Text("成功完成的對話會依來源儲存庫與固定提交版本寫入共用記憶。"))
                             .frame(maxWidth: .infinity, minHeight: 180)
                     }
-                    if model.isRunning {
+                    if model.selectedSessionIsRunning {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
                             Text(model.localized(model.status)).font(.caption).foregroundStyle(.secondary)
@@ -1855,8 +2722,8 @@ struct ContentView: View {
                 VStack(spacing: 7) {
                     Button(model.localized(model.isClaudeAPIRunContext ? "執行 Claude API" : "傳送")) { model.runPrompt() }
                         .buttonStyle(.borderedProminent)
-                        .disabled(model.isRunning || model.isSwitchingTarget || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.settings.usageMode == .api && (!model.isClaudeAPIRunContext || model.budgetSnapshot == nil)) || (model.isClaudeAPIRunContext && model.usageControls.disableFutureAPI))
-                    if model.isRunning { Button("取消") { model.cancelRun() } }
+                        .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.settings.usageMode == .api && (!model.isClaudeAPIRunContext || model.budgetSnapshot == nil)) || (model.isClaudeAPIRunContext && model.usageControls.disableFutureAPI))
+                    if model.selectedSessionIsRunning { Button("取消") { model.cancelRun() } }
                 }
             }
             Text("提示和回應只在成功完成後進入共用記憶；金鑰不會保存。")
@@ -1941,7 +2808,7 @@ struct ContentView: View {
             if model.isRunning || model.isSwitchingTarget || model.terminalRunning { ProgressView().controlSize(.small) }
             Text(model.localized(model.status)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
-            Text("AgentBridge 0.4.0").font(.caption2).foregroundStyle(.tertiary)
+            Text("AgentBridge 0.6.0").font(.caption2).foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 14).padding(.vertical, 7)
     }

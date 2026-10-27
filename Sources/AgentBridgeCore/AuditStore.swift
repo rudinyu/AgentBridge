@@ -3,7 +3,10 @@ import Foundation
 
 public final class AuditStore: @unchecked Sendable {
     public let rootURL: URL
+    public let workspaceRootURL: URL?
     public let workspacesURL: URL
+    public let sharedMemoryURL: URL
+    public let managedWorkspaceRootURLs: [URL]
     private let sessionsURL: URL
     private let eventsURL: URL
     private let settingsURL: URL
@@ -14,20 +17,42 @@ public final class AuditStore: @unchecked Sendable {
     private let decoder = JSONDecoder()
     private let maxFileSize = 10 * 1_024 * 1_024
 
-    public init(rootURL: URL, fileManager: FileManager = .default) throws {
+    public convenience init(rootURL: URL, fileManager: FileManager = .default) throws {
+        try self.init(
+            rootURL: rootURL,
+            workspaceRootURL: rootURL,
+            managedWorkspaceRoots: [],
+            fileManager: fileManager
+        )
+    }
+
+    public init(
+        rootURL: URL,
+        workspaceRootURL: URL?,
+        managedWorkspaceRoots: [URL],
+        fileManager: FileManager = .default
+    ) throws {
         self.rootURL = rootURL.standardizedFileURL
+        self.workspaceRootURL = workspaceRootURL?.standardizedFileURL
         self.fileManager = fileManager
-        self.workspacesURL = rootURL.appendingPathComponent("workspaces", isDirectory: true)
-        self.sessionsURL = rootURL.appendingPathComponent("sessions.jsonl")
-        self.eventsURL = rootURL.appendingPathComponent("events", isDirectory: true)
-        self.settingsURL = rootURL.appendingPathComponent("settings.json")
-        self.storeLockURL = rootURL.appendingPathComponent(".store.lock")
+        let workspaceRoots = (workspaceRootURL.map { [$0] } ?? []) + managedWorkspaceRoots + [rootURL]
+        var seenRoots = Set<String>()
+        self.managedWorkspaceRootURLs = workspaceRoots.filter { seenRoots.insert($0.path).inserted }
+        self.workspacesURL = (workspaceRootURL ?? rootURL).standardizedFileURL.appendingPathComponent("workspaces", isDirectory: true)
+        self.sharedMemoryURL = (workspaceRootURL ?? rootURL).standardizedFileURL.appendingPathComponent("shared-memory", isDirectory: true)
+        self.sessionsURL = self.rootURL.appendingPathComponent("sessions.jsonl")
+        self.eventsURL = self.rootURL.appendingPathComponent("events", isDirectory: true)
+        self.settingsURL = self.rootURL.appendingPathComponent("settings.json")
+        self.storeLockURL = self.rootURL.appendingPathComponent(".store.lock")
         self.encoder = JSONEncoder()
         self.encoder.dateEncodingStrategy = .iso8601
         self.decoder.dateDecodingStrategy = .iso8601
 
         try Self.createPrivateDirectory(self.rootURL, fileManager: fileManager)
-        try Self.createPrivateDirectory(workspacesURL, fileManager: fileManager)
+        if let workspaceRootURL {
+            try Self.requireDirectory(workspaceRootURL.standardizedFileURL)
+            try Self.createPrivateDirectory(workspacesURL, fileManager: fileManager)
+        }
         try Self.createPrivateDirectory(eventsURL, fileManager: fileManager)
         try Self.secureExistingFile(sessionsURL, fileManager: fileManager)
         try Self.secureExistingFile(storeLockURL, fileManager: fileManager)
@@ -251,6 +276,7 @@ public final class AuditStore: @unchecked Sendable {
             throw AgentBridgeError.persistence("資料檔路徑不能是符號連結或非一般檔案。")
         }
     }
+
 }
 
 public final class SessionRunLease: @unchecked Sendable {

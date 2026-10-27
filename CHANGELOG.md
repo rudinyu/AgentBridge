@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.0 — 2026-10-27
+
+- Added subscription-only isolated change sessions with reviewable plan approval, full file diffs, per-file restore, patch export, and verified accept/apply to a named local branch.
+- Added explicit user-started verification in the isolated workspace using `.codex/ci.sh` by default or an approved custom executable plus argv; results include exit status and duration.
+- Added a redacted activity timeline and persistent task board for actually launched operations, with bounded concurrency across different sessions and per-session cancellation.
+- Added explicit selected-turn/note memory handoffs between commits in the same canonical repository; target prompts include matching handoffs as provenance-bearing, untrusted JSON under a 16 KiB limit.
+- Added inert Skills/MCP descriptor import and per-project permission metadata. Import and grants do not activate provider extensions or execute scripts.
+- Updated the English and Traditional Chinese app labels and operator documentation for the safe change, verification, task, memory handoff, and extension-policy workflows.
+
+## 0.5.0 — 2026-10-27
+
+- Added a first-use workspace data-root picker, a change-root control, and shared App/CLI root configuration.
+- Moved isolated workspaces and shared memory under the selected user root while keeping settings, credentials, usage ledgers, and audit/session metadata in Application Support.
+- Added safe additive migration of existing workspaces and memory, preserving old copies and refusing conflicting destination data.
+- Added `agentbridge workspace show` and `agentbridge workspace set /absolute/path/to/root`.
+- Refused workspace data roots inside Git repositories, including linked worktrees.
+
 ## 0.4.0 — 2026-10-27
 
 - Made English the default app language and added bundled English and Traditional Chinese UI localization with a persisted in-app language picker.

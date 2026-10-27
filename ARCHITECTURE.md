@@ -10,21 +10,24 @@ flowchart LR
     Runner --> Codex[Codex CLI]
     Runner --> Claude[Claude Code CLI]
     Core --> Git[WorkspaceManager isolated Git clone]
-    Core --> Stores[(Private local stores)]
-    Stores --> Sessions[Sessions and audit events]
-    Stores --> Memory[Shared App and CLI memory]
-    Stores --> Ledger[Account-scoped Claude API ledgers]
-    Stores --> Usage[Local usage controls and alert history]
+    Core --> PrivateData[(Private Application Support data)]
+    PrivateData --> Sessions[Session and audit metadata]
+    PrivateData --> Settings[Settings and account profiles]
+    PrivateData --> Ledger[Account-scoped Claude API ledgers]
+    PrivateData --> Usage[Local usage controls and alert history]
+    Core --> UserRoot[(User-selected workspace data root)]
+    UserRoot --> Workspaces[Isolated session workspaces]
+    UserRoot --> Memory[Shared App and CLI memory]
     App --> Terminal[SwiftTerm embedded PTY]
     Terminal --> Codex
     Terminal --> Claude
 ```
 
-The provider CLIs, SwiftTerm, and AgentBridgeCore in this diagram run on the user’s Mac. Shared memory, audit records, usage controls, and API ledgers stay local; model requests go to the selected provider through its official CLI.
+The provider CLIs, SwiftTerm, and AgentBridgeCore in this diagram run on the user’s Mac. The selected folder contains isolated workspaces and shared memory; private settings, account-profile data, session/audit metadata, usage controls, and API ledgers stay under Application Support. Model requests go to the selected provider through its official CLI.
 
 ### Purpose and implementation
 
-AgentBridge 0.4.0 is a standalone SwiftPM repository with a shared `AgentBridgeCore`, the `agentbridge` CLI, and a native SwiftUI app. The app and CLI use the same settings, account profiles, sessions, access policies, workspaces, memory, audit store, usage controls, and API ledgers. The app defaults to English and includes bundled English and Traditional Chinese localizations with an in-app language preference. The embedded terminal uses SwiftTerm 1.20.0. `scripts/package-app.sh` assembles the release bundle, so the project does not maintain a second Xcode project configuration.
+AgentBridge 0.6.0 is a standalone SwiftPM repository with a shared `AgentBridgeCore`, the `agentbridge` CLI, and a native SwiftUI app. The app and CLI use the same saved workspace-data root and private settings, account profiles, session index, audit store, usage controls, and API ledgers. The app defaults to English and includes bundled English and Traditional Chinese localizations with an in-app language preference. The embedded terminal uses SwiftTerm 1.20.0. `scripts/package-app.sh` assembles the release bundle, so the project does not maintain a second Xcode project configuration.
 
 Provider execution goes through the official CLIs installed locally: Codex uses `codex exec --json` or its native interactive CLI; Claude Code uses `claude -p --output-format stream-json` or its native interactive CLI. AgentBridge does not export or copy OAuth credentials and does not treat a provider session ID as cross-provider memory. It manages local processes in Swift and does not add a Codex or Claude SDK runtime.
 
@@ -43,26 +46,48 @@ Official CLI options and authentication behavior can change. The official refere
 | `Models` | Provider, settings, account, session, access policy, event, and error types |
 | `SafeProcessRunner` | Launches an executable with argv; bounds I/O; manages process groups, timeouts, cancellation, and PTY foreground handoff |
 | `ProviderAdapters` | Builds provider arguments and environments, identifies login modes, parses events, and reads reported provider costs |
-| `WorkspaceManager` | Creates an isolated detached Git clone, removes its remote, disables Git hooks, and verifies the pinned commit |
-| `AuditStore` | Private settings and session/event JSONL, cross-process file locks, one-run leases, and cancellation markers |
+| `WorkspaceManager` | Creates an isolated detached Git clone under the selected workspace-data root, removes its remote, disables Git hooks, and verifies the pinned commit |
+| `AuditStore` | Private Application Support settings and session/event JSONL, cross-process file locks, one-run leases, and cancellation markers |
+| Workspace-root settings | Persists the selected user folder privately for both App and CLI; copies existing workspaces and memory on change without deleting source data |
 | `AccountProfileStore` | Provider account labels, selected profile, isolated CLI configuration directories, and per-account memory consent |
 | `SharedMemoryStore` | Stores cross-provider App/CLI read-only turns and user notes by canonical repository path and pinned commit |
+| `ProjectMemoryStore` | Stores explicitly selected turn/note handoffs by canonical repository, with source/target commit provenance |
+| `ParallelTaskBoard` | Records actual launched App/CLI operations, session status, approval, progress, cancellation, and result references |
+| `ExtensionPolicyStore` | Stores inert descriptor metadata and explicit narrow per-project grants; it does not activate or execute provider extensions |
 | `BudgetLedger` | Per-profile Claude API monthly limits, conservative reservations, and settlement; the built-in profile keeps the legacy US$140 ledger |
 | `UsageControlStore` / `APICostControlLedger` | Per-account run and optional day/session USD caps, threshold deduplication, bounded settings audit, concurrent-call reservation, and bill-based recovery |
 | `OutputRedactor` | Redacts common token formats and the API key supplied for the current run |
 | CLI / SwiftUI App | Shared conversation, account switching, memory controls, embedded terminal, and per-run API confirmation |
 
+### Workspace data and private app data
+
+On first launch, the app asks the user to choose or create a workspace-data folder. Sessions cannot start until a folder is configured; AgentBridge has no hidden Application Support fallback for workspaces. The saved root is available to both App and CLI. The CLI can set it with `agentbridge workspace set /absolute/path/to/folder` and show it with `agentbridge workspace show`; commands that need a root report the setup command if none is configured.
+
+The chosen folder is organized as `<root>/workspaces/<lowercase-session-uuid>/` for unique isolated Git copies and `<root>/shared-memory/` for shared conversation memory. App settings, account-profile information, dedicated provider CLI profile directories (where those CLIs store profile credentials), session indexes, audit events, usage controls, and budget ledgers remain in the private `~/Library/Application Support/AgentBridge` directory. The selected root itself is saved in that private app data.
+
+Changing the selected root copies existing workspaces and shared memory to the new location, then updates existing session records to point to the copies. The previous directories remain intact. If a destination contains different data for an existing workspace or memory file, migration stops without overwriting either copy. New sessions are created under the selected root. A root change is a storage-location change only; it does not rewrite a session's source repository path or pinned commit.
+
 ### Sessions, workspace isolation, and accounts
 
-When creating a session, AgentBridge reads the source repository's committed state, creates an isolated clone, checks out a detached commit, and records the full commit hash. Switching between Codex and Claude or between account profiles creates or reuses a session for the same source path and pinned commit. Later changes to the source `HEAD` do not silently change an existing session's scope. Uncommitted and untracked files are not copied.
+When creating a session, AgentBridge reads the source repository's committed state, creates an isolated clone at `<selected root>/workspaces/<lowercase-session-uuid>/`, checks out a detached commit, and records the full commit hash. Read-only is the default. Isolated-change sessions are available only in subscription mode; they use the same pinned clone and require a reviewed plan to be explicitly approved before a provider write run. Codex uses its documented `workspace-write` sandbox; Claude uses `acceptEdits` with a narrow tool allowlist. The native interactive TUI remains a separate mode. Switching between Codex and Claude or between account profiles creates or reuses a session for the same source path and pinned commit. Later changes to the source `HEAD` do not silently change an existing session's scope. Uncommitted and untracked files are not copied.
 
 Each session is bound to the provider account selected at creation. Switching the selected account does not change the account used by an existing session; return to that account or create another session. Each provider has a built-in profile for the current local login, plus optional isolated profiles. A custom profile receives its own `CODEX_HOME` or `CLAUDE_CONFIG_DIR`. The official CLI creates and reads credentials; AgentBridge does not parse or copy them. The built-in profile has no relogin action, to avoid changing the existing login.
+
+### Change review, verification, tasks, and extension policy
+
+The change workflow stores a plan digest on the session and binds approval to that exact plan. A later plan edit invalidates approval. Changes remain in the isolated workspace; the source tree is not written. The UI exposes full per-file diffs, restore-per-file and restore-all actions, and patch export. Verification is a separate user-started process in the session workspace: `.codex/ci.sh` is the default; custom executable paths and argv are accepted only after explicit approval and are passed directly without shell interpolation. Acceptance and branch apply require successful verification whose digest matches the current diff. Apply checks the original source base commit and creates an uncommitted worktree on the named local branch. AgentBridge does not commit, push, or merge.
+
+The activity timeline renders ordered redacted `AuditEvent` records and reports provider output only when the official CLI actually emitted it. The task board persists each launched operation, its progress, approval state, terminal status, and diff/verification references. The App limits its own concurrent runs to three different sessions; process-level run leases shared with the CLI prevent overlapping managed runs in the same session. Cancellation and run leases are scoped to each session. A task record is not created as running for an operation that was never launched.
+
+Extension import is metadata-only. Descriptors and per-project grants list requested and approved scopes for review; they do not connect an MCP server, install a Skill, load provider instructions, or execute scripts. Provider extension activation is not part of this release.
 
 Account and plan details come only from fields reported by the official CLI. Claude CLI can report its login account and subscription plan. If the Codex CLI does not report a plan name, the app shows the verified login status without guessing a plan. Users complete sign-in for additional profiles through the official CLI's interactive login flow.
 
 ### Shared memory
 
-A successful non-interactive read-only run from the app or CLI is stored in shared memory only after the provider run succeeds. The app and CLI use the same private data directory. Memory is scoped by the canonical repository path and the commit pinned when the session was created, so Codex and Claude can use the same memory for the same repository snapshot. A different source path or commit has a separate memory scope. Stored content includes the explicitly submitted prompt, successful response, and user notes. It is redacted and bounded by Unicode-safe truncation, size, and turn-count limits before being written to owner-only files.
+A successful non-interactive read-only run from the app or CLI is stored in `<selected root>/shared-memory/` only after the provider run succeeds; both use the same selected root. Memory is scoped by the canonical source repository path and the commit pinned when the session was created, so Codex and Claude can use the same memory for the same repository snapshot. The workspace-data root is not part of the memory key: selecting a different root does not change memory identity. A different source path or commit has a separate memory scope. Stored content includes the explicitly submitted prompt, successful response, and user notes. It is redacted and bounded by Unicode-safe truncation, size, and turn-count limits before being written to owner-only files.
+
+Cross-commit continuity is explicit. A user selects specific App-owned turns and/or notes from a source session for a target session with the same canonical repository and a different pinned commit. The target account must allow shared memory. Handoffs are stored under `<selected root>/shared-memory/project-handoffs/`. Only handoffs matching the target commit are included in that session's next allowed prompt; a JSON envelope carries the selected text and source/target provenance as untrusted historical context under a 16 KiB limit. Native TUI transcripts are never imported.
 
 Built-in and newly created account profiles allow shared memory by default. Users can turn it off for each account; doing so preserves prior memory but stops that account from automatically loading or saving turns. Existing profiles retain their stored consent setting when the app is updated. Users can view or clear stored memory in the app.
 
@@ -70,9 +95,9 @@ Each provider CLI controls whether its native TUI transcript is persisted. Agent
 
 ### Process safety and access boundaries
 
-Non-interactive commands launch an executable with a separate argv array; they do not build a shell command string. Prompts go over standard input. Child processes receive an allowlisted environment rather than inheriting API keys, proxy settings, or cloud credentials by default. Output and error buffers are bounded, and raw provider stderr is not written to the audit log. Runs use a per-session lease, cancellation marker, process-group termination, and bounded termination escalation. CLI SIGINT, SIGTERM, and SIGHUP are also converted into cancellation.
+Non-interactive commands launch an executable with a separate argv array; they do not build a shell command string. Prompts go over standard input. Child processes receive an allowlisted environment rather than inheriting API keys, proxy settings, or cloud credentials by default. Output and error buffers are bounded, and audit events redact common secrets. Runs use a per-session lease, cancellation marker, process-group termination, and bounded termination escalation. CLI SIGINT, SIGTERM, and SIGHUP are also converted into cancellation.
 
-Non-interactive Codex uses a read-only sandbox and never requests elevated approval. Non-interactive Claude is restricted to `Read,Glob,Grep`, with hooks and MCP disabled, and uses `dontAsk`. Native interactive mode retains each provider TUI: Codex stays in its read-only sandbox, while Claude uses Manual permission mode. A Claude command approved by the user may edit the isolated clone, access files outside the workspace, or use the network. The clone is a workflow boundary, not a macOS sandbox.
+Non-interactive read-only Codex uses a read-only sandbox and never requests elevated approval. Non-interactive read-only Claude is restricted to `Read,Glob,Grep`, with hooks and MCP disabled, and uses `dontAsk`. Isolated-change runs use Codex `workspace-write` or Claude `acceptEdits` with a narrow tool allowlist; the workspace remains a workflow boundary, not a macOS sandbox. Codex change runs use headless `codex exec`, which does not support interactive approval prompts; AgentBridge does not enable automatic approval, so a command requiring permissions beyond the sandbox fails closed. The reviewed AgentBridge plan gates the entire change run. Native interactive mode retains each provider TUI: Codex stays in its read-only sandbox, while Claude uses Manual permission mode. A Claude command approved in that native TUI may edit the isolated clone, access files outside the workspace, or use the network.
 
 The embedded terminal connects a PTY directly to the official CLI and does not save raw terminal input or screen output. Only after the fixed `/usage` action, the app copies a bounded number of visible SwiftTerm rows into memory for best-effort parsing; sampling stops when usage values are recognized or after 15 seconds, and another fixed action can re-arm it. The app discards that raw text after producing the normalized report and never logs, persists, or sends it to a model. SwiftTerm OSC 52 clipboard access and terminal link opening are disabled, and scrollback is bounded. The separate local-terminal action starts the user's shell with the current macOS account's permissions; the repository clone does not restrict its filesystem or network access.
 
@@ -94,7 +119,7 @@ The subscription usage dashboard can open the selected account's official intera
 
 ### Local data and remaining limitations
 
-App and CLI data live under `~/Library/Application Support/AgentBridge`, protected with private directory permissions and file locks. Redaction is best effort and cannot recognize every unknown secret format. Provider CLIs may save their own login, session, or cache data according to their own behavior. The same macOS user can manually alter local settings, usage controls, and ledgers, so this tool is not intended as a multi-user or remote untrusted service.
+Private settings, account profiles, dedicated provider CLI profile directories (where those CLIs save profile credentials), session/audit metadata, usage controls, and budget ledgers live under `~/Library/Application Support/AgentBridge`, protected with private directory permissions and file locks. Isolated session workspaces and shared memory live under the user-selected workspace-data root. AgentBridge stores the selected root in private Application Support so the App and CLI stay aligned. Changing that root copies existing workspace and memory data without removing the previous copies. Redaction is best effort and cannot recognize every unknown secret format. The built-in profiles continue to use the provider CLIs' existing login directories. The same macOS user can manually alter local settings, usage controls, and ledgers, so this tool is not intended as a multi-user or remote untrusted service.
 
 ### Build and acceptance boundary
 

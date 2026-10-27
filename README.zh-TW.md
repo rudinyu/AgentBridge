@@ -4,7 +4,7 @@
 
 ![AgentBridge macOS app icon](Assets/AppIcon-1024.png)
 
-AgentBridge 0.4.0 是一個 macOS 14+ Swift 專案，提供共用核心、命令列工具 `agentbridge`，以及原生 SwiftUI App。它透過本機官方 Codex CLI 與 Claude Code CLI 工作；App 與 CLI 的唯讀聊天可依專案與固定提交版本共用記憶。App 預設使用英文，也支援繁體中文；可在 App 標題列切換語言。
+AgentBridge 0.6.0 是一個 macOS 14+ Swift 專案，提供共用核心、命令列工具 `agentbridge`，以及原生 SwiftUI App。它透過本機官方 Codex CLI 與 Claude Code CLI 工作；App 與 CLI 的唯讀聊天可依專案與固定提交版本共用記憶，也可由使用者明確選取記憶延續到另一個提交版本。首次使用時，請在 App 選擇工作區資料根目錄；CLI 會使用相同的已保存路徑。App 預設使用英文，也支援繁體中文；可在 App 標題列切換語言。
 
 AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登入；Claude API 是可選的付費模式，必須逐次輸入 API key、單次預算並明確確認。每月 US$140 是 AgentBridge 本機帳本上限，不是 Anthropic 帳單的硬性限制。
 
@@ -30,9 +30,12 @@ open build/AgentBridge.app
 
 ### 預設安全邊界
 
-- App 聊天建立來源 Git `HEAD` 的獨立工作區；未提交及未追蹤檔案不會複製，也不會自動合併或推送。
-- 非互動聊天以唯讀權限執行。互動 provider 終端保留各 CLI 的操作流程；Claude 核准的指令可能存取工作區外資料或網路。
-- Codex/Claude 可共用 AgentBridge 的 App/CLI 唯讀聊天記憶，但不會匯入原生 TUI transcript。新帳戶預設開啟記憶共享，仍可逐帳戶關閉。
+- 唯讀仍是預設。隔離變更工作階段使用固定提交的獨立工作區，寫入前必須先檢視並明確核准工作計畫，provider 編輯只會留在該工作階段工作區。
+- 可檢視完整逐檔 diff、還原個別檔案或匯出 patch。接受／套用成果前，必須先成功驗證目前完全相同的 diff。套用會先檢查來源 base commit，再於指定本機 branch 建立未提交工作樹；AgentBridge 不會自動 commit、push 或 merge。
+- 只有使用者明確啟動後才會驗證。預設使用 Repository 的 `.codex/ci.sh`；自訂 executable 與獨立 argv 必須先明確核准。驗證在隔離工作區執行，並顯示命令、退出代碼、耗時及遮蔽後輸出。
+- 活動時間軸與任務看板顯示排序後的遮蔽事件，以及各工作階段實際啟動的任務記錄。最多可同時執行三個不同工作階段；取消只針對指定工作階段。
+- Codex/Claude 可共用相同 Repository/commit 的 AgentBridge App/CLI 記憶。延續到不同提交版本時，必須明確選取 App 保存的回合與／或備註，並由允許記憶共享的綁定帳戶執行。原生 TUI transcript 不會匯入。
+- Skills/MCP descriptor 以停用的中繼資料匯入。每專案授權只記錄狹窄權限；匯入或授權都不會啟用 extension 或執行腳本。
 - 本機終端使用目前 macOS 使用者權限；Git 隔離工作區不是作業系統層級的 sandbox。
 
 ## 查看官方訂閱用量

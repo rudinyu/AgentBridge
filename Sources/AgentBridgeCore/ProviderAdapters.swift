@@ -104,7 +104,29 @@ public enum ProviderCommandBuilder {
             "--no-daemon",
             "--disable", "hooks", "--disable", "plugins", "--disable", "apps",
             "--disable", "skill_mcp_dependency_install", "--disable", "in_app_browser",
-            "--sandbox", "read-only", "--ask-for-approval", "never", "--cd", workspacePath, "exec"
+            "--sandbox", "read-only", "--cd", workspacePath, "exec"
+        ]
+        if let resumeID {
+            try validateResumeID(resumeID)
+            arguments += ["resume", resumeID]
+        }
+        arguments += [
+            "--json", "--ignore-user-config", "--ignore-rules",
+            "-c", "forced_login_method=\"chatgpt\"",
+            "-c", "model_provider=\"openai\"",
+            "-"
+        ]
+        return arguments
+    }
+
+    /// Runs headless Codex with scoped `workspace-write` access after AgentBridge
+    /// plan approval. Runtime escalation is unavailable, so restricted commands fail closed.
+    public static func codexChangeArguments(workspacePath: String, resumeID: String? = nil) throws -> [String] {
+        var arguments = [
+            "--no-daemon",
+            "--disable", "hooks", "--disable", "plugins", "--disable", "apps",
+            "--disable", "skill_mcp_dependency_install", "--disable", "in_app_browser",
+            "--sandbox", "workspace-write", "--cd", workspacePath, "exec"
         ]
         if let resumeID {
             try validateResumeID(resumeID)
@@ -128,6 +150,28 @@ public enum ProviderCommandBuilder {
             "--disable-slash-commands", "--no-chrome",
             "--settings", "{\"disableAllHooks\":true,\"apiKeyHelper\":\"\",\"forceLoginMethod\":\"claudeai\"}",
             "--tools", "Read,Glob,Grep", "--add-dir", workspacePath,
+            "--input-format", "text"
+        ]
+        if let resumeID {
+            try validateResumeID(resumeID)
+            arguments += ["--resume", resumeID]
+        } else {
+            arguments += ["--session-id", sessionID.uuidString.lowercased()]
+        }
+        return arguments
+    }
+
+    /// Allows file-editing tools after AgentBridge has recorded plan approval.
+    /// Bash, MCP, plugins, hooks, and other tool integrations remain disabled.
+    public static func claudeChangeArguments(workspacePath: String, sessionID: UUID, resumeID: String? = nil) throws -> [String] {
+        var arguments = [
+            "--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+            "--permission-mode", "acceptEdits", "--permission-prompts", "none",
+            "--restricted", "--safe-mode", "--setting-sources", "",
+            "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
+            "--disable-slash-commands", "--no-chrome",
+            "--settings", "{\"disableAllHooks\":true,\"apiKeyHelper\":\"\",\"forceLoginMethod\":\"claudeai\"}",
+            "--tools", "Read,Glob,Grep,Edit,Write", "--add-dir", workspacePath,
             "--input-format", "text"
         ]
         if let resumeID {
@@ -584,6 +628,60 @@ public final class ProviderAdapter: Sendable {
         if result.timedOut { throw AgentBridgeError.processTimedOut }
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
         guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "CLI 結束代碼 \(result.exitCode)。") }
+        return (result, try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated))
+    }
+
+    public func runChanges(
+        provider: AgentProvider,
+        session: SessionRecord,
+        prompt: String,
+        executableURL: URL,
+        environment: [String: String],
+        cancellationRequestURL: URL?,
+        onProgress: (@Sendable (String) -> Void)? = nil,
+        cancellation: CancellationFlag = CancellationFlag()
+    ) async throws -> (ProcessResult, ProviderOutput) {
+        let arguments: [String]
+        switch provider {
+        case .codex:
+            arguments = try ProviderCommandBuilder.codexChangeArguments(
+                workspacePath: session.workspacePath,
+                resumeID: session.providerSessionID
+            )
+        case .claude:
+            arguments = try ProviderCommandBuilder.claudeChangeArguments(
+                workspacePath: session.workspacePath,
+                sessionID: session.id,
+                resumeID: session.providerSessionID
+            )
+        }
+        let lineHandler: (@Sendable (String) -> Void)?
+        if let onProgress {
+            lineHandler = { @Sendable line in
+                if let message = ProviderOutputParser.progressMessage(provider: provider, jsonLine: line) {
+                    onProgress(message)
+                }
+            }
+        } else {
+            lineHandler = nil
+        }
+        let spec = ProcessSpec(
+            executableURL: executableURL,
+            arguments: arguments,
+            environment: environment,
+            workingDirectoryURL: URL(fileURLWithPath: session.workspacePath, isDirectory: true),
+            standardInput: Data(prompt.utf8),
+            timeout: 900,
+            outputLimit: 1_048_576,
+            cancellationRequestURL: cancellationRequestURL,
+            standardOutputLineHandler: lineHandler
+        )
+        let result = try await runner.run(spec, cancellation: cancellation)
+        if result.timedOut { throw AgentBridgeError.processTimedOut }
+        if result.wasCancelled { throw AgentBridgeError.processCancelled }
+        guard result.exitCode == 0 else {
+            throw AgentBridgeError.providerFailed(provider, "CLI 結束代碼 \(result.exitCode)。")
+        }
         return (result, try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated))
     }
 

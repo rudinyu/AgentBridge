@@ -2,7 +2,7 @@
 
 [英文版](HOW_TO_USE.md)
 
-這份指南說明如何安裝、登入、開始對話、切換 provider 與帳戶、使用共用記憶，以及在需要時啟用 Claude API。App 與 CLI 共用本機設定、工作階段、記憶和 API 預算帳本。
+這份指南說明如何安裝、登入、開始對話、切換 provider 與帳戶、使用共用記憶，以及在需要時啟用 Claude API。App 與 CLI 共用已保存的使用者自選工作區資料夾；私有設定、帳戶資料、工作階段／稽核中繼資料及用量／預算帳本則留在 Application Support。
 
 > App 全新安裝時預設使用英文。可隨時從標題列的語言選單選擇「English」或「繁體中文」；選擇會立即套用並自動保存。以下使用繁體中文介面名稱說明操作。
 
@@ -26,6 +26,18 @@ open build/AgentBridge.app
 
 CI 腳本會建置 CLI、App 並執行核心測試；封裝腳本會建立未簽署的本機 App。上述步驟不登入 provider、不呼叫模型，也不產生 Claude API 費用。若已建置，只要重新開啟 `build/AgentBridge.app` 即可。若要交付給其他 Mac，請完成本文最後的 Developer ID 簽署與 Apple 公證流程。
 
+第一次開啟 App 時，請選擇或建立存放工作區資料的資料夾。AgentBridge 必須先有這項設定才會建立工作階段，不會暗中把資料夾放在 Application Support。App 和 CLI 共用已保存的位置。自選資料夾會包含隔離的工作階段工作區與共用記憶：
+
+```text
+<你選擇的資料夾>/
+  workspaces/<工作階段 ID>/   # 每個工作階段各自的隔離 Git 複本
+  shared-memory/              # App/CLI 共用對話記憶
+```
+
+私有 App 資料仍保存在 `~/Library/Application Support/AgentBridge`，包含 App 設定、帳戶設定資料、各 provider CLI 專用的 profile 資料夾（CLI 會在其中保存該 profile 的登入資料）、工作階段和稽核記錄，以及用量／預算帳本。內建帳戶仍使用 provider CLI 原有的登入資料夾。日後若要在 App 變更資料夾，請在「專案」面板的「資料根目錄」旁按「變更…」。若要從 CLI 設定或變更位置，執行 `agentbridge workspace set /absolute/path/to/folder`；執行 `agentbridge workspace show` 可查看已保存的位置。尚未選擇資料夾時，CLI 會顯示這項可直接執行的設定命令。
+
+變更資料夾時，AgentBridge 會把既有工作區和共用記憶複製到新位置，再更新既有工作階段記錄以使用新副本。原本的資料夾和檔案會完整保留；新工作階段則使用新資料夾。若目的地已有不同內容的工作區或記憶檔，AgentBridge 會停止並回報衝突，不會覆寫任一副本。變更資料夾不會改變共用記憶的識別方式：記憶仍以來源 Repository 的 canonical 路徑及工作階段固定的提交版本作為範圍。
+
 ### 2. 檢查 CLI 登入與方案
 
 若目前顯示英文，請先從 App 標題列語言選單選擇「繁體中文」。App 會立即切換，並在下次啟動時保留此選擇。開啟後，從左側的「助理」選 Codex 或 Claude，然後按右上方「檢查登入與方案」。App 只顯示官方 CLI 確認的帳戶與方案欄位；如果 Codex CLI 沒有回報方案名稱，AgentBridge 不會猜測。
@@ -48,7 +60,7 @@ CLI=build/swiftpm/debug/agentbridge
 4. 保持「互動終端工作階段」關閉，按「建立同一專案的新工作階段」。這會建立唯讀聊天工作階段。
 5. 在右側輸入提示並按「傳送」。成功完成的回合會保存到此 Repository 與固定提交版本的共用記憶。
 
-每個工作階段固定建立時的來源 `HEAD`，並在 AgentBridge 自己的隔離複本中執行。未提交和未追蹤的檔案不會複製。來源提交後續改變時，既有工作階段仍使用原來的固定版本；建立新工作階段會以新的來源提交建立新的記憶範圍。AgentBridge 不會自動合併或推送工作區變更。
+每個工作階段固定建立時的來源 `HEAD`，並在 `<你選擇的資料夾>/workspaces/<工作階段 ID>/` 中的專屬隔離複本執行。未提交和未追蹤的檔案不會複製。來源提交後續改變時，既有工作階段仍使用原來的固定版本；建立新工作階段會以新的來源提交建立新的記憶範圍。AgentBridge 不會自動合併或推送工作區變更。
 
 ### 4. 新增帳戶、登入與切換方案
 
@@ -76,7 +88,7 @@ CLI=build/swiftpm/debug/agentbridge
 
 ### 5. 切換 Codex 與 Claude，共用記憶
 
-共用記憶以「來源 Repository 路徑 + 固定提交」作為範圍。App 與 CLI 的唯讀聊天成功完成後，會在帳戶允許共享時加入記憶。從 Codex 切到 Claude，或從 Claude 切到 Codex，當兩個工作階段使用相同來源路徑和提交版本時，可共用同一份 App/CLI 對話和手動備註。新帳戶預設共享；可在帳戶設定中逐一關閉。
+共用記憶存放在 `<你選擇的資料夾>/shared-memory/`，並以來源 Repository 的 canonical 路徑及固定提交作為範圍。記憶範圍不受隔離工作區複本存放位置影響。App 與 CLI 的唯讀聊天成功完成後，會在帳戶允許共享時加入記憶。從 Codex 切到 Claude，或從 Claude 切到 Codex，當兩個工作階段使用相同來源路徑和提交版本時，可共用同一份 App/CLI 對話和手動備註。新帳戶預設共享；可在帳戶設定中逐一關閉。
 
 「專案共用記憶」區塊可查看聊天回合，並在「記憶備註與終端機交接」中儲存要交給另一位助理的內容。成功完成的 App 或 CLI 唯讀聊天會自動加入記憶；原生 Codex/Claude TUI 的輸入和輸出不會被擷取。請自行把需要交接的重點記入備註。清除記憶會刪除該來源與固定提交的聊天記憶及備註，不會刪除 provider 自己的 session 資料。
 
@@ -96,7 +108,7 @@ CLI=build/swiftpm/debug/agentbridge
 
 用量區依目前選取的 provider 與帳戶分開顯示。訂閱模式會以圖表呈現 AgentBridge 記錄的本機管理執行嘗試，範圍為滾動近 5 小時、24 小時及 7 天。這些是本機估計，不是 provider 額度或帳戶總用量；provider 限制和共享方式會因方案而異，其他 provider App 的活動也不會計入。互動 TUI 內的回合不會被記錄。
 
-AgentBridge 無法讀取官方訂閱額度百分比。要手動查看，請在 provider 官方互動 CLI 開啟後輸入 `/usage`：Codex CLI 會顯示每日、每週及累積活動；Claude CLI 會顯示本次工作階段費用、方案用量限制及活動統計。AgentBridge 不會解析終端輸出或存取 provider 私有端點。
+AgentBridge 無法透過受支援的機器可讀來源取得官方訂閱額度百分比。要查看額度，請開啟 provider 官方互動 CLI，再按固定的 **送出 /usage** 操作：Codex CLI 會顯示每日、每週及累積活動；Claude CLI 會顯示本次工作階段費用、方案用量限制及活動統計。使用者明確執行此操作後，AgentBridge 會將有限長度的可見畫面文字暫存在記憶體，盡力解析可辨識欄位並填入統一資料卡；未知欄位顯示「未提供」。官方 TUI 畫面仍是依據；這種畫面文字解析不是穩定的額度 API。AgentBridge 不會讀取其他終端輸出或存取 provider 私有端點。
 
 可選擇設定訂閱模式的本機執行次數上限，範圍包括近 5 小時、24 小時、7 天及目前 AgentBridge 工作階段。Claude API 有選用的 UTC 每日及工作階段 USD 上限、24 小時及工作階段執行次數上限，也可停用所選帳戶未來的 API 執行。單次 USD 預算、每日/工作階段 USD 上限、月度 USD 帳本和執行次數上限是不同控制。每次 API 執行會在啟動前以單次預算的兩倍預留金額。App 和 CLI 同一時間最多允許一筆尚未確認費用的付費呼叫。
 
@@ -126,7 +138,55 @@ printf '%s' 'Summarize the repository architecture.' | \
 
 回到訂閱模式時執行 `"$CLI" settings usage subscription`，再建立或切回訂閱工作階段。API 模式不能續用已有 provider session 的訂閱工作階段。帳本只計算 AgentBridge API 呼叫；供應商實際費用及 Anthropic Console 的限制為準。
 
-### 9. CLI 常用操作
+### 9. 安全修改、活動紀錄、記憶交接與擴充權限
+
+唯讀仍是預設。若要隔離修改，請在 **Access mode** 選取 **Isolated Changes**，並在訂閱模式建立新工作階段。它會依來源 Repository 已提交的 `HEAD` 建立新工作區；來源未提交檔案不會複製。原生互動 TUI 是獨立模式。
+
+在 **Changes** 填入計畫標題、摘要和步驟，保存後先完整檢視。可先調整計畫，確認符合預期後再按 **Approve reviewed plan**；只有核准後 **Run approved changes** 才能執行。Provider 只會在隔離工作階段工作區寫檔。Codex 變更使用非互動 `codex exec`：AgentBridge 不會啟用自動核准，也無法在執行途中顯示核准提示。需要超出 sandbox 權限的命令會失敗停止；請將工作限制在已核准計畫和隔離工作區內。CLI 流程如下：
+
+```sh
+CLI=build/swiftpm/debug/agentbridge
+"$CLI" session create --provider codex --repo "$HOME/Projects/example" --changes
+# 複製上方輸出的工作階段 ID。
+SESSION_ID="在此貼上工作階段 ID"
+"$CLI" changes plan "$SESSION_ID" --title "更新 parser" \
+  --summary "支援新的記錄格式。" --step "更新解碼方式" --step "調整重點驗證"
+# 複製輸出的 PLAN_ID 與 REVIEW_DIGEST。核准時會顯示完整計畫，並要求
+# 從標準輸入提供完整的 `APPROVE REVIEW_DIGEST` 確認文字。
+printf '%s\n' 'APPROVE REVIEW_DIGEST' | "$CLI" changes approve "$SESSION_ID" PLAN_ID REVIEW_DIGEST
+printf '%s' '依核准計畫完成修改。' | \
+  "$CLI" changes run "$SESSION_ID" PLAN_ID REVIEW_DIGEST
+```
+
+在 **Changes** 檢視完整檔案清單與 diff。拒絕某個變更時還原該檔，或將全部檔案還原到基準快照，也可匯出 patch。**Verify** 只有按下後才會執行 `.codex/ci.sh`。自訂驗證需先明確核准，並以 executable 和分開的 argv 傳入；AgentBridge 不會組合 shell 命令。結果顯示 executable、參數、工作目錄、退出代碼、耗時及遮蔽後的 stdout/stderr。接受與套用只適用於已成功驗證的目前完整 diff。套用時須輸入本機 branch 名稱；AgentBridge 先檢查來源 base commit 未改變，再建立未提交 worktree。AgentBridge 不會 commit、push 或 merge。
+
+**Activity** 時間軸呈現排序後、已遮蔽的稽核事件，包括可取得的進度、計畫核准、取消、錯誤、diff 變化與驗證結果。只有官方 CLI 實際回報的 provider 輸出才會顯示。**Parallel task board** 列出所有工作階段實際啟動的操作、狀態、核准、進度、取消及 diff／驗證參照。App 最多同時執行三個不同工作階段；App 和 CLI 共用的程序鎖會阻止同一工作階段重複執行，但三個工作階段的並行上限目前只套用於 App 啟動的工作。請在對應任務按 **Cancel this session**。
+
+若要將記憶延續到另一個 commit，請選擇相同 canonical Repository、不同提交版本的來源和目標工作階段。目標工作階段綁定的帳戶必須允許共用記憶。選取來源回合與／或備註，檢查來源／目標 commit，再建立交接。目標工作階段下一次允許的提示只會收到所選內容，並以有界（16 KiB）、標明不可信的歷史 JSON envelope 傳入且保留 provenance。交接存於所選工作區資料根目錄下的 `shared-memory/project-handoffs/`。原生 provider TUI transcript 永不匯入。
+
+**Skills and MCP policy** 面板會將 descriptor JSON 檔匯入為惰性中繼資料。檢視要求範圍，只選擇狹窄的每專案權限，再明確授權或撤銷。這些授權只是政策中繼資料：不會啟用 provider extension、連線 MCP server 或執行腳本。
+
+CLI 也提供對應操作：
+
+```sh
+"$CLI" changes diff "$SESSION_ID"
+"$CLI" changes restore "$SESSION_ID" Sources/example.swift
+"$CLI" changes export "$SESSION_ID" "$HOME/Desktop/example.patch"
+"$CLI" changes verify "$SESSION_ID" # 只有明確執行此命令才會啟動 .codex/ci.sh
+"$CLI" changes verify "$SESSION_ID" --custom /absolute/path/to/check --approve-custom --arg "--fast"
+"$CLI" changes accept "$SESSION_ID" --confirm
+"$CLI" changes apply "$SESSION_ID" reviewed-local-branch
+"$CLI" tasks
+"$CLI" memory handoffs "$SESSION_ID"
+"$CLI" memory carry-forward SOURCE_SESSION TARGET_SESSION --turn TURN_UUID --notes
+"$CLI" extensions import /absolute/path/to/descriptor.json
+"$CLI" extensions grant "$SESSION_ID" extension-id --permission readSelectedFiles --path Sources --confirm
+"$CLI" extensions revoke "$SESSION_ID" extension-id --confirm
+```
+
+`changes apply` 會回傳未提交的本機 worktree。自訂 `changes verify` 會直接將 argv 傳給 executable。CLI 同樣受訂閱模式、計畫核准、驗證、來源 commit 和帳戶共享記憶同意檢查，不會繞過這些限制。
+
+### 10. CLI 常用操作
 
 建置後的 CLI 位於 `build/swiftpm/debug/agentbridge`。提示由標準輸入提供，不會放在程序參數中：
 
@@ -145,7 +205,7 @@ printf '%s' 'Key decisions and next steps.' | "$CLI" memory notes "$SESSION_ID"
 
 CLI 亦支援 `agentbridge cancel SESSION_ID` 取消執行、`agentbridge budget` 檢視 API 帳本，以及 `agentbridge help` 查看完整命令。清除共用記憶需加上明確確認：`agentbridge memory clear SESSION_ID --confirm`。
 
-### 10. 常見狀況
+### 11. 常見狀況
 
 - **找不到 provider CLI：** 在 App 的「CLI 執行檔」指定路徑，或先把官方 CLI 加入登入環境可找到的路徑，再按「檢查登入與方案」。
 - **顯示未登入或未確認方案：** 在 provider 官方 CLI 完成訂閱登入；對新帳戶，使用 AgentBridge 的登入終端，再重新檢查。
@@ -154,7 +214,7 @@ CLI 亦支援 `agentbridge cancel SESSION_ID` 取消執行、`agentbridge budget
 - **API 呼叫被拒絕或保留金額未退回：** 檢查 `agentbridge budget` 或 App 顯示的 UTC 月帳本。費用未知、失敗或取消時，保留額不會被當作零費用退回。
 - **工作區與來源 Repository 不一致：** 這是刻意的快照邊界；建立工作階段後的來源變更不會自動複製進來。
 
-### 11. 簽署、公證與驗證 App
+### 12. 簽署、公證與驗證 App
 
 `scripts/package-app.sh` 會重建未簽署的開發 App。準備好發行版本並通過 `.codex/ci.sh` 後，使用共用 `macos-notarization-release` helper 進行正式簽署與公證。helper 從使用者層級設定讀取 Apple 公證認證（Keychain profile 或 App Store Connect API key），與 Claude API key 分開；不要把簽署憑證或 Apple `.p8` 私鑰放進 Repository。App 簽署身份必須是 Developer ID Application。App 內的 `agentbridge` helper 要先簽署，再簽外層 App。
 

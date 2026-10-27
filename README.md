@@ -4,7 +4,7 @@
 
 ![AgentBridge macOS app icon](Assets/AppIcon-1024.png)
 
-AgentBridge 0.4.0 is a Swift project for macOS 14 and later. It includes a shared core, the `agentbridge` command-line tool, and a native SwiftUI app. It works through the official Codex CLI and Claude Code CLI installed on the Mac. Read-only conversations from the app and CLI can share memory by source repository and pinned commit. The app defaults to English and supports Traditional Chinese; choose the language in the app header.
+AgentBridge 0.6.0 is a Swift project for macOS 14 and later. It includes a shared core, the `agentbridge` command-line tool, and a native SwiftUI app. It works through the official Codex CLI and Claude Code CLI installed on the Mac. Read-only conversations from the app and CLI can share memory by source repository and pinned commit; users can explicitly carry selected memory to a different commit. Choose the workspace data root in the app on first use; the CLI uses the same saved root. The app defaults to English and supports Traditional Chinese; choose the language in the app header.
 
 AgentBridge uses each official CLI's subscription login by default. Codex is subscription-only. Claude API is an optional paid mode that requires an API key, a per-run USD budget, and explicit confirmation every time. The local US$140 monthly ledger is not a hard limit on Anthropic's billing.
 
@@ -30,9 +30,12 @@ open build/AgentBridge.app
 
 ### Default boundaries
 
-- App chat uses an isolated workspace based on the source Git `HEAD`. Uncommitted and untracked files are not copied, and changes are never merged or pushed automatically.
-- Non-interactive chat is read-only. Interactive provider terminals retain each CLI's own workflow; Claude-approved commands may access files outside the workspace or use the network.
-- Codex and Claude can share AgentBridge read-only chat memory from the app and CLI, but native TUI transcripts are not imported. New accounts share memory by default and can opt out individually.
+- Read-only remains the default. Isolated-change sessions use a detached workspace snapshot, require a reviewed and explicitly approved plan before writing, and keep all provider edits inside that session workspace.
+- Review full file diffs, restore individual files, or export a patch. Accept/apply requires successful verification of the exact current diff. Applying creates an uncommitted worktree on a named local branch after checking the source base commit; AgentBridge never commits, pushes, or merges.
+- Verification runs only after the user starts it. The default is the repository's `.codex/ci.sh`; a custom executable and its separate argv must be explicitly approved. Verification is isolated to the session workspace and reports the command, exit code, duration, and redacted output.
+- The activity timeline and task board show ordered, redacted events and launched run records across sessions. Up to three different sessions can run concurrently; cancellation targets a session.
+- Codex and Claude can share AgentBridge App/CLI memory for the same repository and commit. Carry-forward to a different commit is an explicit selection of App-owned turns and/or notes, bound to an account that permits shared memory. Native TUI transcripts are not imported.
+- Skills/MCP descriptors can be imported as inert metadata. Per-project grants record narrow permissions only; importing or granting never activates an extension or runs scripts.
 - The local terminal runs with the current macOS user's permissions. A Git workspace is not an operating-system sandbox.
 
 ## Checking provider subscription usage

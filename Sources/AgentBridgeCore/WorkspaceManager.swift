@@ -35,6 +35,9 @@ public final class WorkspaceManager: @unchecked Sendable {
         accountProfileID: UUID? = nil,
         snapshotCommit requestedSnapshotCommit: String? = nil
     ) async throws -> SessionRecord {
+        guard store.workspaceRootURL != nil else {
+            throw AgentBridgeError.invalidInput("尚未設定工作區資料根目錄；請在 App 選擇資料夾，或先執行 `agentbridge workspace set /absolute/path/to/root`。")
+        }
         let currentSnapshot = try await inspectSourceRepository(path: sourcePath)
         let snapshot: WorkspaceSnapshot
         if let requestedSnapshotCommit {
@@ -132,6 +135,197 @@ public final class WorkspaceManager: @unchecked Sendable {
         guard commit == session.snapshotCommit else { throw AgentBridgeError.workspaceChanged }
     }
 
+    public func diff(for session: SessionRecord) async throws -> WorkspaceChangeDiff {
+        guard session.policy.accessMode == .isolatedChanges else {
+            throw AgentBridgeError.sessionMismatch("只有隔離變更工作階段可以檢視變更。")
+        }
+        try await validateWorkspace(for: session, accessMode: .isolatedChanges)
+        let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
+        let trackedResult = try await runGit(arguments: [
+            "-C", workspace.path, "diff", "--name-status", "-z", "--no-renames", session.snapshotCommit, "--"
+        ], workingDirectory: nil)
+        let trackedEntries = try parseNameStatus(trackedResult.standardOutput)
+        let untrackedResult = try await runGit(arguments: [
+            "-C", workspace.path, "ls-files", "--others", "--exclude-standard", "-z", "--"
+        ], workingDirectory: nil)
+        let untrackedPaths = try parseNULSeparatedPaths(untrackedResult.standardOutput)
+        let trackedPaths = Set(trackedEntries.map(\.path))
+        let allPaths = (trackedEntries.map(\.path) + untrackedPaths.filter { !trackedPaths.contains($0) }).sorted()
+
+        var fileDiffs: [ChangeFileDiff] = []
+        var combinedPatch = Data()
+        for path in allPaths {
+            try validateRelativeGitPath(path)
+            let isUntracked = !trackedPaths.contains(path)
+            let arguments: [String]
+            if isUntracked {
+                arguments = [
+                    "-C", workspace.path, "diff", "--no-index", "--no-ext-diff", "--no-textconv",
+                    "--no-color", "--binary", "--unified=3", "--", "/dev/null", path
+                ]
+            } else {
+                arguments = [
+                    "-C", workspace.path, "diff", "--no-ext-diff", "--no-textconv", "--no-color",
+                    "--binary", "--unified=3", "--no-renames", session.snapshotCommit, "--", path
+                ]
+            }
+            let patchResult = try await runGit(
+                arguments: arguments,
+                workingDirectory: nil,
+                allowedExitCodes: isUntracked ? [0, 1] : [0],
+                outputLimit: 1_048_576
+            )
+            guard !patchResult.outputWasTruncated else {
+                throw AgentBridgeError.git("檔案差異超過大小限制；請拆分工作階段後再檢視。")
+            }
+            guard let patchText = String(data: patchResult.standardOutput, encoding: .utf8) else {
+                throw AgentBridgeError.git("Git 差異包含無法顯示的檔名或內容。")
+            }
+            guard combinedPatch.count + patchResult.standardOutput.count <= 10 * 1_024 * 1_024 else {
+                throw AgentBridgeError.git("完整差異超過大小限制；請拆分工作階段後再匯出。")
+            }
+            combinedPatch.append(contentsOf: patchResult.standardOutput)
+            let trackedStatus = trackedEntries.first(where: { $0.path == path })?.status
+            fileDiffs.append(ChangeFileDiff(
+                path: path,
+                status: isUntracked ? .untracked : Self.changeFileStatus(trackedStatus ?? ""),
+                patch: patchText,
+                isBinary: patchText.contains("Binary files ") || patchText.contains("GIT binary patch")
+            ))
+        }
+        return WorkspaceChangeDiff(baseCommit: session.snapshotCommit, files: fileDiffs, patch: combinedPatch)
+    }
+
+    public func restoreFiles(for session: SessionRecord, paths: [String]) async throws {
+        guard session.policy.accessMode == .isolatedChanges else {
+            throw AgentBridgeError.sessionMismatch("只有隔離變更工作階段可以還原檔案。")
+        }
+        try await validateWorkspace(for: session, accessMode: .isolatedChanges)
+        guard !paths.isEmpty else { throw AgentBridgeError.invalidInput("請選擇至少一個要還原的檔案。") }
+        let requestedPaths = Set(try paths.map { try validateRelativeGitPath($0) })
+        let diff = try await diff(for: session)
+        let changedPaths = Set(diff.files.map(\.path))
+        guard requestedPaths.isSubset(of: changedPaths) else {
+            throw AgentBridgeError.invalidInput("只能還原目前差異中列出的檔案。")
+        }
+        let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
+        for path in requestedPaths.sorted() {
+            let tracked = try await runGit(
+                arguments: ["-C", workspace.path, "ls-files", "--error-unmatch", "--", path],
+                workingDirectory: nil,
+                allowedExitCodes: [0, 1]
+            )
+            guard !tracked.outputWasTruncated else { throw AgentBridgeError.git("Git 檔案索引超過大小限制。") }
+            if tracked.exitCode == 0 {
+                let inBaseCommit = try await runGit(arguments: [
+                    "-C", workspace.path, "ls-tree", "-r", "--name-only", "-z", session.snapshotCommit, "--", path
+                ], workingDirectory: nil)
+                guard !inBaseCommit.outputWasTruncated else { throw AgentBridgeError.git("Git 基準檔案清單超過大小限制。") }
+                if inBaseCommit.standardOutput.isEmpty {
+                    _ = try await runGit(arguments: ["-C", workspace.path, "rm", "-f", "--", path], workingDirectory: nil)
+                } else {
+                    _ = try await runGit(arguments: [
+                        "-C", workspace.path, "restore", "--source", session.snapshotCommit,
+                        "--worktree", "--staged", "--", path
+                    ], workingDirectory: nil)
+                }
+            } else {
+                let fileURL = workspace.appendingPathComponent(path)
+                try validateNoSymlinkParent(of: fileURL, inside: workspace)
+                var metadata = stat()
+                guard lstat(fileURL.path, &metadata) == 0,
+                      (metadata.st_mode & S_IFMT) == S_IFREG || (metadata.st_mode & S_IFMT) == S_IFLNK else {
+                    throw AgentBridgeError.git("未追蹤檔案已改變或不是一般檔案，未執行還原。")
+                }
+                try fileManager.removeItem(at: fileURL)
+            }
+        }
+    }
+
+    public func restoreAllChanges(for session: SessionRecord) async throws {
+        guard session.policy.accessMode == .isolatedChanges else {
+            throw AgentBridgeError.sessionMismatch("只有隔離變更工作階段可以還原檔案。")
+        }
+        try await validateWorkspace(for: session, accessMode: .isolatedChanges)
+        let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
+        _ = try await runGit(arguments: ["-C", workspace.path, "reset", "--hard", session.snapshotCommit], workingDirectory: nil)
+        _ = try await runGit(arguments: ["-C", workspace.path, "clean", "-fd", "--"], workingDirectory: nil)
+    }
+
+    public func applyChangesToLocalBranch(for session: SessionRecord, branchName: String) async throws -> BranchApplyResult {
+        guard session.policy.accessMode == .isolatedChanges else {
+            throw AgentBridgeError.sessionMismatch("只有隔離變更工作階段可以套用到本機分支。")
+        }
+        try await validateWorkspace(for: session, accessMode: .isolatedChanges)
+        let diff = try await diff(for: session)
+        guard !diff.files.isEmpty, !diff.patch.isEmpty else {
+            throw AgentBridgeError.invalidInput("工作區沒有可套用的變更。")
+        }
+        let source = URL(fileURLWithPath: session.sourceRepositoryPath, isDirectory: true).standardizedFileURL
+        try await validateSourceRepository(source, expectedCommit: session.snapshotCommit)
+        try await validateBranchName(branchName, in: source)
+
+        let branchRef = "refs/heads/\(branchName)"
+        let existingBranch = try await runGit(
+            arguments: ["-C", source.path, "show-ref", "--verify", "--quiet", branchRef],
+            workingDirectory: nil,
+            allowedExitCodes: [0, 1]
+        )
+        let branchAlreadyExists = existingBranch.exitCode == 0
+        if branchAlreadyExists {
+            let branchCommit = try await gitText([
+                "-C", source.path, "rev-parse", "--verify", "--end-of-options", "\(branchRef)^{commit}"
+            ])
+            guard branchCommit == session.snapshotCommit else {
+                throw AgentBridgeError.sourceBaseConflict(expected: session.snapshotCommit, actual: branchCommit)
+            }
+        }
+
+        try AuditStore.createPrivateDirectory(store.workspacesURL, fileManager: fileManager)
+        let destination = store.workspacesURL.appendingPathComponent(
+            "apply-\(session.id.uuidString.lowercased())-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        var worktreeAdded = false
+        var branchCreated = false
+        do {
+            var arguments = ["-C", source.path, "worktree", "add"]
+            if !branchAlreadyExists {
+                arguments += ["-b", branchName, destination.path, session.snapshotCommit]
+            } else {
+                arguments += [destination.path, branchName]
+            }
+            _ = try await runGit(arguments: arguments, workingDirectory: nil)
+            worktreeAdded = true
+            branchCreated = !branchAlreadyExists
+            guard isWithinManagedWorkspaces(destination), isDirectory(destination), !isSymbolicLink(destination) else {
+                throw AgentBridgeError.git("建立的分支工作樹不在 AgentBridge 管理的隔離資料夾內。")
+            }
+            try await validateSourceRepository(source, expectedCommit: session.snapshotCommit)
+            _ = try await runGit(
+                arguments: ["-C", destination.path, "apply", "--binary", "--check"],
+                workingDirectory: nil,
+                standardInput: diff.patch
+            )
+            _ = try await runGit(
+                arguments: ["-C", destination.path, "apply", "--binary"],
+                workingDirectory: nil,
+                standardInput: diff.patch
+            )
+            return BranchApplyResult(branchName: branchName, worktreePath: destination.path, changedFileCount: diff.files.count)
+        } catch {
+            if worktreeAdded {
+                _ = try? await runGit(arguments: ["-C", source.path, "worktree", "remove", "--force", destination.path], workingDirectory: nil)
+            }
+            if branchCreated,
+               (try? await gitText(["-C", source.path, "rev-parse", "--verify", "--end-of-options", "\(branchRef)^{commit}"])) == session.snapshotCommit {
+                _ = try? await runGit(arguments: ["-C", source.path, "branch", "-D", branchName], workingDirectory: nil)
+            }
+            if let error = error as? AgentBridgeError { throw error }
+            throw AgentBridgeError.git("無法將變更套用到指定的本機分支；來源工作目錄保持不變。")
+        }
+    }
+
     private func inspectSourceRepository(path: String) async throws -> WorkspaceSnapshot {
         let input = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
         guard input.path.hasPrefix("/") else { throw AgentBridgeError.invalidInput("請選擇本機 Git 資料夾。") }
@@ -171,6 +365,107 @@ public final class WorkspaceManager: @unchecked Sendable {
         return resolved
     }
 
+    private func validateSourceRepository(_ source: URL, expectedCommit: String) async throws {
+        guard isDirectory(source), !isSymbolicLink(source) else {
+            throw AgentBridgeError.sessionMismatch("原始 Git 儲存庫已不存在或不再是一般資料夾。")
+        }
+        let gitMetadata = source.appendingPathComponent(".git")
+        guard isDirectory(gitMetadata), !isSymbolicLink(gitMetadata) else {
+            throw AgentBridgeError.sessionMismatch("原始 Git 儲存庫結構已改變，無法安全套用變更。")
+        }
+        let topLevel = try await gitText(["-C", source.path, "rev-parse", "--show-toplevel"])
+        guard URL(fileURLWithPath: topLevel, isDirectory: true).standardizedFileURL.path == source.path else {
+            throw AgentBridgeError.sessionMismatch("原始儲存庫根目錄與工作階段記錄不符。")
+        }
+        let actualCommit = try await gitText(["-C", source.path, "rev-parse", "HEAD"])
+        guard actualCommit == expectedCommit else {
+            throw AgentBridgeError.sourceBaseConflict(expected: expectedCommit, actual: actualCommit)
+        }
+    }
+
+    private func validateBranchName(_ name: String, in repository: URL) async throws {
+        guard !name.isEmpty, !name.hasPrefix("-"), name.utf8.count <= 200,
+              !name.contains("@{-"),
+              !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+            throw AgentBridgeError.invalidInput("請輸入有效的本機分支名稱。")
+        }
+        let result = try await runGit(
+            arguments: ["-C", repository.path, "check-ref-format", "--branch", name],
+            workingDirectory: nil
+        )
+        guard !result.outputWasTruncated else {
+            throw AgentBridgeError.invalidInput("請輸入有效的本機分支名稱。")
+        }
+    }
+
+    private func parseNameStatus(_ data: Data) throws -> [(status: String, path: String)] {
+        let fields = data.split(separator: 0, omittingEmptySubsequences: true).map { Data($0) }
+        guard fields.count.isMultiple(of: 2) else { throw AgentBridgeError.git("Git 檔案差異格式無法辨識。") }
+        var entries: [(status: String, path: String)] = []
+        for index in stride(from: 0, to: fields.count, by: 2) {
+            guard let status = String(data: fields[index], encoding: .utf8),
+                  let path = String(data: fields[index + 1], encoding: .utf8),
+                  !status.isEmpty, !path.isEmpty else {
+                throw AgentBridgeError.git("Git 檔案差異包含無法顯示的路徑。")
+            }
+            entries.append((status: status, path: path))
+        }
+        return entries
+    }
+
+    private func parseNULSeparatedPaths(_ data: Data) throws -> [String] {
+        try data.split(separator: 0, omittingEmptySubsequences: true).map { field in
+            guard let path = String(data: Data(field), encoding: .utf8), !path.isEmpty else {
+                throw AgentBridgeError.git("Git 未追蹤檔案清單包含無法顯示的路徑。")
+            }
+            return path
+        }
+    }
+
+    @discardableResult
+    private func validateRelativeGitPath(_ path: String) throws -> String {
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard path.utf8.count <= 4_096,
+              !path.hasPrefix("/"),
+              !path.contains("\0"),
+              !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+              !components.isEmpty,
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+            throw AgentBridgeError.invalidInput("差異路徑不是安全的相對檔案路徑。")
+        }
+        return path
+    }
+
+    private func validateNoSymlinkParent(of fileURL: URL, inside root: URL) throws {
+        let rootPath = root.standardizedFileURL.path
+        let filePath = fileURL.standardizedFileURL.path
+        guard filePath.hasPrefix(rootPath + "/") else {
+            throw AgentBridgeError.invalidInput("檔案路徑超出隔離工作區。")
+        }
+        let relative = String(filePath.dropFirst(rootPath.count + 1))
+        let components = relative.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count >= 1 else { throw AgentBridgeError.invalidInput("檔案路徑無效。") }
+        var parent = root
+        for component in components.dropLast() {
+            parent.appendPathComponent(String(component), isDirectory: true)
+            var metadata = stat()
+            guard lstat(parent.path, &metadata) == 0,
+                  (metadata.st_mode & S_IFMT) == S_IFDIR else {
+                throw AgentBridgeError.invalidInput("檔案路徑的父資料夾不是一般資料夾。")
+            }
+        }
+    }
+
+    private static func changeFileStatus(_ status: String) -> ChangeFileStatus {
+        switch status {
+        case "M": .modified
+        case "A": .added
+        case "D": .deleted
+        case "T": .typeChanged
+        default: .unknown
+        }
+    }
+
     private func gitText(_ arguments: [String]) async throws -> String {
         let result = try await runGit(arguments: arguments, workingDirectory: nil)
         guard !result.outputWasTruncated,
@@ -181,7 +476,13 @@ public final class WorkspaceManager: @unchecked Sendable {
         return value
     }
 
-    private func runGit(arguments: [String], workingDirectory: URL?) async throws -> ProcessResult {
+    private func runGit(
+        arguments: [String],
+        workingDirectory: URL?,
+        standardInput: Data = Data(),
+        allowedExitCodes: Set<Int32> = [0],
+        outputLimit: Int = 256_000
+    ) async throws -> ProcessResult {
         guard fileManager.isExecutableFile(atPath: gitURL.path) else {
             throw AgentBridgeError.git("找不到系統 Git。")
         }
@@ -208,25 +509,33 @@ public final class WorkspaceManager: @unchecked Sendable {
             arguments: [
                 "-c", "core.fsmonitor=false",
                 "-c", "core.hooksPath=/dev/null",
-                "-c", "core.untrackedCache=false"
+                "-c", "core.untrackedCache=false",
+                "--literal-pathspecs"
             ] + arguments,
             environment: environment,
             workingDirectoryURL: workingDirectory,
-            standardInput: Data(),
+            standardInput: standardInput,
             timeout: 60,
-            outputLimit: 256_000
+            outputLimit: outputLimit
         )
         let result = try await runner.run(spec)
         if result.timedOut { throw AgentBridgeError.git("Git 操作逾時。") }
         if result.wasCancelled { throw AgentBridgeError.git("Git 操作已取消。") }
-        guard result.exitCode == 0 else { throw AgentBridgeError.git("Git 指令失敗，結束代碼 \(result.exitCode)。") }
+        guard allowedExitCodes.contains(result.exitCode) else {
+            throw AgentBridgeError.git("Git 指令失敗，結束代碼 \(result.exitCode)。")
+        }
         return result
     }
 
     private func isWithinManagedWorkspaces(_ url: URL) -> Bool {
-        let root = store.workspacesURL.standardizedFileURL.path
         let candidate = url.standardizedFileURL.path
-        return candidate.hasPrefix(root + "/")
+        return store.managedWorkspaceRootURLs.contains { root in
+            let normalizedRoot = root.standardizedFileURL
+            let workspaces = normalizedRoot.appendingPathComponent("workspaces", isDirectory: true)
+            guard isDirectory(normalizedRoot), !isSymbolicLink(normalizedRoot),
+                  isDirectory(workspaces), !isSymbolicLink(workspaces) else { return false }
+            return candidate.hasPrefix(workspaces.path + "/")
+        }
     }
 
     private func isDirectory(_ url: URL) -> Bool {

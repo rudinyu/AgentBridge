@@ -9,7 +9,8 @@ final class AgentBridgeCoreTests: XCTestCase {
         let codex = try ProviderCommandBuilder.codexRunArguments(workspacePath: workspace)
         XCTAssertEqual(codex[codex.firstIndex(of: "--cd")! + 1], workspace)
         XCTAssertTrue(codex.contains("read-only"))
-        XCTAssertTrue(codex.contains("never"))
+        XCTAssertFalse(codex.contains("--ask-for-approval"))
+        XCTAssertFalse(codex.contains("never"))
         XCTAssertTrue(codex.contains("--no-daemon"))
         XCTAssertFalse(codex.contains("--dangerously-bypass-approvals-and-sandbox"))
 
@@ -35,7 +36,7 @@ final class AgentBridgeCoreTests: XCTestCase {
         )
         XCTAssertTrue(codexInteractive.contains("--sandbox"))
         XCTAssertTrue(codexInteractive.contains("read-only"))
-        XCTAssertTrue(codexInteractive.contains("on-request"))
+        XCTAssertEqual(codexInteractive[codexInteractive.firstIndex(of: "--ask-for-approval")! + 1], "on-request")
         XCTAssertFalse(codexInteractive.contains("--ignore-user-config"))
         let developerInstructions = try XCTUnwrap(codexInteractive.first(where: { $0.hasPrefix("developer_instructions=") }))
         XCTAssertEqual(
@@ -133,7 +134,7 @@ final class AgentBridgeCoreTests: XCTestCase {
         let codex = try ProviderCommandBuilder.codexUsageArguments(workingDirectory: workingDirectory)
         XCTAssertEqual(codex[codex.firstIndex(of: "--cd")! + 1], workingDirectory)
         XCTAssertTrue(codex.contains("read-only"))
-        XCTAssertTrue(codex.contains("never"))
+        XCTAssertEqual(codex[codex.firstIndex(of: "--ask-for-approval")! + 1], "never")
         XCTAssertTrue(codex.contains("--no-daemon"))
         XCTAssertFalse(codex.contains("exec"))
         XCTAssertFalse(codex.contains("--ignore-user-config"))

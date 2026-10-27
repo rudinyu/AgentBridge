@@ -10,17 +10,20 @@ flowchart LR
     Runner --> Codex[Codex CLI]
     Runner --> Claude[Claude Code CLI]
     Core --> Git[WorkspaceManager isolated Git clone]
-    Core --> Stores[(Private local stores)]
-    Stores --> Sessions[Sessions and audit events]
-    Stores --> Memory[Shared App and CLI memory]
-    Stores --> Ledger[Account-scoped Claude API ledgers]
-    Stores --> Usage[Local usage controls and alert history]
+    Core --> PrivateData[(Private Application Support data)]
+    PrivateData --> Sessions[Session and audit metadata]
+    PrivateData --> Settings[Settings and account profiles]
+    PrivateData --> Ledger[Account-scoped Claude API ledgers]
+    PrivateData --> Usage[Local usage controls and alert history]
+    Core --> UserRoot[(User-selected workspace data root)]
+    UserRoot --> Workspaces[Isolated session workspaces]
+    UserRoot --> Memory[Shared App and CLI memory]
     App --> Terminal[SwiftTerm embedded PTY]
     Terminal --> Codex
     Terminal --> Claude
 ```
 
-圖示中的 provider CLI、SwiftTerm 與 AgentBridgeCore 都在使用者的 Mac 上執行。共享記憶、稽核資料、用量控制與 API 帳本留在本機；模型請求依選定的官方 CLI 傳送至對應 provider。
+圖示中的 provider CLI、SwiftTerm 與 AgentBridgeCore 都在使用者的 Mac 上執行。使用者自選資料夾存放隔離工作區與共用記憶；私有設定、帳戶資料、工作階段／稽核中繼資料、用量控制及 API 帳本留在 Application Support。模型請求依選定的官方 CLI 傳送至對應 provider。
 
 ## App icon 設計
 
@@ -30,7 +33,7 @@ Icon 以深靛藍底色呈現兩個不同助理節點，透過一道明亮的弧
 
 ## 目標與實作方式
 
-AgentBridge 0.4.0 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCore`、`agentbridge` CLI 與原生 SwiftUI App。App 和 CLI 共用設定、帳戶、會話、權限、工作區、記憶、稽核與預算程式碼。App 預設使用英文，並內建英文與繁體中文資源，可在 App 內選擇並保存語言。App 的內嵌終端使用 SwiftTerm 1.20.0；Release bundle 由 `scripts/package-app.sh` 組裝，不維護兩份 Xcode 專案設定。
+AgentBridge 0.6.0 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCore`、`agentbridge` CLI 與原生 SwiftUI App。App 和 CLI 共用已保存的工作區資料根目錄，以及私有設定、帳戶、工作階段索引、稽核、用量控制與 API 帳本。App 預設使用英文，並內建英文與繁體中文資源，可在 App 內選擇並保存語言。App 的內嵌終端使用 SwiftTerm 1.20.0；Release bundle 由 `scripts/package-app.sh` 組裝，不維護兩份 Xcode 專案設定。
 
 供應商整合透過本機官方 CLI 執行：Codex 使用 `codex exec --json` 或原生互動 CLI，Claude Code 使用 `claude -p --output-format stream-json` 或原生互動 CLI。程式不匯出或複製 OAuth 憑證，也不把 CLI session ID 當成跨供應商記憶。此專案使用 Swift 管理本機程序，不另外引入 Codex/Claude SDK runtime。
 
@@ -43,26 +46,48 @@ AgentBridge 0.4.0 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCor
 | `Models` | provider、設定、帳戶、工作階段、權限、事件及錯誤型別 |
 | `SafeProcessRunner` | 以 executable 和 argv 啟動程序；有界 I/O、程序群組、逾時、取消及 PTY 前景交接 |
 | `ProviderAdapters` | 建立安全參數與環境、辨識登入方案、解析事件與供應商費用 |
-| `WorkspaceManager` | 建立獨立 detached Git clone、移除遠端、停用 Git hooks，並驗證固定提交 |
-| `AuditStore` | 私有設定、session/event JSONL、跨程序檔案鎖、單一執行租約及取消標記 |
+| `WorkspaceManager` | 在使用者自選的工作區資料根目錄建立獨立 detached Git clone、移除遠端、停用 Git hooks，並驗證固定提交 |
+| `AuditStore` | Application Support 中的私有設定、session/event JSONL、跨程序檔案鎖、單一執行租約及取消標記 |
+| 工作區根目錄設定 | 將使用者選擇的資料夾私下保存供 App 與 CLI 共用；變更時安全複製既有工作區與記憶，不刪除來源資料 |
 | `AccountProfileStore` | provider 帳戶標籤、選取狀態、分離 CLI 設定目錄及逐帳戶記憶同意 |
 | `SharedMemoryStore` | 依 canonical Repository 路徑及固定提交儲存跨供應商回合與使用者備註 |
+| `ProjectMemoryStore` | 依 canonical Repository 儲存明確選取的回合／備註交接，並保留來源／目標提交 provenance |
+| `ParallelTaskBoard` | 記錄實際啟動的 App/CLI 操作、工作階段狀態、核准、進度、取消及結果參照 |
+| `ExtensionPolicyStore` | 保存惰性 descriptor metadata 與明確的每專案狹窄授權；不會啟用或執行 provider extension |
 | `BudgetLedger` | 依帳戶分開的 Claude API 月度上限、保守預留和結算；內建帳戶沿用舊版 US$140 帳本 |
 | `UsageControlStore` / `APICostControlLedger` | 逐帳戶執行次數與選用日／工作階段 USD 上限、門檻去重、有筆數上限的設定稽核、並行呼叫預留及帳單恢復 |
 | `OutputRedactor` | 遮蔽常見 token 格式與本次已知 API key |
 | CLI / SwiftUI App | 共用對話、帳戶切換、記憶管理、內嵌終端與單次 API 確認介面 |
 
+## 工作區資料與私有 App 資料
+
+第一次啟動時，App 會要求使用者選擇或建立工作區資料夾。設定完成前不會建立工作階段；AgentBridge 不會暗中以 Application Support 作為工作區備援位置。App 與 CLI 共用已保存的根目錄。CLI 可用 `agentbridge workspace set /absolute/path/to/folder` 設定，並以 `agentbridge workspace show` 查看；需要該資料夾的命令若發現尚未設定，會顯示可直接執行的設定指令。
+
+使用者選擇的資料夾採用 `<root>/workspaces/<小寫工作階段 UUID>/` 存放每個工作階段的獨立 Git 複本，並以 `<root>/shared-memory/` 存放 App/CLI 共用對話記憶。App 設定、帳戶設定資料、各 provider CLI 專用的 profile 資料夾（CLI 會在其中保存該 profile 的登入資料）、工作階段索引、稽核事件、用量控制及預算帳本，仍存放在私有的 `~/Library/Application Support/AgentBridge`。已選根目錄也會保存在該私有資料夾。
+
+變更根目錄時，AgentBridge 會將既有工作區和共用記憶複製到新位置，再更新既有工作階段記錄以指向新副本。舊資料夾仍保持原樣。若目的地已有不同內容的工作區或記憶檔，遷移會停止且不會覆寫任一副本。新工作階段會建立在目前所選的根目錄。變更的是存放位置，不會改寫工作階段的來源 Repository 路徑或固定提交版本。
+
 ## 會話、隔離與切換
 
-建立 session 時，AgentBridge 讀取來源 Repository 的已提交版本，使用獨立 clone 建立隔離工作區並記錄完整 commit hash。切換 Codex/Claude 或切換帳戶時，以同一來源路徑和原固定提交建立或重用對應工作階段，來源 Repository 的 HEAD 即使後續改變也不會偷偷改變既有對話範圍。未提交與未追蹤檔不會複製。
+建立 session 時，AgentBridge 讀取來源 Repository 的已提交版本，在 `<selected root>/workspaces/<小寫工作階段 UUID>/` 建立獨立 clone，並記錄完整 commit hash。唯讀為預設。隔離變更工作階段只支援訂閱模式，使用同一個固定 clone，且 provider 寫入前必須先檢視並明確核准工作計畫。Codex 使用官方 `workspace-write` sandbox；Claude 使用 `acceptEdits` 與狹窄工具允許清單。原生互動 TUI 是另一種模式。切換 Codex/Claude 或切換帳戶時，以同一來源路徑和原固定提交建立或重用對應工作階段，來源 Repository 的 HEAD 即使後續改變也不會偷偷改變既有對話範圍。未提交與未追蹤檔不會複製。
 
 每個 session 綁定建立時所選的 provider 帳戶。切換帳戶後，舊 session 不會改用新帳戶續行；需切回原帳戶或建立新的 session。Codex 和 Claude 各自有內建「目前本機登入」 profile，以及可選擇新增的獨立 profile。新增 profile 使用專屬 `CODEX_HOME` 或 `CLAUDE_CONFIG_DIR`，憑證由官方 CLI 建立及讀取，AgentBridge 不解析或複製憑證。內建帳戶不提供重新登入按鈕，避免改動既有登入。
+
+### 變更審查、驗證、任務與擴充政策
+
+變更流程會將計畫摘要綁定工作階段；計畫內容變更會使先前核准失效。修改留在隔離工作區，不會寫入來源樹。App 提供完整逐檔 diff、單檔／全部還原與 patch 匯出。驗證是由使用者另行啟動、在工作階段工作區執行的程序：預設為 `.codex/ci.sh`；自訂 executable 路徑和 argv 必須明確核准，並直接傳入程序，不經 shell 拼接。接受或套用必須先成功驗證與目前 diff 完全相同的內容。套用前檢查來源 base commit，並在具名本機 branch 建立未提交 worktree。AgentBridge 不會 commit、push 或 merge。
+
+活動時間軸呈現排序後且已遮蔽的 `AuditEvent`，provider 輸出只在官方 CLI 確實回報時才顯示。任務看板保存每個實際啟動的操作、進度、核准狀態、終止狀態及 diff／驗證參照。App 最多同時執行三個不同工作階段；與 CLI 共用的程序層級執行租約會阻止同一工作階段重複執行。取消與執行租約以各工作階段為範圍。未啟動的操作不會被記為執行中。
+
+Extension 匯入僅為 metadata。Descriptor 和每專案 grant 記錄待審查的要求與核准範圍；不會連接 MCP server、安裝 Skill、載入 provider instructions 或執行腳本。此版本不包含啟用 provider extension。
 
 方案與帳戶資訊只顯示官方 CLI 驗證狀態實際回報的欄位。Claude CLI 可回報登入帳號和訂閱方案；Codex CLI 若未提供方案欄位，畫面不自行推測。建立其他帳戶時，使用者必須在官方登入流程完成登入。
 
 ## 共用記憶
 
-App 與 CLI 的唯讀聊天回合只在 provider 執行成功後寫入本機共用記憶；兩者指向相同私有資料目錄。記憶範圍由 canonical Repository 路徑及建立 session 時固定的 commit hash 組成，同一固定版本可由 Codex 與 Claude 共用。更換來源路徑或 commit 會得到另一份記憶。記憶內容包含明確送出的提示、成功回應及使用者備註，經敏感字串遮蔽、Unicode 安全截短及大小/回合數上限後寫入 owner-only 檔案。
+App 與 CLI 的唯讀聊天回合只在 provider 執行成功後寫入 `<selected root>/shared-memory/`；兩者使用相同的自選根目錄。記憶範圍由來源 Repository 的 canonical 路徑及建立 session 時固定的 commit hash 組成，同一固定版本可由 Codex 與 Claude 共用。工作區資料根目錄不屬於記憶索引；選擇不同根目錄不會改變記憶識別。更換來源路徑或 commit 會得到另一份記憶。記憶內容包含明確送出的提示、成功回應及使用者備註，經敏感字串遮蔽、Unicode 安全截短及大小/回合數上限後寫入 owner-only 檔案。
+
+跨提交延續必須明確操作。使用者從來源工作階段選取 App 保存的回合與／或備註，並指定相同 canonical Repository、不同固定提交版本的目標工作階段；目標綁定帳戶也必須允許共用記憶。交接存於 `<selected root>/shared-memory/project-handoffs/`。只有符合目標 commit 的交接會進入目標工作階段下一次允許的提示，包含所選文字及來源／目標 provenance，並標示為有 16 KiB 上限的不可信歷史 JSON。原生 TUI transcript 永不匯入。
 
 內建帳戶與新建帳戶預設都允許讀取和保存 AgentBridge 共用記憶。使用者可在每個帳戶設定中關閉；關閉不會刪除歷史內容，只會停止該帳戶自動載入或保存回合。既有帳戶的已儲存同意設定不會因更新而改變。記憶可在 App 內查看或清除。
 
@@ -70,9 +95,9 @@ provider CLI 決定原生互動 TUI transcript 是否保存。AgentBridge 不會
 
 ## 執行安全與權限
 
-非互動程序使用直接 executable/argv，不經 shell；提示透過標準輸入提供。子程序環境採白名單，不繼承 API key、proxy 或雲端憑證。輸出與錯誤緩衝有上限，原始 provider stderr 不寫入稽核記錄。執行有每 session 租約、取消標記、程序群組終止及 bounded escalation；CLI 的 SIGINT/SIGTERM/SIGHUP 也會轉為取消。
+非互動程序使用直接 executable/argv，不經 shell；提示透過標準輸入提供。子程序環境採白名單，不繼承 API key、proxy 或雲端憑證。輸出與錯誤緩衝有上限，稽核事件會遮蔽常見祕密。執行有每 session 租約、取消標記、程序群組終止及 bounded escalation；CLI 的 SIGINT/SIGTERM/SIGHUP 也會轉為取消。
 
-Codex 非互動使用 read-only sandbox 及不升權核准；Claude 非互動限於 `Read,Glob,Grep`、關閉 hooks/MCP，並使用 `dontAsk`。原生互動模式保留 provider TUI，Codex 維持唯讀 sandbox，Claude 使用 Manual 權限模式；使用者核准的 Claude 指令可能編輯隔離 clone，也可能讀取工作區外資料或使用網路。隔離 clone 是工作流程邊界，不是 macOS sandbox。
+唯讀 Codex 非互動使用 read-only sandbox 及不升權核准；唯讀 Claude 非互動限於 `Read,Glob,Grep`、關閉 hooks/MCP，並使用 `dontAsk`。隔離變更使用 Codex `workspace-write` 或 Claude `acceptEdits` 及狹窄工具允許清單；隔離工作區仍是工作流程邊界，不是 macOS sandbox。原生互動模式保留 provider TUI，Codex 維持唯讀 sandbox，Claude 使用 Manual 權限模式；在原生 TUI 核准的 Claude 指令可能編輯隔離 clone、讀取工作區外資料或使用網路。
 
 內嵌終端直接將 PTY 接到官方 CLI，不保存原始終端畫面或輸入。只有按下固定的 `/usage` 按鈕後，App 才會將有限數量的可見 SwiftTerm 列暫存在記憶體供盡力解析；辨識到用量值或 15 秒後停止取樣，再按固定按鈕可重新啟動。正規化報告產生後即丟棄原始文字，不會記錄、保存或傳給模型。SwiftTerm 不允許 OSC 52 剪貼簿讀寫及 terminal link 開啟，並限制 scrollback。獨立「本機終端機」使用者 shell 以目前 macOS 帳戶權限執行；Repository clone 不會限制其檔案或網路存取。
 
@@ -94,7 +119,7 @@ App 依選取帳戶動態統計 AgentBridge 管理的執行嘗試，顯示滾動
 
 ## 資料與剩餘邊界
 
-App/CLI 資料位於 `~/Library/Application Support/AgentBridge`，由私有目錄及檔案鎖保護。敏感遮罩採最佳努力，無法識別所有未知秘密。provider CLI 仍可依其自身政策保存帳戶或 session 資料。同一 macOS 使用者也能手動更改本機資料、用量控制及帳本；此工具不適合作為多人或遠端不受信任服務。
+私有設定、帳戶設定資料、各 provider CLI 專用的 profile 資料夾（CLI 會在其中保存該 profile 的登入資料）、工作階段／稽核中繼資料、用量控制及預算帳本位於 `~/Library/Application Support/AgentBridge`，並由私有目錄權限與檔案鎖保護。隔離工作區及共用記憶位於使用者自選的工作區資料根目錄；已選根目錄保存在私有 Application Support，讓 App 與 CLI 使用相同位置。變更根目錄會複製既有工作區與記憶並更新工作階段路徑，不會刪除原本資料。敏感遮罩採最佳努力，無法識別所有未知秘密。內建 profile 仍使用 provider CLI 原本的登入資料夾。同一 macOS 使用者也能手動更改本機資料、用量控制及帳本；此工具不適合作為多人或遠端不受信任服務。
 
 ## 建置及驗收
 

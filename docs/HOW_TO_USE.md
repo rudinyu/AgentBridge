@@ -2,7 +2,7 @@
 
 [Traditional Chinese](HOW_TO_USE.zh-TW.md)
 
-This guide covers setup, sign-in, starting conversations, switching providers and accounts, shared memory, and enabling Claude API when needed. The app and CLI share local settings, sessions, memory, and the API budget ledger.
+This guide covers setup, sign-in, starting conversations, switching providers and accounts, shared memory, and enabling Claude API when needed. The app and CLI share a saved user-selected workspace data folder, while private settings, account profiles, session/audit metadata, and usage/budget ledgers stay in Application Support.
 
 ### 1. Set up and launch the app
 
@@ -23,6 +23,18 @@ open build/AgentBridge.app
 ```
 
 The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built the app, open `build/AgentBridge.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
+
+The first time the app opens, choose or create a folder for workspace data. AgentBridge requires this selection before it can create sessions; it does not silently choose a folder under Application Support. The app and CLI use the same saved location. The selected folder contains isolated session workspaces and shared memory:
+
+```text
+<your chosen folder>/
+  workspaces/<session-id>/   # one isolated Git copy per session
+  shared-memory/             # shared App/CLI conversation memory
+```
+
+Private app data remains under `~/Library/Application Support/AgentBridge`, including app settings, account-profile data, dedicated provider CLI profile folders (where those CLIs store their profile credentials), session and audit records, and usage/budget ledgers. Built-in accounts continue to use the provider CLI's existing login folders. To change the selected folder in the app later, click **Change…** beside **Data root** in the **Project** panel. From the CLI, run `agentbridge workspace set /absolute/path/to/folder`; use `agentbridge workspace show` to see the saved folder. The CLI gives this setup command as an actionable error if no folder has been selected.
+
+Changing the selected folder copies existing workspace folders and shared memory to the new location, then updates existing session records to use those copies. The original folders and files remain intact; new sessions use the newly selected folder. If a destination already contains different data for an existing workspace or memory file, AgentBridge stops and reports the conflict without overwriting either copy. Changing the folder does not change shared-memory identity: memory remains scoped by the canonical source repository path and the commit pinned for a session.
 
 ### 2. Choose a language and check CLI sign-in
 
@@ -46,7 +58,7 @@ If a CLI cannot be found, enter its executable path under **CLI Executables**, o
 4. Leave **Interactive Terminal Session** off and click **Create a New Session for This Project**. This creates a read-only chat session.
 5. Enter a prompt on the right and click **Send**. A successfully completed turn is saved to shared memory for this repository and pinned commit.
 
-Each session pins the source `HEAD` at creation and runs in an isolated clone owned by AgentBridge. Uncommitted and untracked files are not copied. If the source commit later changes, an existing session keeps its original snapshot. A new session uses the new source commit and a separate memory scope. AgentBridge does not merge or push workspace changes automatically.
+Each session pins the source `HEAD` at creation and runs in its own isolated clone under `<chosen folder>/workspaces/<session-id>/`. Uncommitted and untracked files are not copied. If the source commit later changes, an existing session keeps its original snapshot. A new session uses the new source commit and a separate memory scope. AgentBridge does not merge or push workspace changes automatically.
 
 ### 4. Add accounts, sign in, and switch plans
 
@@ -74,7 +86,7 @@ New accounts are allowed to use shared memory by default. To stop sharing for an
 
 ### 5. Switch between Codex and Claude with shared memory
 
-Shared memory is scoped by source repository path and pinned commit. Successful read-only conversations from the app or CLI are added when the account allows sharing. When you switch from Codex to Claude or back, both can use the same completed App/CLI conversations and notes if the sessions use the same source path and commit. New accounts share memory by default; sharing can be disabled per account.
+Shared memory is stored in `<chosen folder>/shared-memory/` and scoped by canonical source repository path and pinned commit. Its scope does not depend on where the isolated workspace copies are stored. Successful read-only conversations from the app or CLI are added when the account allows sharing. When you switch from Codex to Claude or back, both can use the same completed App/CLI conversations and notes if the sessions use the same source path and commit. New accounts share memory by default; sharing can be disabled per account.
 
 Use **Shared Project Memory** to review chat turns. Open **Memory Notes and Terminal Handoff** to save material for another assistant. Successful read-only App and CLI turns are added automatically when the account has consented. Native Codex and Claude TUI input and output are not captured; write any handoff details you need into the notes yourself. Clearing memory deletes chat memory and notes for that source and pinned commit. It does not delete provider-owned session data.
 
@@ -94,7 +106,7 @@ The upper-right **Local Terminal** action opens a shell at the repository clone,
 
 The Usage panel is scoped to the selected provider and account profile. In subscription mode it charts AgentBridge-recorded managed run attempts for rolling 5-hour, 24-hour, and 7-day windows. These are local estimates, not provider quota or account-wide use; provider limits and sharing rules vary, and activity in other provider apps is not included. Interactive TUI turns are not recorded.
 
-AgentBridge cannot read official subscription quota percentages. To check manually, open the provider's official interactive CLI and enter `/usage`: Codex CLI shows daily, weekly, and cumulative activity; Claude CLI shows session cost, plan usage limits, and activity statistics. AgentBridge does not parse terminal output or private provider endpoints.
+AgentBridge cannot obtain official subscription quota percentages from a supported machine-readable source. To check them, open the provider's official interactive CLI and use the fixed **Send /usage** action: Codex CLI shows daily, weekly, and cumulative activity; Claude CLI shows session cost, plan usage limits, and activity statistics. After that explicit action, AgentBridge copies a bounded amount of visible screen text into memory and best-effort parses recognized fields into the unified card. Unknown fields show **Not provided**. The visible official TUI remains the source of truth; this screen-text parser is not a stable quota API. AgentBridge does not read other terminal output or access private provider endpoints.
 
 Optional local run-count caps can be set for subscription runs over 5 hours, 24 hours, 7 days, and the current AgentBridge work session. Claude API has separate optional UTC-day and work-session USD caps, 24-hour and work-session run-count caps, and a switch that blocks future API runs for the selected account. The per-run USD budget, daily/session USD caps, monthly USD ledger, and run-count caps are distinct controls. A call reserves twice its per-run amount against configured USD caps before launch. Only one paid call may remain unresolved across the app and CLI.
 
@@ -124,7 +136,55 @@ printf '%s' 'Summarize the repository architecture.' | \
 
 To return to subscription login, run `"$CLI" settings usage subscription`, then create or switch back to a subscription session. API mode cannot resume a subscription session that already has a provider session. The ledger only counts AgentBridge API calls; the provider's actual charges and Anthropic Console limits are authoritative.
 
-### 9. Common CLI operations
+### 9. Safe changes, activity, memory handoff, and extensions
+
+Read-only stays the default. For an isolated change, choose **Isolated Changes** under **Access mode** and create a new session while subscription mode is selected. It uses a fresh workspace based on the source repository's committed `HEAD`; uncommitted source files are not copied. Native interactive TUI mode is separate.
+
+In **Changes**, write a title, summary, and steps for the plan, then save and review it. Edit the plan until it matches the work you want. Click **Approve reviewed plan** before **Run approved changes** becomes available. The provider writes only in the isolated session workspace. Codex change runs use headless `codex exec`: AgentBridge does not enable automatic approval, and no runtime approval prompt is available. A command that needs permissions outside the configured sandbox fails closed; keep the work within the approved plan and workspace. The CLI offers the same sequence:
+
+```sh
+CLI=build/swiftpm/debug/agentbridge
+"$CLI" session create --provider codex --repo "$HOME/Projects/example" --changes
+# Copy the session ID printed above.
+SESSION_ID="paste-session-id-here"
+"$CLI" changes plan "$SESSION_ID" --title "Update parser" \
+  --summary "Handle the new record shape." --step "Update decoding" --step "Adjust focused coverage"
+# Copy PLAN_ID and REVIEW_DIGEST from the output. Approval prints the plan and
+# waits for the complete `APPROVE REVIEW_DIGEST` phrase on stdin.
+printf '%s\n' 'APPROVE REVIEW_DIGEST' | "$CLI" changes approve "$SESSION_ID" PLAN_ID REVIEW_DIGEST
+printf '%s' 'Implement the approved plan.' | \
+  "$CLI" changes run "$SESSION_ID" PLAN_ID REVIEW_DIGEST
+```
+
+Review **Changes** for the complete file list and diff. Restore a selected file when rejecting its change, restore all to the base snapshot, or export the patch. **Verify** starts `.codex/ci.sh` only after you click it. A custom verifier requires an explicit approval step and is passed as an executable plus separate argv values; AgentBridge does not assemble a shell command. The result shows the executable, arguments, working directory, exit code, duration, and redacted stdout/stderr. Accept and apply controls require a successful verification of the current exact diff. Apply asks for a local branch name, checks that the source base commit has not changed, and creates an uncommitted worktree. AgentBridge never commits, pushes, or merges.
+
+The **Activity** timeline shows ordered redacted audit events, including recorded progress, plan approval, cancellation, errors, diff changes, and verification. It reports provider output only when the official CLI reports it. The **Parallel task board** lists actual launched runs across sessions and their status, approval, progress, cancellation, and diff/verification references. The App allows up to three different sessions to run concurrently. Shared process-level locks prevent two managed runs in the same session, including when one is started by the CLI; the three-session ceiling currently applies to App-launched work. Use **Cancel this session** on the corresponding task.
+
+To carry memory across commits, choose a source session and a target session for the same canonical repository and different commits. The target session's bound account must allow shared memory. Select the source turns and/or notes, review the source and target commits, and create the handoff. The next allowed target-session prompt receives only that selection as a bounded (16 KiB), clearly marked untrusted historical JSON envelope with provenance. Handoffs are stored below the selected workspace data root in `shared-memory/project-handoffs/`. Native provider TUI transcripts are never imported.
+
+The **Skills and MCP policy** panel accepts a descriptor JSON file as inert metadata. Review the requested scopes, select only narrow per-project permissions, and explicitly grant or revoke them. The grant is policy metadata only: it does not activate a provider extension, connect an MCP server, or run scripts.
+
+The CLI offers focused counterparts:
+
+```sh
+"$CLI" changes diff "$SESSION_ID"
+"$CLI" changes restore "$SESSION_ID" Sources/example.swift
+"$CLI" changes export "$SESSION_ID" "$HOME/Desktop/example.patch"
+"$CLI" changes verify "$SESSION_ID" # starts .codex/ci.sh only on this explicit command
+"$CLI" changes verify "$SESSION_ID" --custom /absolute/path/to/check --approve-custom --arg "--fast"
+"$CLI" changes accept "$SESSION_ID" --confirm
+"$CLI" changes apply "$SESSION_ID" reviewed-local-branch
+"$CLI" tasks
+"$CLI" memory handoffs "$SESSION_ID"
+"$CLI" memory carry-forward SOURCE_SESSION TARGET_SESSION --turn TURN_UUID --notes
+"$CLI" extensions import /absolute/path/to/descriptor.json
+"$CLI" extensions grant "$SESSION_ID" extension-id --permission readSelectedFiles --path Sources --confirm
+"$CLI" extensions revoke "$SESSION_ID" extension-id --confirm
+```
+
+`changes apply` returns a local uncommitted worktree. `changes verify` sends custom argv directly to the executable. The CLI commands do not bypass the same subscription, plan approval, verification, base-commit, and account-consent checks as the app.
+
+### 10. Common CLI operations
 
 After building, the CLI is at `build/swiftpm/debug/agentbridge`. Prompts are read from standard input rather than placed in process arguments:
 
@@ -143,7 +203,7 @@ printf '%s' 'Key decisions and next steps.' | "$CLI" memory notes "$SESSION_ID"
 
 The CLI also supports `agentbridge cancel SESSION_ID` to cancel a run, `agentbridge budget` to view the API ledger, and `agentbridge help` to show all commands. Clearing shared memory requires explicit confirmation: `agentbridge memory clear SESSION_ID --confirm`.
 
-### 10. Troubleshooting
+### 11. Troubleshooting
 
 - **Provider CLI not found:** Set its path under **CLI Executables**, or add the official CLI to a path visible to the login environment, then click **Check Sign-in and Plan**.
 - **Not signed in or plan not confirmed:** Complete subscription login in the provider's official CLI. For a new account, use AgentBridge's login terminal, then check again.
@@ -152,7 +212,7 @@ The CLI also supports `agentbridge cancel SESSION_ID` to cancel a run, `agentbri
 - **API run is rejected or a reservation is not returned:** Check `agentbridge budget` or the UTC monthly balance shown in the app. Unknown, failed, or cancelled charges are not treated as free and the reservation is retained.
 - **Workspace differs from the source repository:** This is the snapshot boundary. Source changes made after session creation are not copied into that workspace automatically.
 
-### 11. Sign, notarize, and verify the app
+### 12. Sign, notarize, and verify the app
 
 `scripts/package-app.sh` rebuilds an unsigned development app. After preparing a release and passing `.codex/ci.sh`, use the shared `macos-notarization-release` helper for signing and notarization. It reads Apple notarization authentication from user-level configuration (a Keychain profile or App Store Connect API key), separate from the Claude API key. Do not place signing credentials or Apple's `.p8` private key in the repository. The app identity must be a Developer ID Application certificate. Sign the embedded `agentbridge` helper before signing the outer app bundle.
 
