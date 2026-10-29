@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1 — 2026-10-29
+
+- Apply the exact diff bytes whose verification digest was checked, bound to the session's base commit and successful verification state.
+- Keep plan approval and change runs disabled while the editable plan differs from its saved, normalized form; show a clear save-before-review state.
+- Read imported extension descriptors through one bounded file-descriptor reader shared by the App and CLI, rejecting links, special files, oversize input, and size changes during reads.
+
 ## 0.6.0 — 2026-10-27
 
 - Added subscription-only isolated change sessions with reviewable plan approval, full file diffs, per-file restore, patch export, and verified accept/apply to a named local branch.

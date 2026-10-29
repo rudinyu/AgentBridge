@@ -130,6 +130,8 @@
 "Save plan for review" = "儲存計畫供檢視";
 "Plan digest · %@" = "計畫摘要雜湊 · %@";
 "Approve this displayed plan" = "核准目前顯示的計畫";
+"Unsaved plan edits. Save changes before review or approval." = "計畫有未儲存的編輯。請先儲存變更，再檢視或核准。";
+"Save your plan changes before review or approval." = "請先儲存計畫變更，再檢視或核准。";
 "The saved plan is pending approval. Editing and saving it again clears any earlier approval." = "已儲存的計畫仍待核准。再次編輯並儲存會清除先前核准。";
 "Run request" = "執行要求";
 "Run approved changes" = "執行已核准的變更";
@@ -171,6 +173,10 @@
 "Import descriptor JSON…" = "匯入描述資料 JSON…";
 "No descriptors imported." = "尚未匯入描述資料。";
 "Select descriptor" = "選擇描述資料";
+"Descriptor files must be regular, non-symlink files no larger than 64 KiB." = "描述資料必須是一般檔案，不可為符號連結，且大小不得超過 64 KiB。";
+"Descriptor size limit must be between 0 and 64 KiB." = "描述資料大小限制必須介於 0 至 64 KiB。";
+"Could not read descriptor file safely." = "無法安全讀取描述資料檔案。";
+"Descriptor file changed while it was being read." = "讀取描述資料時，檔案內容有所變動。";
 "Requested: %@" = "要求的權限：%@";
 "Current project grant: %@" = "目前專案授權：%@";
 "No grant for this project." = "此專案尚無授權。";

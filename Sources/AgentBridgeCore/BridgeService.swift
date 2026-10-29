@@ -643,7 +643,11 @@ public final class BridgeService: @unchecked Sendable {
         do {
             let currentDiff = try await workspaceManager.diff(for: session)
             try requireSuccessfulChangeVerification(session, diff: currentDiff)
-            let result = try await workspaceManager.applyChangesToLocalBranch(for: session, branchName: branchName)
+            let result = try await workspaceManager.applyVerifiedChangesToLocalBranch(
+                for: session,
+                branchName: branchName,
+                diff: currentDiff
+            )
             session.changesAcceptedAt = Date()
             session.updatedAt = Date()
             try store.saveSession(session)

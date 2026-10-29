@@ -171,6 +171,27 @@ public struct ChangePlan: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// Normalizes the editable app fields with the same rules used when saving a
+/// plan, then checks whether they still describe the saved plan being reviewed.
+public struct ChangePlanDraft: Equatable, Sendable {
+    public let title: String
+    public let summary: String
+    public let steps: [String]
+
+    public init(title: String, summary: String, stepsText: String) {
+        self.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.summary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.steps = stepsText
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    public func matches(_ plan: ChangePlan) -> Bool {
+        title == plan.title && summary == plan.summary && steps == plan.steps
+    }
+}
+
 public enum ChangeFileStatus: String, Codable, Sendable {
     case modified
     case added

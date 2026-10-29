@@ -84,6 +84,106 @@ final class ChangeWorkflowTests: XCTestCase {
         XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
     }
 
+    func testApplyUsesCapturedVerifiedDiffAfterWorkspaceChanges() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let manager = WorkspaceManager(store: fixture.store)
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
+        let isolatedFile = workspace.appendingPathComponent("source.txt")
+        try Data("captured A\n".utf8).write(to: isolatedFile)
+        let capturedDiff = try await manager.diff(for: fixture.session)
+
+        var verifiedSession = fixture.session
+        let changeAt = Date()
+        verifiedSession.lastChangeRunAt = changeAt
+        verifiedSession.verificationPassed = true
+        verifiedSession.verificationDiffDigest = capturedDiff.digest
+        verifiedSession.verificationCompletedAt = changeAt.addingTimeInterval(1)
+        try fixture.store.saveSession(verifiedSession)
+
+        try Data("later B\n".utf8).write(to: isolatedFile)
+        let result = try await manager.applyVerifiedChangesToLocalBranch(
+            for: verifiedSession,
+            branchName: "agentbridge/captured-diff-test",
+            diff: capturedDiff
+        )
+
+        let appliedText = try String(contentsOf: URL(fileURLWithPath: result.worktreePath).appendingPathComponent("source.txt"), encoding: .utf8)
+        XCTAssertEqual(appliedText, "captured A\n")
+        XCTAssertNotEqual(appliedText, "later B\n")
+        XCTAssertEqual(try String(contentsOf: fixture.sourceURL.appendingPathComponent("source.txt"), encoding: .utf8), "original\n")
+    }
+
+    func testApplyRejectsDiffNotBoundToVerifiedSessionAndBaseCommit() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let manager = WorkspaceManager(store: fixture.store)
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
+        try Data("captured change\n".utf8).write(to: workspace.appendingPathComponent("source.txt"))
+        let capturedDiff = try await manager.diff(for: fixture.session)
+
+        var verifiedSession = fixture.session
+        let changeAt = Date()
+        verifiedSession.lastChangeRunAt = changeAt
+        verifiedSession.verificationPassed = true
+        verifiedSession.verificationDiffDigest = String(repeating: "f", count: 64)
+        verifiedSession.verificationCompletedAt = changeAt.addingTimeInterval(1)
+        do {
+            _ = try await manager.applyVerifiedChangesToLocalBranch(
+                for: verifiedSession,
+                branchName: "agentbridge/unbound-diff-test",
+                diff: capturedDiff
+            )
+            XCTFail("A diff with an unverified digest was applied.")
+        } catch let error as AgentBridgeError {
+            guard case .verificationRequired = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+
+        verifiedSession.verificationDiffDigest = capturedDiff.digest
+        let wrongBaseDiff = WorkspaceChangeDiff(
+            baseCommit: String(repeating: "0", count: 40),
+            files: capturedDiff.files,
+            patch: capturedDiff.patch
+        )
+        do {
+            _ = try await manager.applyVerifiedChangesToLocalBranch(
+                for: verifiedSession,
+                branchName: "agentbridge/unbound-diff-test",
+                diff: wrongBaseDiff
+            )
+            XCTFail("A diff from a different base commit was applied.")
+        } catch let error as AgentBridgeError {
+            guard case .verificationRequired = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+
+        XCTAssertEqual(
+            try git(["-C", fixture.sourceURL.path, "show-ref", "--verify", "--quiet", "refs/heads/agentbridge/unbound-diff-test"], allowedExitCodes: [0, 1]),
+            1
+        )
+    }
+
+    func testChangePlanDraftMatchesSavedPlanAfterSaveNormalization() throws {
+        let plan = ChangePlan(
+            sessionID: UUID(),
+            title: "Update greeting",
+            summary: "Change the message.",
+            steps: ["Edit the greeting.", "Keep other files unchanged."]
+        )
+        let equivalentDraft = ChangePlanDraft(
+            title: "  Update greeting  ",
+            summary: "\nChange the message.\t",
+            stepsText: " Edit the greeting. \n\n Keep other files unchanged.  \n"
+        )
+        XCTAssertTrue(equivalentDraft.matches(plan))
+
+        let changedDraft = ChangePlanDraft(
+            title: "Update greeting",
+            summary: "Change the message.",
+            stepsText: "Edit the greeting.\nDelete unrelated files."
+        )
+        XCTAssertFalse(changedDraft.matches(plan))
+    }
+
     func testApplyToNamedBranchRejectsChangedSourceBaseWithoutCreatingBranch() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }

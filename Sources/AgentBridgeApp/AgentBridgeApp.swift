@@ -144,6 +144,22 @@ final class AppModel: ObservableObject {
         sessions.first(where: { $0.id == selectedSessionID })
     }
 
+    var selectedChangePlanDraftMatchesSaved: Bool {
+        guard let plan = selectedSession?.changePlan else { return false }
+        return ChangePlanDraft(
+            title: changePlanTitle,
+            summary: changePlanSummary,
+            stepsText: changePlanStepsText
+        ).matches(plan)
+    }
+
+    var selectedChangePlanIsApproved: Bool {
+        guard selectedChangePlanDraftMatchesSaved,
+              let session = selectedSession,
+              let plan = session.changePlan else { return false }
+        return session.approvedChangePlanDigest == plan.reviewDigest
+    }
+
     var selectedSessionIsRunning: Bool {
         selectedSession.map { activeRunFlags[$0.id] != nil } ?? false
     }
@@ -194,6 +210,7 @@ final class AppModel: ObservableObject {
     func refresh(forceUsageStatistics: Bool = false) {
         guard let service else { return }
         do {
+            let previousSelectedSessionID = selectedSessionID
             var loadedSettings = try service.settings()
             if loadedSettings.defaultProvider == .codex, loadedSettings.usageMode == .api {
                 loadedSettings.usageMode = .subscription
@@ -216,6 +233,9 @@ final class AppModel: ObservableObject {
                 refreshSelectedEvents()
             } else if selectedSessionID != nil {
                 refreshSelectedEvents()
+            }
+            if previousSelectedSessionID != selectedSessionID {
+                loadChangePlanDraftFromSelectedSession()
             }
             refreshUsageControlsIfNeeded(service: service)
             if settings.defaultProvider == .claude, let profileID = selectedProfileIDs[.claude] {
@@ -352,15 +372,7 @@ final class AppModel: ObservableObject {
 
     func selectedSessionDidChange() {
         clearAPIAuthorization()
-        if let plan = selectedSession?.changePlan {
-            changePlanTitle = plan.title
-            changePlanSummary = plan.summary
-            changePlanStepsText = plan.steps.joined(separator: "\n")
-        } else {
-            changePlanTitle = ""
-            changePlanSummary = ""
-            changePlanStepsText = ""
-        }
+        loadChangePlanDraftFromSelectedSession()
         selectedMemoryTurnIDs = []
         memoryHandoffTargetSessionID = nil
         loadSelectedExtensionGrant()
@@ -371,6 +383,18 @@ final class AppModel: ObservableObject {
             } catch {
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    private func loadChangePlanDraftFromSelectedSession() {
+        if let plan = selectedSession?.changePlan {
+            changePlanTitle = plan.title
+            changePlanSummary = plan.summary
+            changePlanStepsText = plan.steps.joined(separator: "\n")
+        } else {
+            changePlanTitle = ""
+            changePlanSummary = ""
+            changePlanStepsText = ""
         }
     }
 
@@ -904,6 +928,10 @@ final class AppModel: ObservableObject {
             errorMessage = "請先保存一份工作計畫。"
             return
         }
+        guard selectedChangePlanDraftMatchesSaved else {
+            errorMessage = localized("Save your plan changes before review or approval.")
+            return
+        }
         do {
             _ = try service.approveChangePlan(sessionID: session.id, planID: plan.id, reviewedDigest: plan.reviewDigest)
             status = "已明確核准目前顯示的計畫；現在可以執行隔離變更。"
@@ -914,9 +942,15 @@ final class AppModel: ObservableObject {
     }
 
     func runApprovedChanges() {
-        guard let service, let session = selectedSession,
-              let plan = session.changePlan,
-              session.approvedChangePlanDigest == plan.reviewDigest else {
+        guard let service, let session = selectedSession, let plan = session.changePlan else {
+            errorMessage = "請先保存並明確核准目前的工作計畫。"
+            return
+        }
+        guard selectedChangePlanDraftMatchesSaved else {
+            errorMessage = localized("Save your plan changes before review or approval.")
+            return
+        }
+        guard session.approvedChangePlanDigest == plan.reviewDigest else {
             errorMessage = "請先保存並明確核准目前的工作計畫。"
             return
         }
@@ -1150,8 +1184,7 @@ final class AppModel: ObservableObject {
             guard let url = urls.first else { return }
             let access = url.startAccessingSecurityScopedResource()
             defer { if access { url.stopAccessingSecurityScopedResource() } }
-            let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            guard data.count <= 64 * 1_024 else { throw AgentBridgeError.invalidInput("Descriptor files must be 64 KiB or smaller.") }
+            let data = try BoundedDescriptorFileReader.read(at: url)
             let descriptor = try JSONDecoder().decode(ExtensionDescriptor.self, from: data)
             let source: ExtensionImportSource = descriptor.kind == .skill ? .localMetadata : .localMetadata
             _ = try service?.importExtensionDescriptor(descriptor, source: source, sourceReference: url.path)
@@ -2384,7 +2417,10 @@ struct ContentView: View {
                                 Text("Plan digest · \(plan.reviewDigest.prefix(16))")
                                     .font(.caption2.monospaced()).foregroundStyle(.secondary)
                                 Spacer()
-                                if session.approvedChangePlanDigest == plan.reviewDigest {
+                                if !model.selectedChangePlanDraftMatchesSaved {
+                                    Label("Unsaved plan edits. Save changes before review or approval.", systemImage: "pencil.line")
+                                        .font(.caption).foregroundStyle(.orange)
+                                } else if model.selectedChangePlanIsApproved {
                                     Label("Approved", systemImage: "checkmark.seal.fill").font(.caption).foregroundStyle(.green)
                                 } else {
                                     Button("Approve this displayed plan") { model.approveChangePlan() }
@@ -2392,8 +2428,9 @@ struct ContentView: View {
                                 }
                             }
                         }
-                        if let plan = session.changePlan,
-                           session.approvedChangePlanDigest != plan.reviewDigest {
+                        if session.changePlan != nil,
+                           model.selectedChangePlanDraftMatchesSaved,
+                           !model.selectedChangePlanIsApproved {
                             Text("The saved plan is pending approval. Editing and saving it again clears any earlier approval.")
                                 .font(.caption2).foregroundStyle(.orange)
                         }
@@ -2409,7 +2446,7 @@ struct ContentView: View {
                         HStack {
                             Button("Run approved changes") { model.runApprovedChanges() }
                                 .buttonStyle(.borderedProminent)
-                                .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.changePlan == nil || session.approvedChangePlanDigest != session.changePlan?.reviewDigest || model.settings.usageMode != .subscription)
+                                .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.changePlan == nil || !model.selectedChangePlanDraftMatchesSaved || !model.selectedChangePlanIsApproved || model.settings.usageMode != .subscription)
                             if model.selectedSessionIsRunning { Button("Cancel this session") { model.cancelSession(session.id) } }
                             Spacer()
                         }
@@ -2808,7 +2845,7 @@ struct ContentView: View {
             if model.isRunning || model.isSwitchingTarget || model.terminalRunning { ProgressView().controlSize(.small) }
             Text(model.localized(model.status)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
-            Text("AgentBridge 0.6.0").font(.caption2).foregroundStyle(.tertiary)
+            Text("AgentBridge 0.6.1").font(.caption2).foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 14).padding(.vertical, 7)
     }

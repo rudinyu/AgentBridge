@@ -603,6 +603,8 @@
 "Save plan for review" = "Save plan for review";
 "Plan digest · %@" = "Plan digest · %@";
 "Approve this displayed plan" = "Approve this displayed plan";
+"Unsaved plan edits. Save changes before review or approval." = "Unsaved plan edits. Save changes before review or approval.";
+"Save your plan changes before review or approval." = "Save your plan changes before review or approval.";
 "The saved plan is pending approval. Editing and saving it again clears any earlier approval." = "The saved plan is pending approval. Editing and saving it again clears any earlier approval.";
 "Run request" = "Run request";
 "Run approved changes" = "Run approved changes";
@@ -644,6 +646,10 @@
 "Import descriptor JSON…" = "Import descriptor JSON…";
 "No descriptors imported." = "No descriptors imported.";
 "Select descriptor" = "Select descriptor";
+"Descriptor files must be regular, non-symlink files no larger than 64 KiB." = "Descriptor files must be regular, non-symlink files no larger than 64 KiB.";
+"Descriptor size limit must be between 0 and 64 KiB." = "Descriptor size limit must be between 0 and 64 KiB.";
+"Could not read descriptor file safely." = "Could not read descriptor file safely.";
+"Descriptor file changed while it was being read." = "Descriptor file changed while it was being read.";
 "Requested: %@" = "Requested: %@";
 "Current project grant: %@" = "Current project grant: %@";
 "No grant for this project." = "No grant for this project.";

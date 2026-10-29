@@ -16,7 +16,7 @@ enum AgentBridgeCLI {
     private static func dispatch(_ arguments: [String]) async throws {
         guard let command = arguments.first else { printHelp(); return }
         if ["help", "--help", "-h"].contains(command) { printHelp(); return }
-        if command == "version" || command == "--version" { print("AgentBridge 0.6.0"); return }
+        if command == "version" || command == "--version" { print("AgentBridge 0.6.1"); return }
         if command == "workspace" {
             try await workspaceCommand(Array(arguments.dropFirst()))
             return
@@ -65,7 +65,7 @@ enum AgentBridgeCLI {
     }
 
     private static func doctor(service: BridgeService) async throws {
-        print("AgentBridge 0.6.0")
+        print("AgentBridge 0.6.1")
         let settings = try service.settings()
         print("登入模式：\(settings.usageMode == .subscription ? "官方 CLI 訂閱登入" : "Claude API（每次執行需單次預算與確認）")")
         for provider in AgentProvider.allCases {
@@ -691,11 +691,8 @@ enum AgentBridgeCLI {
         case "import":
             guard arguments.count == 2 else { throw AgentBridgeError.invalidInput("用法：agentbridge extensions import /path/to/descriptor.json") }
             let url = URL(fileURLWithPath: arguments[1]).standardizedFileURL
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            guard ((attributes[.size] as? NSNumber)?.intValue ?? Int.max) <= 64 * 1_024 else {
-                throw AgentBridgeError.invalidInput("Descriptor files must be 64 KiB or smaller.")
-            }
-            let descriptor = try JSONDecoder().decode(ExtensionDescriptor.self, from: Data(contentsOf: url))
+            let data = try BoundedDescriptorFileReader.read(at: url)
+            let descriptor = try JSONDecoder().decode(ExtensionDescriptor.self, from: data)
             _ = try service.importExtensionDescriptor(descriptor, source: .localMetadata, sourceReference: url.path)
             print("Imported inert descriptor \(descriptor.id). No script was executed; no provider extension was activated.")
         case "grant":
@@ -828,7 +825,7 @@ enum AgentBridgeCLI {
 
     private static func printHelp() {
         print("""
-        AgentBridge 0.6.0 — macOS Codex / Claude CLI 工作階段管理
+        AgentBridge 0.6.1 — macOS Codex / Claude CLI 工作階段管理
 
         命令：
           agentbridge workspace show

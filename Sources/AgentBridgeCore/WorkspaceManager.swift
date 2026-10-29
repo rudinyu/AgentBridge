@@ -256,8 +256,20 @@ public final class WorkspaceManager: @unchecked Sendable {
         guard session.policy.accessMode == .isolatedChanges else {
             throw AgentBridgeError.sessionMismatch("只有隔離變更工作階段可以套用到本機分支。")
         }
-        try await validateWorkspace(for: session, accessMode: .isolatedChanges)
         let diff = try await diff(for: session)
+        return try await applyVerifiedChangesToLocalBranch(for: session, branchName: branchName, diff: diff)
+    }
+
+    func applyVerifiedChangesToLocalBranch(
+        for session: SessionRecord,
+        branchName: String,
+        diff: WorkspaceChangeDiff
+    ) async throws -> BranchApplyResult {
+        guard session.policy.accessMode == .isolatedChanges else {
+            throw AgentBridgeError.sessionMismatch("只有隔離變更工作階段可以套用到本機分支。")
+        }
+        try await validateWorkspace(for: session, accessMode: .isolatedChanges)
+        try validateVerifiedDiff(diff, for: session)
         guard !diff.files.isEmpty, !diff.patch.isEmpty else {
             throw AgentBridgeError.invalidInput("工作區沒有可套用的變更。")
         }
@@ -323,6 +335,17 @@ public final class WorkspaceManager: @unchecked Sendable {
             }
             if let error = error as? AgentBridgeError { throw error }
             throw AgentBridgeError.git("無法將變更套用到指定的本機分支；來源工作目錄保持不變。")
+        }
+    }
+
+    private func validateVerifiedDiff(_ diff: WorkspaceChangeDiff, for session: SessionRecord) throws {
+        guard diff.baseCommit == session.snapshotCommit,
+              session.verificationPassed == true,
+              let verifiedAt = session.verificationCompletedAt,
+              let lastChangeAt = session.lastChangeRunAt,
+              verifiedAt >= lastChangeAt,
+              session.verificationDiffDigest == diff.digest else {
+            throw AgentBridgeError.verificationRequired
         }
     }
 
