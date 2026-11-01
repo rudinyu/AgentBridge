@@ -27,7 +27,7 @@ The provider CLIs, SwiftTerm, and AgentBridgeCore in this diagram run on the use
 
 ### Purpose and implementation
 
-AgentBridge 0.6.1 is a standalone SwiftPM repository with a shared `AgentBridgeCore`, the `agentbridge` CLI, and a native SwiftUI app. The app and CLI use the same saved workspace-data root and private settings, account profiles, session index, audit store, usage controls, and API ledgers. The app defaults to English and includes bundled English and Traditional Chinese localizations with an in-app language preference. The embedded terminal uses SwiftTerm 1.20.0. `scripts/package-app.sh` assembles the release bundle, so the project does not maintain a second Xcode project configuration.
+AgentBridge 0.7.0 is a standalone SwiftPM repository with a shared `AgentBridgeCore`, the `agentbridge` CLI, and a native SwiftUI app. The app and CLI use the same saved workspace-data root and private settings, account profiles, session index, audit store, usage controls, and API ledgers. The app defaults to English and includes bundled English and Traditional Chinese localizations with an in-app language preference. Its setup wizard resumes incomplete first-use setup and can be reopened from the header; `SetupWizardFlow` keeps the required workspace gate and optional CLI/sign-in readiness summary testable in the core. The embedded terminal uses SwiftTerm 1.20.0. `scripts/package-app.sh` assembles the release bundle, so the project does not maintain a second Xcode project configuration.
 
 Provider execution goes through the official CLIs installed locally: Codex uses `codex exec --json` or its native interactive CLI; Claude Code uses `claude -p --output-format stream-json` or its native interactive CLI. AgentBridge does not export or copy OAuth credentials and does not treat a provider session ID as cross-provider memory. It manages local processes in Swift and does not add a Codex or Claude SDK runtime.
 
@@ -58,10 +58,13 @@ Official CLI options and authentication behavior can change. The official refere
 | `UsageControlStore` / `APICostControlLedger` | Per-account run and optional day/session USD caps, threshold deduplication, bounded settings audit, concurrent-call reservation, and bill-based recovery |
 | `OutputRedactor` | Redacts common token formats and the API key supplied for the current run |
 | CLI / SwiftUI App | Shared conversation, account switching, memory controls, embedded terminal, and per-run API confirmation |
+| `SetupWizardFlow` | First-use and resumable setup navigation, required workspace gate, and optional provider readiness summary |
 
 ### Workspace data and private app data
 
 On first launch, the app asks the user to choose or create a workspace-data folder. Sessions cannot start until a folder is configured; AgentBridge has no hidden Application Support fallback for workspaces. The saved root is available to both App and CLI. The CLI can set it with `agentbridge workspace set /absolute/path/to/folder` and show it with `agentbridge workspace show`; commands that need a root report the setup command if none is configured.
+
+The setup wizard opens automatically when the app has no usable workspace root and resumes an unfinished first-use flow after restart. Existing installations with a usable root are not interrupted; the header's **Setup Wizard** button reopens the steps. The root is required to continue. CLI discovery, account sign-in checks, and usage controls are optional; the final summary lists missing items. The wizard does not automatically run a provider task or send a model request; saving account or default settings can prepare a local session. An official CLI sign-in or status check starts only after the user explicitly clicks its control. Provider and CLI-path choices are explicit drafts until saved. Existing provider mode and per-account memory consent remain intact when the wizard is reopened.
 
 The chosen folder is organized as `<root>/workspaces/<lowercase-session-uuid>/` for unique isolated Git copies and `<root>/shared-memory/` for shared conversation memory. App settings, account-profile information, dedicated provider CLI profile directories (where those CLIs store profile credentials), session indexes, audit events, usage controls, and budget ledgers remain in the private `~/Library/Application Support/AgentBridge` directory. The selected root itself is saved in that private app data.
 

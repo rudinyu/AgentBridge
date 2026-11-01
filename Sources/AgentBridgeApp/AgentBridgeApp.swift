@@ -23,6 +23,27 @@ final class AppModel: ObservableObject {
     @Published var appLanguage: AppLanguage {
         didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: AppLanguage.preferenceKey) }
     }
+    @Published var isSetupWizardPresented = false
+    @Published var setupWizardStep: SetupWizardStep = .welcome {
+        didSet { UserDefaults.standard.set(setupWizardStep.rawValue, forKey: Self.setupWizardStepPreferenceKey) }
+    }
+    @Published var setupWizardProvider: AgentProvider = .codex {
+        didSet { UserDefaults.standard.set(setupWizardProvider.rawValue, forKey: Self.setupWizardProviderPreferenceKey) }
+    }
+    @Published var setupWizardProfileName = "" {
+        didSet { UserDefaults.standard.set(setupWizardProfileName, forKey: Self.setupWizardProfileNamePreferenceKey) }
+    }
+    @Published var setupWizardCLIPath = "" {
+        didSet {
+            UserDefaults.standard.set(setupWizardCLIPath, forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
+        }
+    }
+    @Published var setupWizardCLIStatus = ""
+    @Published var setupWizardUsageControls = UsageControlSettings()
+    @Published var setupWizardUsageStatus = ""
+    @Published var setupWizardStatus = ""
+    @Published var setupWizardError: String?
+    @Published var setupWizardAuthCheckInProgress = false
     @Published var settings = BridgeSettings()
     @Published var sessions: [SessionRecord] = []
     @Published var events: [AuditEvent] = []
@@ -101,13 +122,70 @@ final class AppModel: ObservableObject {
     private var activeTerminalProfileID: UUID?
     private var activeTerminalSessionID: UUID?
     private var activeUsageProvider: AgentProvider?
+    private var setupWizardAuthRequestID: UUID?
     private var loadedUsageControlsScopeKey: String?
     private var refreshedUsageStatisticsScopeKey: String?
     private var lastUsageStatisticsRefresh: Date?
     private var refreshedAPIReconciliationScopeKey: String?
     private var lastAPIReconciliationRefresh: Date?
 
+    private static let setupWizardStartedPreferenceKey = "setupWizard.started"
+    private static let setupWizardCompletedPreferenceKey = "setupWizard.completed"
+    private static let setupWizardStepPreferenceKey = "setupWizard.step"
+    private static let setupWizardProviderPreferenceKey = "setupWizard.provider"
+    private static let setupWizardProfileNamePreferenceKey = "setupWizard.profileName"
+    private static func setupWizardCLIPathPreferenceKey(for provider: AgentProvider) -> String {
+        "setupWizard.cliPath.\(provider.rawValue)"
+    }
+
     var terminalSessionIDForView: UUID? { activeTerminalSessionID }
+
+    var workspaceRootIsConfigured: Bool { !workspaceRootPath.isEmpty && service != nil && store != nil }
+
+    var canPresentSetupWizard: Bool {
+        activeRunFlags.isEmpty && !isVerifying && !isSwitchingTarget && !isChangingWorkspaceRoot
+            && !terminalRunning && terminalLaunch == nil
+    }
+
+    var setupWizardSelectedProfile: AccountProfile? {
+        guard let id = selectedProfileIDs[setupWizardProvider] else { return nil }
+        return accountProfiles[setupWizardProvider]?.first(where: { $0.id == id })
+    }
+
+    var setupWizardAuthentication: AuthAssessment? {
+        guard let profile = setupWizardSelectedProfile else { return nil }
+        return authStatus[profile.id]
+    }
+
+    var setupWizardResolvedCLIPath: String? {
+        let configuredPath = setupWizardCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try? RuntimeEnvironment.resolveExecutable(
+            provider: setupWizardProvider,
+            configuredPath: configuredPath.isEmpty ? nil : configuredPath
+        ).path
+    }
+
+    var setupWizardSavedCLIPath: String? {
+        try? RuntimeEnvironment.resolveExecutable(
+            provider: setupWizardProvider,
+            configuredPath: settings.binaryPath(for: setupWizardProvider)
+        ).path
+    }
+
+    var setupWizardCLISettingIsDirty: Bool {
+        let draft = setupWizardCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let saved = settings.binaryPath(for: setupWizardProvider)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return draft != saved
+    }
+
+    var setupWizardReadiness: SetupWizardReadiness {
+        SetupWizardReadiness(
+            workspaceConfigured: workspaceRootIsConfigured,
+            commandLineAvailable: setupWizardSavedCLIPath != nil,
+            commandLineSettingSaved: !setupWizardCLISettingIsDirty,
+            subscriptionLoginConfirmed: setupWizardAuthentication?.confirmedSubscription == true
+        )
+    }
 
     func localized(_ source: String) -> String {
         AppLocalization.display(source, language: appLanguage)
@@ -125,6 +203,7 @@ final class AppModel: ObservableObject {
         do {
             guard try RuntimePaths.workspaceRootConfiguration() != nil else {
                 status = "請選擇工作區資料根目錄以開始。"
+                initializeSetupWizard(workspaceRootConfigured: false)
                 return
             }
             let root = try RuntimePaths.requireWorkspaceRoot()
@@ -134,9 +213,394 @@ final class AppModel: ObservableObject {
             self.service = service
             workspaceRootPath = root.path
             refresh()
+            initializeSetupWizard(workspaceRootConfigured: true)
         } catch {
             if let root = try? RuntimePaths.requireWorkspaceRoot() { workspaceRootPath = root.path }
             errorMessage = error.localizedDescription
+            initializeSetupWizard(workspaceRootConfigured: workspaceRootIsConfigured)
+        }
+    }
+
+    private func initializeSetupWizard(workspaceRootConfigured: Bool) {
+        let defaults = UserDefaults.standard
+        if let savedProvider = defaults.string(forKey: Self.setupWizardProviderPreferenceKey)
+            .flatMap(AgentProvider.init(rawValue:)) {
+            setupWizardProvider = savedProvider
+        } else {
+            setupWizardProvider = settings.defaultProvider
+        }
+        setupWizardCLIPath = defaults.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
+            ?? settings.binaryPath(for: setupWizardProvider)
+            ?? ""
+        let savedStep = defaults.string(forKey: Self.setupWizardStepPreferenceKey)
+            .flatMap(SetupWizardStep.init(rawValue:))
+        setupWizardProfileName = defaults.string(forKey: Self.setupWizardProfileNamePreferenceKey) ?? ""
+        setupWizardStep = SetupWizardFlow.startingStep(
+            savedStep: savedStep,
+            workspaceRootConfigured: workspaceRootConfigured
+        )
+        let hasStarted = defaults.bool(forKey: Self.setupWizardStartedPreferenceKey)
+        let hasCompleted = defaults.bool(forKey: Self.setupWizardCompletedPreferenceKey)
+        isSetupWizardPresented = SetupWizardFlow.shouldPresentAutomatically(
+            workspaceRootConfigured: workspaceRootConfigured,
+            hasStarted: hasStarted,
+            hasCompleted: hasCompleted
+        )
+        if isSetupWizardPresented {
+            defaults.set(true, forKey: Self.setupWizardStartedPreferenceKey)
+            if let errorMessage {
+                setupWizardError = errorMessage
+                self.errorMessage = nil
+            }
+        }
+    }
+
+    func openSetupWizard() {
+        guard canPresentSetupWizard else { return }
+        let hasCompleted = UserDefaults.standard.bool(forKey: Self.setupWizardCompletedPreferenceKey)
+        setupWizardStep = SetupWizardFlow.reopeningStep(
+            savedStep: setupWizardStep,
+            hasCompleted: hasCompleted,
+            workspaceRootConfigured: workspaceRootIsConfigured
+        )
+        UserDefaults.standard.set(true, forKey: Self.setupWizardStartedPreferenceKey)
+        setupWizardCLIPath = hasCompleted
+            ? (settings.binaryPath(for: setupWizardProvider) ?? "")
+            : (UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
+                ?? settings.binaryPath(for: setupWizardProvider)
+                ?? "")
+        setupWizardError = nil
+        setupWizardStatus = ""
+        errorMessage = nil
+        isSetupWizardPresented = true
+    }
+
+    func dismissSetupWizardForNow() {
+        guard SetupWizardFlow.canDismiss(workspaceRootConfigured: workspaceRootIsConfigured),
+              !isChangingWorkspaceRoot, !terminalRunning, terminalLaunch == nil else { return }
+        isSetupWizardPresented = false
+        errorMessage = nil
+    }
+
+    func finishSetupWizard() {
+        guard SetupWizardFlow.canDismiss(workspaceRootConfigured: workspaceRootIsConfigured),
+              !isChangingWorkspaceRoot, !terminalRunning, terminalLaunch == nil else { return }
+        UserDefaults.standard.set(true, forKey: Self.setupWizardCompletedPreferenceKey)
+        setupWizardStep = .welcome
+        isSetupWizardPresented = false
+        errorMessage = nil
+    }
+
+    func moveSetupWizard(to step: SetupWizardStep) {
+        guard !isChangingWorkspaceRoot else { return }
+        if let currentIndex = SetupWizardStep.allCases.firstIndex(of: setupWizardStep),
+           let targetIndex = SetupWizardStep.allCases.firstIndex(of: step),
+           targetIndex > currentIndex,
+           !SetupWizardFlow.canAdvance(from: setupWizardStep, workspaceRootConfigured: workspaceRootIsConfigured) {
+            return
+        }
+        setupWizardStep = step
+        setupWizardError = nil
+        if step == .commandLine {
+            setupWizardCLIPath = UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
+                ?? settings.binaryPath(for: setupWizardProvider)
+                ?? ""
+            checkSetupWizardCLIAvailability()
+        } else if step == .usage {
+            loadSetupWizardUsageControls()
+        }
+    }
+
+    func selectSetupWizardProvider(_ provider: AgentProvider) {
+        guard setupWizardProvider != provider else { return }
+        setupWizardProvider = provider
+        setupWizardCLIPath = UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: provider))
+            ?? settings.binaryPath(for: provider)
+            ?? ""
+        setupWizardCLIStatus = ""
+        setupWizardUsageStatus = ""
+        if setupWizardStep == .usage { loadSetupWizardUsageControls() }
+    }
+
+    func chooseSetupWizardCLIPath() {
+        let panel = NSOpenPanel()
+        panel.title = localized("Choose the official CLI executable")
+        panel.message = localized("Select the installed codex or claude executable. AgentBridge will only save this path.")
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        setupWizardCLIPath = url.path
+        checkSetupWizardCLIAvailability()
+    }
+
+    func checkSetupWizardCLIAvailability() {
+        let path = setupWizardCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let executable = try RuntimeEnvironment.resolveExecutable(
+                provider: setupWizardProvider,
+                configuredPath: path.isEmpty ? nil : path
+            )
+            setupWizardCLIStatus = setupWizardCLISettingIsDirty
+                ? String(format: localized("Draft executable found: %@. Save this path before finishing setup."), executable.path)
+                : String(format: localized("Found executable: %@"), executable.path)
+        } catch {
+            setupWizardCLIStatus = localized("CLI not found. Choose an executable or follow the official install guide.")
+        }
+    }
+
+    func saveSetupWizardCLIPath() {
+        guard let service else {
+            setupWizardError = localized("Choose a workspace folder before saving CLI settings.")
+            return
+        }
+        let path = setupWizardCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !path.isEmpty {
+            do {
+                _ = try RuntimeEnvironment.resolveExecutable(provider: setupWizardProvider, configuredPath: path)
+            } catch {
+                setupWizardError = error.localizedDescription
+                setupWizardCLIStatus = localized("The selected path is not an executable for this provider.")
+                return
+            }
+        }
+        let previousSettings = settings
+        let previousPath = settings.binaryPath(for: setupWizardProvider)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.setBinaryPath(path.isEmpty ? nil : path, for: setupWizardProvider)
+        do {
+            try service.saveSettings(settings)
+            if previousPath != path {
+                for profile in accountProfiles[setupWizardProvider] ?? [] {
+                    authStatus.removeValue(forKey: profile.id)
+                }
+            }
+            setupWizardError = nil
+            checkSetupWizardCLIAvailability()
+            setupWizardStatus = localized("CLI setting saved.")
+        } catch {
+            settings = previousSettings
+            setupWizardError = error.localizedDescription
+        }
+    }
+
+    func selectSetupWizardDefaultProvider() {
+        guard let service else {
+            setupWizardError = localized("Choose a workspace folder before saving provider settings.")
+            return
+        }
+        let previous = settings
+        settings.defaultProvider = setupWizardProvider
+        if setupWizardProvider == .codex { settings.usageMode = .subscription }
+        do {
+            try service.saveSettings(settings)
+            if previous.defaultProvider != settings.defaultProvider || previous.usageMode != settings.usageMode {
+                clearAPIAuthorization()
+            }
+            providerUsageReport = nil
+            loadedUsageControlsScopeKey = nil
+            refresh(forceUsageStatistics: true)
+            if let anchor = selectedSession { selectOrCreateSession(for: setupWizardProvider, anchoredTo: anchor) }
+            setupWizardStatus = settings.usageMode == .subscription
+                ? localized("Default provider and subscription sign-in saved.")
+                : localized("Default provider saved; the existing Claude API mode was preserved.")
+            setupWizardError = nil
+        } catch {
+            settings = previous
+            setupWizardError = error.localizedDescription
+        }
+    }
+
+    func selectSetupWizardSubscriptionMode() {
+        guard setupWizardProvider == .claude, settings.defaultProvider == .claude,
+              settings.usageMode != .subscription else { return }
+        selectUsageMode(.subscription)
+    }
+
+    func selectSetupWizardProfile(_ profileID: UUID) {
+        guard let service, selectedProfileIDs[setupWizardProvider] != profileID else { return }
+        do {
+            try service.selectAccountProfile(id: profileID, provider: setupWizardProvider)
+            selectedProfileIDs[setupWizardProvider] = profileID
+            accountProfiles[setupWizardProvider] = try service.accountProfiles(provider: setupWizardProvider)
+            loadedUsageControlsScopeKey = nil
+            providerUsageReport = nil
+            authStatus.removeValue(forKey: profileID)
+            setupWizardStatus = localized("Account selected. Sign-in remains managed by the provider CLI.")
+            setupWizardError = nil
+            if settings.defaultProvider == setupWizardProvider, let anchor = selectedSession {
+                selectOrCreateSession(for: setupWizardProvider, anchoredTo: anchor)
+            }
+            if setupWizardStep == .usage { loadSetupWizardUsageControls() }
+        } catch {
+            setupWizardError = error.localizedDescription
+        }
+    }
+
+    func createSetupWizardProfile(name: String) -> Bool {
+        guard let service else {
+            setupWizardError = localized("Choose a workspace folder before creating an account.")
+            return false
+        }
+        let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !displayName.isEmpty else {
+            setupWizardError = localized("Enter a display name for the new account.")
+            return false
+        }
+        do {
+            let profile = try service.createAccountProfile(name: displayName, provider: setupWizardProvider, allowsSharedMemory: true)
+            try service.selectAccountProfile(id: profile.id, provider: setupWizardProvider)
+            selectedProfileIDs[setupWizardProvider] = profile.id
+            accountProfiles[setupWizardProvider] = try service.accountProfiles(provider: setupWizardProvider)
+            loadedUsageControlsScopeKey = nil
+            authStatus.removeValue(forKey: profile.id)
+            setupWizardProfileName = ""
+            setupWizardStatus = localized("Isolated account created. Sign in when you are ready.")
+            setupWizardError = nil
+            if settings.defaultProvider == setupWizardProvider, let anchor = selectedSession {
+                selectOrCreateSession(for: setupWizardProvider, anchoredTo: anchor)
+            }
+            return true
+        } catch {
+            setupWizardError = error.localizedDescription
+            return false
+        }
+    }
+
+    func setSetupWizardMemorySharing(_ allowed: Bool) {
+        guard let service, let profile = setupWizardSelectedProfile else { return }
+        do {
+            try service.setAccountSharedMemoryAllowed(id: profile.id, allowed: allowed)
+            accountProfiles[setupWizardProvider] = try service.accountProfiles(provider: setupWizardProvider)
+            if let session = selectedSession,
+               (session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)) == profile.id {
+                refreshSelectedEvents()
+            }
+            setupWizardStatus = allowed
+                ? localized("This account may load and save shared project memory.")
+                : localized("This account will not load or save shared project memory.")
+            setupWizardError = nil
+        } catch {
+            setupWizardError = error.localizedDescription
+        }
+    }
+
+    func checkSetupWizardAuthentication() {
+        guard let profile = setupWizardSelectedProfile else {
+            setupWizardError = localized("No account profile is available for this provider.")
+            return
+        }
+        let profileID = profile.id
+        let requestID = UUID()
+        setupWizardAuthRequestID = requestID
+        setupWizardAuthCheckInProgress = true
+        setupWizardStatus = localized("Checking official CLI sign-in…")
+        checkAuthentication(for: profile) { [weak self] assessment, error in
+            guard let self, self.setupWizardAuthRequestID == requestID else { return }
+            self.setupWizardAuthCheckInProgress = false
+            self.setupWizardAuthRequestID = nil
+            guard self.setupWizardSelectedProfile?.id == profileID else { return }
+            if let assessment {
+                self.setupWizardStatus = assessment.message
+                self.setupWizardError = nil
+            } else if let error {
+                self.setupWizardError = error.localizedDescription
+            }
+        }
+    }
+
+    func openSetupWizardProfileLogin() {
+        guard let profile = setupWizardSelectedProfile else {
+            setupWizardError = localized("No account profile is available for this provider.")
+            return
+        }
+        openProfileLoginTerminal(for: profile)
+    }
+
+    func loadSetupWizardUsageControls() {
+        setupWizardUsageControls = UsageControlSettings()
+        guard let service, let profile = setupWizardSelectedProfile else { return }
+        do {
+            setupWizardUsageControls = try service.usageControlSettings(provider: profile.provider, profileID: profile.id)
+            setupWizardUsageStatus = ""
+        } catch {
+            setupWizardUsageStatus = error.localizedDescription
+        }
+    }
+
+    func updateSetupWizardUsageControls(_ update: (inout UsageControlSettings) -> Void) {
+        update(&setupWizardUsageControls)
+    }
+
+    func saveSetupWizardUsageControls() {
+        guard let service, let profile = setupWizardSelectedProfile else {
+            setupWizardUsageStatus = localized("Choose a workspace folder before saving usage settings.")
+            return
+        }
+        do {
+            try service.saveUsageControlSettings(setupWizardUsageControls, provider: profile.provider, profileID: profile.id)
+            setupWizardUsageStatus = localized("Local usage settings saved.")
+            if settings.defaultProvider == profile.provider,
+               selectedProfileIDs[profile.provider] == profile.id {
+                usageControls = setupWizardUsageControls
+                loadedUsageControlsScopeKey = "\(profile.provider.rawValue):\(profile.id.uuidString.lowercased())"
+            }
+        } catch {
+            setupWizardUsageStatus = error.localizedDescription
+        }
+    }
+
+    func setSetupWizardNotificationsEnabled(_ enabled: Bool) {
+        guard let service, let profile = setupWizardSelectedProfile else { return }
+        if !enabled {
+            persistSetupWizardNotificationPreference(false, service: service, profile: profile)
+            return
+        }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.persistSetupWizardNotificationPreference(granted, service: service, profile: profile)
+                if self.setupWizardProvider == profile.provider,
+                   self.setupWizardSelectedProfile?.id == profile.id,
+                   let error {
+                    self.setupWizardUsageStatus = String(format: self.localized("Could not enable macOS notifications: %@"), error.localizedDescription)
+                } else if self.setupWizardProvider == profile.provider,
+                          self.setupWizardSelectedProfile?.id == profile.id,
+                          !granted {
+                    self.setupWizardUsageStatus = self.localized("macOS permission was not granted; in-app reminders still work.")
+                }
+            }
+        }
+    }
+
+    private func persistSetupWizardNotificationPreference(_ enabled: Bool, service: BridgeService, profile: AccountProfile) {
+        do {
+            var updated = try service.usageControlSettings(provider: profile.provider, profileID: profile.id)
+            updated.macOSNotificationsEnabled = enabled
+            try service.saveUsageControlSettings(updated, provider: profile.provider, profileID: profile.id)
+            if setupWizardProvider == profile.provider, setupWizardSelectedProfile?.id == profile.id {
+                setupWizardUsageControls.macOSNotificationsEnabled = enabled
+                setupWizardUsageStatus = enabled
+                    ? localized("macOS usage notifications are enabled.")
+                    : localized("macOS notifications are off; in-app reminders remain available.")
+            }
+            if settings.defaultProvider == profile.provider,
+               selectedProfileIDs[profile.provider] == profile.id {
+                usageControls = updated
+                loadedUsageControlsScopeKey = "\(profile.provider.rawValue):\(profile.id.uuidString.lowercased())"
+            }
+        } catch {
+            if setupWizardProvider == profile.provider, setupWizardSelectedProfile?.id == profile.id {
+                setupWizardUsageStatus = error.localizedDescription
+            }
+        }
+    }
+
+    private func reportOperationError(_ message: String) {
+        if isSetupWizardPresented {
+            setupWizardError = message
+            errorMessage = nil
+        } else {
+            errorMessage = message
         }
     }
 
@@ -734,7 +1198,8 @@ final class AppModel: ObservableObject {
     }
 
     func chooseWorkspaceRoot() {
-        guard !isChangingWorkspaceRoot, !isRunning, !terminalRunning else { return }
+        guard !isChangingWorkspaceRoot, !isRunning, !isVerifying, !isSwitchingTarget,
+              !terminalRunning, terminalLaunch == nil else { return }
         let panel = NSOpenPanel()
         panel.title = localized("選擇工作區資料根目錄")
         panel.message = localized("AgentBridge 會在此資料夾保存隔離工作區與共用記憶；私人設定和用量資料仍保留在 Application Support。")
@@ -756,10 +1221,16 @@ final class AppModel: ObservableObject {
                 self.service = service
                 workspaceRootPath = selected.path
                 errorMessage = nil
+                setupWizardError = nil
                 status = localized("工作區資料根目錄已更新；舊資料仍保留在原位置。")
                 refresh(forceUsageStatistics: true)
+                if setupWizardCLIPath.isEmpty {
+                    setupWizardCLIPath = UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
+                        ?? settings.binaryPath(for: setupWizardProvider)
+                        ?? ""
+                }
             } catch {
-                errorMessage = error.localizedDescription
+                reportOperationError(error.localizedDescription)
                 if let root = try? RuntimePaths.requireWorkspaceRoot(),
                    let store = try? RuntimePaths.makeAuditStore(),
                    let service = try? BridgeService(store: store) {
@@ -791,18 +1262,70 @@ final class AppModel: ObservableObject {
     }
 
     private func checkAuthentication(for profile: AccountProfile) {
-        guard let service else { return }
+        checkAuthentication(for: profile, completion: nil)
+    }
+
+    private func checkAuthentication(
+        for profile: AccountProfile,
+        completion: ((AuthAssessment?, Error?) -> Void)?
+    ) {
+        guard let service else {
+            let error = AgentBridgeError.invalidInput("Choose a workspace folder before checking sign-in.")
+            if let completion {
+                completion(nil, error)
+            } else {
+                reportOperationError(error.localizedDescription)
+            }
+            return
+        }
+        let provider = profile.provider
+        let requestedCLIPath = normalizedCLIPath(settings.binaryPath(for: provider))
         status = "正在檢查官方 CLI 登入狀態…"
         Task {
             do {
-                let assessment = try await service.checkAuthentication(provider: profile.provider, profileID: profile.id)
+                let assessment = try await service.checkAuthentication(provider: provider, profileID: profile.id)
+                if normalizedCLIPath(try? service.settings().binaryPath(for: provider), fallback: settings.binaryPath(for: provider)) != requestedCLIPath {
+                    let error = AgentBridgeError.invalidInput(localized("CLI settings changed; check sign-in again."))
+                    authStatus.removeValue(forKey: profile.id)
+                    status = error.localizedDescription
+                    if let completion {
+                        completion(nil, error)
+                    } else {
+                        reportOperationError(error.localizedDescription)
+                    }
+                    return
+                }
                 authStatus[profile.id] = assessment
                 status = assessment.message
+                completion?(assessment, nil)
             } catch {
-                errorMessage = error.localizedDescription
+                if normalizedCLIPath(try? service.settings().binaryPath(for: provider), fallback: settings.binaryPath(for: provider)) != requestedCLIPath {
+                    let staleError = AgentBridgeError.invalidInput(localized("CLI settings changed; check sign-in again."))
+                    authStatus.removeValue(forKey: profile.id)
+                    status = staleError.localizedDescription
+                    if let completion {
+                        completion(nil, staleError)
+                    } else {
+                        reportOperationError(staleError.localizedDescription)
+                    }
+                    return
+                }
+                if let completion {
+                    completion(nil, error)
+                } else {
+                    reportOperationError(error.localizedDescription)
+                }
                 status = "登入檢查失敗。"
             }
         }
+    }
+
+    private func normalizedCLIPath(_ path: String?) -> String {
+        path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func normalizedCLIPath(_ persistedPath: String?, fallback: String?) -> String {
+        normalizedCLIPath(persistedPath ?? fallback)
     }
 
     func createSession() {
@@ -1332,8 +1855,16 @@ final class AppModel: ObservableObject {
 
     func openProfileLoginTerminal() {
         guard let profile = selectedAccountProfile else { errorMessage = "找不到所選帳戶設定。"; return }
+        openProfileLoginTerminal(for: profile)
+    }
+
+    func openProfileLoginTerminal(for profile: AccountProfile) {
+        guard !terminalRunning else {
+            reportOperationError(localized("Close the current terminal before opening sign-in."))
+            return
+        }
         guard !profile.usesExistingLogin else {
-            errorMessage = "為避免登出或覆寫目前登入，請先新增獨立帳戶後再登入。"
+            reportOperationError(localized("This built-in account keeps its existing CLI login. Add an isolated account to sign in separately."))
             return
         }
         guard let spec = terminalLaunchSpec(
@@ -1341,7 +1872,7 @@ final class AppModel: ObservableObject {
             arguments: ["profile-login", profile.id.uuidString.lowercased()],
             workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
         ) else {
-            errorMessage = "找不到 AgentBridge 命令列輔助程式。請先使用 scripts/package-app.sh 建立 .app。"
+            reportOperationError("找不到 AgentBridge 命令列輔助程式。請先使用 scripts/package-app.sh 建立 .app。")
             return
         }
         terminalIsProfileLogin = true
@@ -1355,6 +1886,7 @@ final class AppModel: ObservableObject {
         terminalLaunch = spec
         terminalRunning = true
         status = "已在 App 內開啟官方 CLI 登入流程。登入由你在終端機完成。"
+        setupWizardError = nil
     }
 
     func openLocalShell() {
@@ -1591,7 +2123,7 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if model.workspaceRootPath.isEmpty {
+            if !model.workspaceRootIsConfigured {
                 workspaceRootSetup
             } else {
                 VStack(spacing: 0) {
@@ -1625,7 +2157,11 @@ struct ContentView: View {
         .frame(minWidth: 1160, minHeight: 780)
         .background(Color(nsColor: .windowBackgroundColor))
         .environment(\.locale, model.appLanguage.locale)
-        .alert("AgentBridge", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
+        .sheet(isPresented: $model.isSetupWizardPresented) {
+            SetupWizardView(model: model)
+                .interactiveDismissDisabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminalLaunch != nil)
+        }
+        .alert("AgentBridge", isPresented: Binding(get: { model.errorMessage != nil && !model.isSetupWizardPresented }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("好", role: .cancel) { model.errorMessage = nil }
         } message: {
             Text(model.localized(model.errorMessage ?? ""))
@@ -1644,6 +2180,9 @@ struct ContentView: View {
         )
         .onChange(of: model.selectedSessionID) { _, _ in model.selectedSessionDidChange() }
         .onChange(of: model.selectedExtensionID) { _, _ in model.selectedExtensionDidChange() }
+        .onChange(of: model.isSetupWizardPresented) { _, isPresented in
+            if !isPresented { model.errorMessage = nil }
+        }
         .onAppear { model.refresh() }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
     }
@@ -1687,6 +2226,8 @@ struct ContentView: View {
                 Text("繁體中文").tag(AppLanguage.traditionalChinese)
             }
             .pickerStyle(.menu)
+            Button(model.localized("Setup Wizard")) { model.openSetupWizard() }
+                .disabled(!model.canPresentSetupWizard)
             if let session = model.selectedSession {
                 Text("\(session.provider.rawValue.capitalized) · \(model.selectedSessionProfileName)")
                     .font(.caption.weight(.medium))
@@ -2263,8 +2804,8 @@ struct ContentView: View {
                 ContentUnavailableView("選擇或建立工作階段", systemImage: "bubble.left.and.bubble.right", description: Text("先選擇 Git 儲存庫，再開始一段固定版本的專案對話。"))
                     .frame(maxWidth: .infinity, maxHeight: model.terminalLaunch == nil ? .infinity : 110)
             }
-            if let launch = model.terminalLaunch {
-                terminalPanel(launch)
+            if !model.isSetupWizardPresented, let launch = model.terminalLaunch {
+                EmbeddedTerminalPanel(model: model, launch: launch)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2790,62 +3331,12 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func terminalPanel(_ launch: TerminalLaunchSpec) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "terminal")
-                Text(model.localized(launch.title)).font(.subheadline.weight(.semibold))
-                if model.terminalRunning { ProgressView().controlSize(.small) }
-                Spacer()
-                if model.terminalRunning && !model.terminalIsProfileLogin,
-                   let sessionID = model.terminalSessionIDForView {
-                    Button("取消工作階段") { model.cancelSession(sessionID) }
-                }
-                if model.canSendUsageCommand {
-                    Button("送出 /usage") { model.requestUsageCommand() }
-                        .help("只送出固定的 /usage 命令與 Enter；請先等待 CLI 顯示可輸入提示符並完成登入。")
-                }
-                Button(model.localized(model.terminalRunning ? (model.terminalNeedsManualStop ? "結束後關閉" : "取消並關閉") : "關閉終端")) { model.closeEmbeddedTerminal() }
-            }
-            .padding(.horizontal, 10).padding(.vertical, 8)
-            EmbeddedTerminalView(
-                launch: launch,
-                usageCommandRequest: model.usageCommandRequest,
-                allowsUsageScreenCapture: model.terminalIsUsageTUI,
-                onUsageScreenText: { screenText, capturedAt in
-                    model.usageScreenDidUpdate(screenText, capturedAt: capturedAt)
-                },
-                onTermination: { exitCode in model.terminalDidTerminate(exitCode: exitCode) }
-            )
-            .id(launch.id)
-            .frame(minHeight: 210, maxHeight: 340)
-            if model.terminalIsUsageTUI && model.terminalRunning {
-                Text("請先確認此終端已顯示所選帳戶的官方 CLI 提示符並完成登入，再按「送出 /usage」。")
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10).padding(.bottom, 6)
-            }
-            Text("終端輸出只保留在目前畫面記憶體中；App 不會將 ANSI/TUI 逐字稿加入聊天記憶或稽核記錄。")
-                .font(.caption2).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10).padding(.bottom, 6)
-            if model.terminalSessionIDForView == nil && !model.terminalIsProfileLogin {
-                Text("本機 shell 位於 AgentBridge 複本，但仍以目前使用者權限執行。")
-                    .font(.caption2).foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10).padding(.bottom, 6)
-            }
-        }
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(.quaternary))
-    }
-
     private var statusBar: some View {
         HStack(spacing: 8) {
             if model.isRunning || model.isSwitchingTarget || model.terminalRunning { ProgressView().controlSize(.small) }
             Text(model.localized(model.status)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
-            Text("AgentBridge 0.6.1").font(.caption2).foregroundStyle(.tertiary)
+            Text("AgentBridge 0.7.0").font(.caption2).foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 14).padding(.vertical, 7)
     }

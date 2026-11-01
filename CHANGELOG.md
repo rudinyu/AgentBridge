@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0 — 2026-11-01
+
+- Added a resumable first-use setup wizard with language and provider selection, a required workspace-data folder, optional CLI-path and subscription-login checks, per-account shared-memory consent, local usage settings, and an honest readiness summary.
+- Added a Settings Wizard entry for existing installations; opening it does not change saved provider, usage mode, CLI paths, or account memory consent.
+- Kept official CLI subscription login as the setup path. The wizard does not install CLIs, collect API keys, make automatic model requests, or activate paid API usage; sign-in and status checks run only after an explicit action.
+- Added a wizard sign-in terminal while retaining the main app's inline conversation terminal.
+
 ## 0.6.1 — 2026-10-29
 
 - Apply the exact diff bytes whose verification digest was checked, bound to the session's base commit and successful verification state.

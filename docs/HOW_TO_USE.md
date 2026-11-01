@@ -6,7 +6,7 @@ This guide covers setup, sign-in, starting conversations, switching providers an
 
 ### 1. Set up and launch the app
 
-Requirements: macOS 14 or later, Swift 6, and an Xcode toolchain. Install the official CLI you plan to use and sign in to its subscription account:
+Requirements: macOS 14 or later, Swift 6, and an Xcode toolchain. For full provider readiness, install the official CLI you plan to use and sign in to its subscription account:
 
 - Codex CLI: [official installation and sign-in guide](https://developers.openai.com/codex/cli)
 - Claude Code: [official installation guide](https://code.claude.com/docs/en/quickstart)
@@ -36,9 +36,11 @@ Private app data remains under `~/Library/Application Support/AgentBridge`, incl
 
 Changing the selected folder copies existing workspace folders and shared memory to the new location, then updates existing session records to use those copies. The original folders and files remain intact; new sessions use the newly selected folder. If a destination already contains different data for an existing workspace or memory file, AgentBridge stops and reports the conflict without overwriting either copy. Changing the folder does not change shared-memory identity: memory remains scoped by the canonical source repository path and the commit pinned for a session.
 
+The setup wizard opens automatically when the app has no usable workspace folder. It walks through language and provider selection, the required data folder, optional CLI discovery or path selection, optional sign-in checking, account memory consent, and local usage settings. The workspace folder is required to continue. Missing CLI installation or unconfirmed sign-in can be skipped; the final review reports both clearly. The wizard does not install software, run a provider task, send a model request, or configure an API key. Saving account or default settings can prepare a local session. Sign-in and status checks start the official CLI only after you click those controls. Subscription login is the setup default. If you quit before finishing, the wizard resumes on the next launch. Existing installations with a usable folder are not interrupted; click **Setup Wizard** in the header to reopen it. Reopening keeps saved provider settings and existing memory consent unchanged unless you explicitly save a change.
+
 ### 2. Choose a language and check CLI sign-in
 
-Fresh installs use English. To change the app language at any time, choose **English** or **Traditional Chinese** from the language menu in the app header; the selection is saved and takes effect immediately. When the app opens, choose Codex or Claude under **Assistant**, then click **Check Sign-in and Plan** in the upper-right corner. The app displays only account and plan fields confirmed by the official CLI. If the Codex CLI does not report a plan name, AgentBridge does not guess one.
+Fresh installs use English. Choose **English** or **Traditional Chinese** in the setup wizard or from the app header; the selection is saved and takes effect immediately. For an explicit sign-in check, choose Codex or Claude under **Assistant**, then click **Check Sign-in and Plan** in the upper-right corner. The app displays only account and plan fields confirmed by the official CLI. If the Codex CLI does not report a plan name, AgentBridge does not guess one.
 
 You can also check the environment and sign-in status from the CLI:
 

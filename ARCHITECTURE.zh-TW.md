@@ -33,7 +33,7 @@ Icon 以深靛藍底色呈現兩個不同助理節點，透過一道明亮的弧
 
 ## 目標與實作方式
 
-AgentBridge 0.6.1 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCore`、`agentbridge` CLI 與原生 SwiftUI App。App 和 CLI 共用已保存的工作區資料根目錄，以及私有設定、帳戶、工作階段索引、稽核、用量控制與 API 帳本。App 預設使用英文，並內建英文與繁體中文資源，可在 App 內選擇並保存語言。App 的內嵌終端使用 SwiftTerm 1.20.0；Release bundle 由 `scripts/package-app.sh` 組裝，不維護兩份 Xcode 專案設定。
+AgentBridge 0.7.0 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCore`、`agentbridge` CLI 與原生 SwiftUI App。App 和 CLI 共用已保存的工作區資料根目錄，以及私有設定、帳戶、工作階段索引、稽核、用量控制與 API 帳本。App 預設使用英文，並內建英文與繁體中文資源，可在 App 內選擇並保存語言。設定精靈會續接尚未完成的首次設定，也可從標題列重新開啟；`SetupWizardFlow` 將必要的工作區限制與選用的 CLI／登入狀態摘要做成可測試的核心邏輯。App 的內嵌終端使用 SwiftTerm 1.20.0；Release bundle 由 `scripts/package-app.sh` 組裝，不維護兩份 Xcode 專案設定。
 
 供應商整合透過本機官方 CLI 執行：Codex 使用 `codex exec --json` 或原生互動 CLI，Claude Code 使用 `claude -p --output-format stream-json` 或原生互動 CLI。程式不匯出或複製 OAuth 憑證，也不把 CLI session ID 當成跨供應商記憶。此專案使用 Swift 管理本機程序，不另外引入 Codex/Claude SDK runtime。
 
@@ -61,7 +61,9 @@ AgentBridge 0.6.1 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCor
 
 ## 工作區資料與私有 App 資料
 
-第一次啟動時，App 會要求使用者選擇或建立工作區資料夾。設定完成前不會建立工作階段；AgentBridge 不會暗中以 Application Support 作為工作區備援位置。App 與 CLI 共用已保存的根目錄。CLI 可用 `agentbridge workspace set /absolute/path/to/folder` 設定，並以 `agentbridge workspace show` 查看；需要該資料夾的命令若發現尚未設定，會顯示可直接執行的設定指令。
+第一次啟動且沒有可用工作區根目錄時，App 會自動開啟設定精靈並要求使用者選擇或建立資料夾；設定完成前不會建立工作階段。精靈會在重啟後續接尚未完成的首次流程。有可用根目錄的既有安裝不會被打擾，可用標題列的「設定精靈」重新開啟。工作區是唯一必填項目；CLI 尋找、帳戶登入檢查與用量控制可先略過，最後摘要會清楚標示尚未完成項目。精靈不會自動執行 provider 工作或傳送模型請求；儲存帳戶或預設設定時可能會準備本機工作階段。只有使用者明確按下按鈕後，才會啟動官方 CLI 進行登入或狀態檢查。供應商與 CLI 路徑在明確儲存前都只是草稿；重新開啟精靈不會變更既有 provider 模式或每個帳戶的記憶同意設定。
+
+App 與 CLI 共用已保存的根目錄。CLI 可用 `agentbridge workspace set /absolute/path/to/folder` 設定，並以 `agentbridge workspace show` 查看；需要該資料夾的命令若發現尚未設定，會顯示可直接執行的設定指令。
 
 使用者選擇的資料夾採用 `<root>/workspaces/<小寫工作階段 UUID>/` 存放每個工作階段的獨立 Git 複本，並以 `<root>/shared-memory/` 存放 App/CLI 共用對話記憶。App 設定、帳戶設定資料、各 provider CLI 專用的 profile 資料夾（CLI 會在其中保存該 profile 的登入資料）、工作階段索引、稽核事件、用量控制及預算帳本，仍存放在私有的 `~/Library/Application Support/AgentBridge`。已選根目錄也會保存在該私有資料夾。
 

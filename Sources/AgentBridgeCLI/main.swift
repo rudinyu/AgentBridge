@@ -16,7 +16,7 @@ enum AgentBridgeCLI {
     private static func dispatch(_ arguments: [String]) async throws {
         guard let command = arguments.first else { printHelp(); return }
         if ["help", "--help", "-h"].contains(command) { printHelp(); return }
-        if command == "version" || command == "--version" { print("AgentBridge 0.6.1"); return }
+        if command == "version" || command == "--version" { print("AgentBridge 0.7.0"); return }
         if command == "workspace" {
             try await workspaceCommand(Array(arguments.dropFirst()))
             return
@@ -65,7 +65,7 @@ enum AgentBridgeCLI {
     }
 
     private static func doctor(service: BridgeService) async throws {
-        print("AgentBridge 0.6.1")
+        print("AgentBridge 0.7.0")
         let settings = try service.settings()
         print("登入模式：\(settings.usageMode == .subscription ? "官方 CLI 訂閱登入" : "Claude API（每次執行需單次預算與確認）")")
         for provider in AgentProvider.allCases {
@@ -825,7 +825,7 @@ enum AgentBridgeCLI {
 
     private static func printHelp() {
         print("""
-        AgentBridge 0.6.1 — macOS Codex / Claude CLI 工作階段管理
+        AgentBridge 0.7.0 — macOS Codex / Claude CLI 工作階段管理
 
         命令：
           agentbridge workspace show
