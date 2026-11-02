@@ -45,7 +45,9 @@ public final class BridgeService: @unchecked Sendable {
     private let projectMemoryStore: ProjectMemoryStore
     private let parallelTaskBoard: ParallelTaskBoard
     private let extensionPolicyStore: ExtensionPolicyStore
+    private let activeExtensionRuntimeStore: ActiveExtensionRuntimeStore
     private let usageControlStore: UsageControlStore
+    private let runtimeProxyExecutableURL: URL?
 
     private static let projectMemoryPromptBudget = 16 * 1_024
 
@@ -53,13 +55,15 @@ public final class BridgeService: @unchecked Sendable {
         store: AuditStore,
         runner: SafeProcessRunner = SafeProcessRunner(),
         baseEnvironment: [String: String] = ProcessInfo.processInfo.environment,
-        monthlyAPILimitUSD: Double = 140
+        monthlyAPILimitUSD: Double = 140,
+        runtimeProxyExecutableURL: URL? = nil
     ) throws {
         guard store.workspaceRootURL != nil else {
             throw AgentBridgeError.invalidInput("尚未設定工作區資料根目錄；請在 App 選擇資料夾，或先執行 `agentbridge workspace set /absolute/path/to/root`。")
         }
         self.store = store
         self.runner = runner
+        self.runtimeProxyExecutableURL = runtimeProxyExecutableURL
         self.adapter = ProviderAdapter(runner: runner)
         self.baseEnvironment = baseEnvironment
         self.workspaceManager = WorkspaceManager(store: store, runner: runner, baseEnvironment: baseEnvironment)
@@ -78,6 +82,9 @@ public final class BridgeService: @unchecked Sendable {
         )
         self.extensionPolicyStore = try ExtensionPolicyStore(
             rootURL: userDataRoot.appendingPathComponent("extension-policy", isDirectory: true)
+        )
+        self.activeExtensionRuntimeStore = try ActiveExtensionRuntimeStore(
+            rootURL: userDataRoot.appendingPathComponent("extension-runtime", isDirectory: true)
         )
         self.usageControlStore = try UsageControlStore(rootURL: store.rootURL)
     }
@@ -215,6 +222,313 @@ public final class BridgeService: @unchecked Sendable {
             projectID: projectID,
             revokedBy: "AgentBridge App"
         )
+    }
+
+    public func activeExtensionConfigurations() throws -> [ActiveExtensionConfigurationSummary] {
+        try activeExtensionRuntimeStore.configurations()
+    }
+
+    /// Returns the last explicit, bounded MCP Test Connection result without
+    /// starting the server again. The saved definitions remain tied to their
+    /// imported executable/configuration digest.
+    public func activeExtensionInspection(extensionID: String) throws -> MCPServerInspection? {
+        try activeExtensionRuntimeStore.inspection(extensionID: extensionID)
+    }
+
+    public func macControlPresetStatus(
+        targetBundleID: String? = nil,
+        accessMode: MacControlAccessMode = .observe
+    ) -> MacControlPresetStatus {
+        let helper = try? MCPExecutableValidation.resolveAndDigest(AgentBridgeHelperExecutable.installedMacControlHelperPath)
+        let proxy = try? resolvedRuntimeProxyExecutable()
+        let validTarget = targetBundleID.map(MacControlActionPolicy.isAllowedTarget) ?? true
+        let message: String
+        if !validTarget {
+            message = "Choose an app outside protected settings, credential, AgentBridge, MacControl, and terminal apps."
+        } else if helper == nil {
+            message = "The installed MacControl helper was not found at its trusted application path."
+        } else if proxy == nil {
+            message = "The AgentBridge MCP proxy executable is unavailable."
+        } else {
+            message = "The trusted helper and AgentBridge proxy are available. Test permission status and review the target before enabling."
+        }
+        return MacControlPresetStatus(
+            targetBundleID: targetBundleID,
+            accessMode: accessMode,
+            helperAvailable: helper != nil,
+            helperPath: helper?.path,
+            helperDigest: helper?.digest,
+            proxyAvailable: proxy != nil,
+            proxyExecutablePath: proxy?.path,
+            proxyExecutableDigest: proxy?.digest,
+            message: message
+        )
+    }
+
+    @discardableResult
+    public func importMacControlPreset(
+        targetBundleID: String,
+        accessMode: MacControlAccessMode = .observe
+    ) throws -> ActiveMCPConfiguration {
+        guard MacControlActionPolicy.isAllowedTarget(targetBundleID) else {
+            throw AgentBridgeError.invalidInput("Choose an app outside protected settings, credential, AgentBridge, MacControl, and terminal apps.")
+        }
+        let helper = try MCPExecutableValidation.resolveAndDigest(AgentBridgeHelperExecutable.installedMacControlHelperPath)
+        let proxy = try resolvedRuntimeProxyExecutable()
+        let extensionID = "mac-control.\(MCPServerIdentifier.make(extensionID: targetBundleID))"
+        let oldDigest = try activeExtensionRuntimeStore.configurations().first(where: { $0.id == extensionID })?.configurationDigest
+        let configuration = try ActiveMCPConfiguration(
+            macControlTargetBundleID: targetBundleID,
+            accessMode: accessMode,
+            helperPath: helper.path,
+            helperDigest: helper.digest,
+            proxyExecutablePath: proxy.path,
+            proxyExecutableDigest: proxy.digest,
+            version: "1"
+        )
+        try activeExtensionRuntimeStore.importMCP(configuration)
+        try cancelBoundExtensionSessionsIfChanged(extensionID: configuration.extensionID, previousDigest: oldDigest, newDigest: configuration.configurationDigest)
+        return configuration
+    }
+
+    /// Explicit, status-only readiness probe. It starts only the fixed trusted
+    /// MacControl helper, calls `mac_status`, and never requests TCC access or
+    /// captures a screenshot or sends input.
+    public func testMacControlPermissions(
+        targetBundleID: String,
+        cancellation: CancellationFlag = CancellationFlag()
+    ) async throws -> MacControlPermissionReadiness {
+        guard MacControlActionPolicy.isAllowedTarget(targetBundleID) else {
+            throw AgentBridgeError.invalidInput("Choose an app outside protected settings, credential, AgentBridge, MacControl, and terminal apps.")
+        }
+        let helper = try MCPExecutableValidation.resolveAndDigest(AgentBridgeHelperExecutable.installedMacControlHelperPath)
+        let directory = try makePrivateTemporaryDirectory(label: "mac-control-status-\(UUID().uuidString.lowercased())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manifest = try MCPRuntimeImportManifest(
+            id: "mac-control-readiness",
+            name: "MacControl status probe",
+            version: "1",
+            summary: "Status-only readiness probe.",
+            command: helper.path,
+            args: [],
+            allowedTools: ["mac_status"],
+            startupTimeoutSeconds: 15,
+            toolTimeoutSeconds: 15,
+            maximumToolCallsPerRun: 1,
+            maximumToolResponseBytes: 64 * 1_024,
+            maximumTotalToolResponseBytes: 64 * 1_024
+        )
+        let configuration = try ActiveMCPConfiguration(
+            manifest: manifest,
+            sourceReference: "builtin:mac-control-status-probe",
+            resolvedExecutablePath: helper.path,
+            executableDigest: helper.digest
+        )
+        let reply = try await Task.detached(priority: .userInitiated) { [baseEnvironment] in
+            try MCPStdioRuntime.callToolForTesting(
+                configuration: configuration,
+                environment: baseEnvironment,
+                privateDirectory: directory,
+                toolName: "mac_status",
+                arguments: [:],
+                cancellation: cancellation
+            )
+        }.value
+        let statusText = reply.text.joined(separator: "\n")
+            .unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) || $0 == "\n" || $0 == "\t" }
+            .map(String.init).joined()
+        return MacControlPermissionReadiness(
+            targetBundleID: targetBundleID,
+            helperAvailable: true,
+            statusToolAvailable: !reply.isError,
+            statusText: String(OutputRedactor.redact(statusText).prefix(4_096)),
+            checkedAt: Date()
+        )
+    }
+
+    /// Imports only the bounded SKILL.md text. It does not run referenced
+    /// scripts, hooks, installers, or dependencies.
+    @discardableResult
+    public func importSkillRuntime(
+        descriptor: ExtensionDescriptor,
+        sourceReference: String,
+        skillFileURL: URL
+    ) throws -> ActiveSkillSnapshot {
+        guard descriptor.kind == .skill else {
+            throw AgentBridgeError.invalidInput("Choose a Skill descriptor for SKILL.md import.")
+        }
+        let text = try ActiveSkillFileReader.read(at: skillFileURL)
+        let snapshot = try ActiveSkillSnapshot(
+            descriptor: descriptor,
+            sourceReference: sourceReference,
+            instructionText: text
+        )
+        let oldDigest = try activeExtensionRuntimeStore.configurations().first(where: { $0.id == snapshot.extensionID })?.configurationDigest
+        try activeExtensionRuntimeStore.importSkill(snapshot)
+        try cancelBoundExtensionSessionsIfChanged(extensionID: snapshot.extensionID, previousDigest: oldDigest, newDigest: snapshot.configurationDigest)
+        return snapshot
+    }
+
+    @discardableResult
+    public func importMCPRuntimeManifest(
+        _ manifest: MCPRuntimeImportManifest,
+        sourceReference: String
+    ) throws -> ActiveMCPConfiguration {
+        let oldDigest = try activeExtensionRuntimeStore.configurations().first(where: { $0.id == manifest.id })?.configurationDigest
+        let executable = try MCPExecutableValidation.resolveAndDigest(manifest.command)
+        let configuration = try ActiveMCPConfiguration(
+            manifest: manifest,
+            sourceReference: sourceReference,
+            resolvedExecutablePath: executable.path,
+            executableDigest: executable.digest
+        )
+        try activeExtensionRuntimeStore.importMCP(configuration)
+        try cancelBoundExtensionSessionsIfChanged(extensionID: configuration.extensionID, previousDigest: oldDigest, newDigest: configuration.configurationDigest)
+        return configuration
+    }
+
+    @discardableResult
+    public func importMCPRuntimeManifest(
+        at manifestURL: URL,
+        maximumBytes: Int = 64 * 1_024
+    ) throws -> ActiveMCPConfiguration {
+        let data = try BoundedDescriptorFileReader.read(at: manifestURL, maximumBytes: maximumBytes)
+        let manifest: MCPRuntimeImportManifest
+        do { manifest = try JSONDecoder().decode(MCPRuntimeImportManifest.self, from: data) }
+        catch { throw AgentBridgeError.invalidInput("The MCP runtime JSON manifest is invalid.") }
+        return try importMCPRuntimeManifest(manifest, sourceReference: manifestURL.path)
+    }
+
+    /// Starts the selected MCP server only after the caller explicitly asks to
+    /// test it. This performs initialize and bounded, paginated tools/list; it
+    /// does not call an MCP tool or an AI/model API.
+    public func testMCPRuntime(
+        extensionID: String,
+        cancellation: CancellationFlag = CancellationFlag()
+    ) async throws -> MCPServerInspection {
+        guard let configuration = try activeExtensionRuntimeStore.mcpConfiguration(extensionID: extensionID) else {
+            throw ActiveExtensionRuntimeError.configurationMissing(extensionID)
+        }
+        let temporaryDirectory = try makePrivateTemporaryDirectory(label: "mcp-test-\(UUID().uuidString.lowercased())")
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+        let inspection = try await MCPStdioRuntime.inspect(
+            configuration: configuration,
+            baseEnvironment: baseEnvironment,
+            privateDirectory: temporaryDirectory,
+            cancellation: cancellation
+        )
+        let inspectionChanged = try activeExtensionRuntimeStore.recordInspection(inspection)
+        if inspectionChanged {
+            let affected = try activeExtensionRuntimeStore.sessionIDsUsingExtension(extensionID: extensionID)
+            _ = cancelRunningExtensionSessions(affected)
+        }
+        return inspection
+    }
+
+    public func previewExtensionActivation(
+        extensionID: String,
+        sessionID: UUID
+    ) throws -> ActiveExtensionActivationReview {
+        let session = try loadSession(sessionID)
+        let profile = try requireBoundProfile(for: session, allowUnselected: true)
+        return try activeExtensionRuntimeStore.preview(
+            extensionID: extensionID,
+            projectID: extensionProjectID(for: session),
+            provider: session.provider,
+            profileID: profile.id
+        )
+    }
+
+    @discardableResult
+    public func enableExtensionRuntime(
+        extensionID: String,
+        sessionID: UUID,
+        reviewedDigest: String,
+        explicitExecutionConsent: Bool,
+        explicitScreenCaptureConsent: Bool = false,
+        explicitInputControlConsent: Bool = false
+    ) throws -> ActiveExtensionGrant {
+        let session = try loadSession(sessionID)
+        let profile = try requireBoundProfile(for: session, allowUnselected: true)
+        return try activeExtensionRuntimeStore.enable(
+            extensionID: extensionID,
+            projectID: extensionProjectID(for: session),
+            provider: session.provider,
+            profileID: profile.id,
+            reviewedDigest: reviewedDigest,
+            explicitExecutionConsent: explicitExecutionConsent,
+            explicitScreenCaptureConsent: explicitScreenCaptureConsent,
+            explicitInputControlConsent: explicitInputControlConsent,
+            grantedBy: "AgentBridge App"
+        )
+    }
+
+    @discardableResult
+    public func disableExtensionRuntime(extensionID: String, sessionID: UUID) throws -> Bool {
+        let session = try loadSession(sessionID)
+        let profile = try requireBoundProfile(for: session, allowUnselected: true)
+        let projectID = try extensionProjectID(for: session)
+        let matchingSessions = try activeExtensionRuntimeStore.sessionIDsUsingExtension(
+            extensionID: extensionID,
+            projectID: projectID,
+            provider: session.provider,
+            profileID: profile.id
+        )
+        let disabled = try activeExtensionRuntimeStore.disable(
+            extensionID: extensionID,
+            projectID: projectID,
+            provider: session.provider,
+            profileID: profile.id,
+            disabledBy: "AgentBridge App"
+        )
+        if disabled { cancelRunningExtensionSessions(matchingSessions) }
+        return disabled
+    }
+
+    @discardableResult
+    public func stopMacControl(extensionID: String, sessionID: UUID) throws -> [UUID] {
+        guard let configuration = try activeExtensionRuntimeStore.mcpConfiguration(extensionID: extensionID),
+              configuration.macControlAccessMode == .control else {
+            throw ActiveExtensionRuntimeError.configurationMissing(extensionID)
+        }
+        let session = try loadSession(sessionID)
+        let profile = try requireBoundProfile(for: session, allowUnselected: true)
+        let projectID = try extensionProjectID(for: session)
+        let affected = try activeExtensionRuntimeStore.sessionIDsUsingExtension(
+            extensionID: extensionID,
+            projectID: projectID,
+            provider: session.provider,
+            profileID: profile.id
+        )
+        let revoked = try activeExtensionRuntimeStore.disable(
+            extensionID: extensionID,
+            projectID: projectID,
+            provider: session.provider,
+            profileID: profile.id,
+            disabledBy: "AgentBridge Stop Control"
+        )
+        guard revoked else { return [] }
+        return cancelRunningExtensionSessions(affected)
+    }
+
+    public func activeExtensionsForSession(
+        sessionID: UUID,
+        extensionIDs: [String]? = nil
+    ) throws -> ActiveExtensionInvocation {
+        let session = try loadSession(sessionID)
+        let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
+        _ = try accountProfile(id: profileID)
+        return try activeExtensionRuntimeStore.invocation(
+            projectID: extensionProjectID(for: session),
+            provider: session.provider,
+            profileID: profileID,
+            workspacePath: session.workspacePath,
+            selectedExtensionIDs: extensionIDs
+        )
+    }
+
+    public func activeExtensionRuntimeAuditEvents() throws -> [ActiveExtensionRuntimeAudit] {
+        try activeExtensionRuntimeStore.auditEvents()
     }
     /// Uses the currently selected Claude profile when no profile ID is given.
     /// The built-in profile keeps the historical ledger location; custom
@@ -476,16 +790,52 @@ public final class BridgeService: @unchecked Sendable {
         try sharedMemoryStore.clear(scope: memoryScope(for: session))
     }
 
+    public func appendAutonomousMemoryTurn(
+        sessionID: UUID,
+        profileID: UUID,
+        userText: String,
+        assistantText: String
+    ) throws {
+        let session = try loadSession(sessionID)
+        let boundProfileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
+        guard boundProfileID == profileID else {
+            throw AgentBridgeError.sessionMismatch("Autonomous shared memory must use the session's bound account profile.")
+        }
+        let profile = try accountProfile(id: profileID)
+        guard profile.provider == session.provider, profile.allowsSharedMemory else {
+            throw AgentBridgeError.sessionMismatch("The session's bound account profile has not allowed shared memory.")
+        }
+        guard userText.utf8.count <= 256_000, assistantText.utf8.count <= 256_000,
+              !userText.contains("\0"), !assistantText.contains("\0") else {
+            throw AgentBridgeError.invalidInput("Autonomous shared-memory text exceeds the bounded turn size.")
+        }
+        try sharedMemoryStore.appendTurn(
+            scope: memoryScope(for: session),
+            provider: session.provider,
+            userText: OutputRedactor.redact(userText),
+            assistantText: OutputRedactor.redact(assistantText)
+        )
+    }
+
     public func createSession(
         sourcePath: String,
         provider: AgentProvider,
         accessMode: AccessMode = .readOnly,
-        snapshotCommit: String? = nil
+        snapshotCommit: String? = nil,
+        accountProfileID: UUID? = nil
     ) async throws -> SessionRecord {
         guard try store.loadSettings().usageMode != .api || provider == .claude else {
             throw AgentBridgeError.sessionMismatch("API 模式只支援 Claude；請先切換至訂閱登入模式以使用 Codex。")
         }
-        let selectedProfile = try accountProfileStore.selected(provider: provider)
+        let selectedProfile: AccountProfile
+        if let accountProfileID {
+            selectedProfile = try accountProfile(id: accountProfileID)
+            guard selectedProfile.provider == provider else {
+                throw AccountProfileError.providerMismatch(accountProfileID, provider)
+            }
+        } else {
+            selectedProfile = try accountProfileStore.selected(provider: provider)
+        }
         return try await workspaceManager.createSnapshot(
             sourcePath: sourcePath,
             provider: provider,
@@ -812,13 +1162,21 @@ public final class BridgeService: @unchecked Sendable {
         prompt: String,
         apiRequest: APIUsageRequest? = nil,
         cancellation: CancellationFlag = CancellationFlag(),
-        onProgress: (@Sendable (String) -> Void)? = nil
+        onProgress: (@Sendable (String) -> Void)? = nil,
+        extensionIDs: [String]? = nil,
+        expectedExtensionFingerprint: String? = nil,
+        allowBoundProfileWithoutGlobalSelection: Bool = false,
+        allowSharedMemoryForRun: Bool = true,
+        maximumMCPToolCallsPerServer: Int? = nil
     ) async throws -> ProviderOutput {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AgentBridgeError.invalidInput("請輸入要交給助理的內容。")
         }
         guard prompt.utf8.count <= 256_000 else {
             throw AgentBridgeError.invalidInput("提示內容最多 256 KiB。")
+        }
+        if let maximumMCPToolCallsPerServer, !(1...128).contains(maximumMCPToolCallsPerServer) {
+            throw AgentBridgeError.invalidInput("The per-run MCP tool-call cap must be between 1 and 128.")
         }
         let lease = try store.acquireRunLease(for: sessionID)
         defer { withExtendedLifetime(lease) {} }
@@ -829,7 +1187,7 @@ public final class BridgeService: @unchecked Sendable {
               session.policy.workspaceReadOnly else {
             throw AgentBridgeError.sessionMismatch("工作階段不是唯讀模式。")
         }
-        let profile = try requireBoundSelectedProfile(for: session)
+        let profile = try requireBoundProfile(for: session, allowUnselected: allowBoundProfileWithoutGlobalSelection)
         let apiMode = settings.usageMode == .api
         guard apiMode == (apiRequest != nil) else {
             if apiMode { throw AgentBridgeError.sessionMismatch("API 模式每次執行都需要輸入單次預算、API 金鑰及明確確認。") }
@@ -862,11 +1220,33 @@ public final class BridgeService: @unchecked Sendable {
         let executable = try RuntimeEnvironment.resolveExecutable(provider: session.provider, configuredPath: settings.binaryPath(for: session.provider))
         let temp = try makePrivateTemporaryDirectory(label: "run-\(sessionID.uuidString.lowercased())")
         defer { try? FileManager.default.removeItem(at: temp) }
-        let (providerPrompt, memoryContext) = try promptWithSharedMemory(
-            prompt,
-            session: session,
-            profile: profile
+        let extensionInvocation = try activeExtensionRuntimeStore.invocation(
+            projectID: extensionProjectID(for: session),
+            provider: session.provider,
+            profileID: profile.id,
+            workspacePath: session.workspacePath,
+            selectedExtensionIDs: extensionIDs
         )
+        if let expectedExtensionFingerprint {
+            guard ActiveExtensionValidation.isSHA256(expectedExtensionFingerprint),
+                  extensionInvocation.fingerprint == expectedExtensionFingerprint.lowercased() else {
+                throw ActiveExtensionRuntimeError.reviewDigestMismatch
+            }
+        }
+        for mcpServer in extensionInvocation.mcpServers {
+            guard try MCPExecutableValidation.digestExecutable(at: mcpServer.executablePath) == mcpServer.executableDigest else {
+                throw ActiveExtensionRuntimeError.invalidConfiguration("The MCP executable changed after it was imported and reviewed.")
+            }
+        }
+        let mcpControlPlane = try makeMCPRunDirectoryLease(for: extensionInvocation, session: session, providerTemporaryDirectory: temp)
+        defer { mcpControlPlane?.remove() }
+        let (sharedPrompt, memoryContext) = allowSharedMemoryForRun
+            ? try promptWithSharedMemory(prompt, session: session, profile: profile)
+            : (prompt, nil)
+        let providerPrompt = extensionInvocation.skillPrompt + sharedPrompt
+        guard providerPrompt.utf8.count <= 512_000 else {
+            throw AgentBridgeError.invalidInput("The prompt plus approved Skill instructions exceed the 512 KiB run limit.")
+        }
         let apiKey = apiRequest?.apiKey
         let environment = try providerEnvironment(profile: profile, privateTemporaryDirectory: temp, apiKey: apiKey)
         var reservation: BudgetReservation?
@@ -917,17 +1297,33 @@ public final class BridgeService: @unchecked Sendable {
         let emitter = ProgressEmitter(sessionID: sessionID, store: store, callback: onProgress)
         var reservationReconciled = false
         var taskID: UUID?
+        var mcpServerCommands: [MCPServerCommandConfiguration] = []
         do {
+            try activeExtensionRuntimeStore.validateAndBind(sessionID: sessionID, invocation: extensionInvocation)
+            mcpServerCommands = try prepareMCPServerCommands(
+                invocation: extensionInvocation,
+                session: session,
+                ticketDirectory: mcpControlPlane?.directoryURL,
+                maximumToolCallsPerServer: maximumMCPToolCallsPerServer
+            )
             _ = store.consumeCancellationRequest(for: sessionID)
             let startedTaskID = try beginTrackedRun(sessionID: sessionID, summary: "Read-only provider run started.")
             taskID = startedTaskID
             activeSession.status = .running
             activeSession.updatedAt = Date()
             try store.saveSession(activeSession)
+            // Revalidate after publishing `.running`. A revoke before this
+            // point fails the live grant check; a revoke after it can persist
+            // a cancellation request that the provider/proxy will observe.
+            // Do not consume cancellation requests after this boundary.
+            try activeExtensionRuntimeStore.validateCurrentInvocation(extensionInvocation)
             if let reservation {
                 try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "api.run.authorized", message: "已明確授權 Claude API 執行；單次上限 US$\(String(format: "%.2f", apiRequest?.requestedBudgetUSD ?? 0))，保留預算 US$\(String(format: "%.2f", reservation.reservedUSD))。實際費用仍以供應商帳單為準。"))
             } else {
-                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "run.started", message: "以訂閱登入開始唯讀執行。提示內容不會寫入稽核檔。"))
+                let extensionText = extensionInvocation.skills.isEmpty && extensionInvocation.mcpServers.isEmpty
+                    ? "未使用已啟用的 Skills 或 MCP 工具。"
+                    : "Extension fingerprint \(extensionInvocation.fingerprint.prefix(12)); Skills \(extensionInvocation.skills.count), MCP servers \(extensionInvocation.mcpServers.count)."
+                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "run.started", message: "以訂閱登入開始唯讀執行。\(extensionText) 提示內容不會寫入稽核檔。"))
             }
             if let memoryContext {
                 try? store.appendEvent(AuditEvent(
@@ -945,12 +1341,14 @@ public final class BridgeService: @unchecked Sendable {
                 environment: environment,
                 cancellationRequestURL: store.cancellationRequestURL(for: sessionID),
                 apiBudgetUSD: apiRequest?.requestedBudgetUSD,
+                mcpServerCommands: mcpServerCommands,
                 onProgress: { [weak self] message in
                     emitter.emit(message)
                     _ = try? self?.parallelTaskBoard.updateProgress(taskID: startedTaskID, summary: OutputRedactor.redact(message))
                 },
                 cancellation: cancellation
             )
+            try recordMCPProxyReceipts(mcpServerCommands, sessionID: sessionID, failOnIncomplete: true)
             let output: ProviderOutput
             if let apiRequest {
                 output = ProviderOutput(
@@ -987,7 +1385,7 @@ public final class BridgeService: @unchecked Sendable {
             if let taskID {
                 try? finishTrackedRun(taskID: taskID, status: .completed, summary: "Provider CLI reported a completed response.")
             }
-            if profile.allowsSharedMemory {
+            if allowSharedMemoryForRun, profile.allowsSharedMemory {
                 do {
                     try sharedMemoryStore.appendTurn(
                         scope: memoryScope(for: session),
@@ -1002,6 +1400,7 @@ public final class BridgeService: @unchecked Sendable {
             }
             return output
         } catch {
+            try? recordMCPProxyReceipts(mcpServerCommands, sessionID: sessionID, failOnIncomplete: false)
             if let reservation, !reservationReconciled { try? activeBudgetLedger?.reconcile(reservationID: reservation.id, actualUSD: nil) }
             if let apiCostReservation, !reservationReconciled {
                 try? activeAPICostLedger?.reconcile(reservationID: apiCostReservation.id, actualUSD: nil)
@@ -1029,11 +1428,19 @@ public final class BridgeService: @unchecked Sendable {
         planID: UUID,
         reviewedDigest: String,
         cancellation: CancellationFlag = CancellationFlag(),
-        onProgress: (@Sendable (String) -> Void)? = nil
+        onProgress: (@Sendable (String) -> Void)? = nil,
+        extensionIDs: [String]? = nil,
+        expectedExtensionFingerprint: String? = nil,
+        allowBoundProfileWithoutGlobalSelection: Bool = false,
+        allowSharedMemoryForRun: Bool = true,
+        maximumMCPToolCallsPerServer: Int? = nil
     ) async throws -> ProviderOutput {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { throw AgentBridgeError.invalidInput("請輸入要交給助理的內容。") }
         guard trimmedPrompt.utf8.count <= 256_000 else { throw AgentBridgeError.invalidInput("提示內容最多 256 KiB。") }
+        if let maximumMCPToolCallsPerServer, !(1...128).contains(maximumMCPToolCallsPerServer) {
+            throw AgentBridgeError.invalidInput("The per-run MCP tool-call cap must be between 1 and 128.")
+        }
 
         let lease = try store.acquireRunLease(for: sessionID)
         defer { withExtendedLifetime(lease) {} }
@@ -1055,7 +1462,7 @@ public final class BridgeService: @unchecked Sendable {
             ))
             throw AgentBridgeError.changePlanRequired
         }
-        let profile = try requireBoundSelectedProfile(for: session)
+        let profile = try requireBoundProfile(for: session, allowUnselected: allowBoundProfileWithoutGlobalSelection)
         try authorizeManagedRun(session: session, profile: profile, usageMode: .subscription)
         try await workspaceManager.validateWorkspace(for: session, accessMode: .isolatedChanges)
         let executable = try RuntimeEnvironment.resolveExecutable(
@@ -1075,7 +1482,29 @@ public final class BridgeService: @unchecked Sendable {
         let temp = try makePrivateTemporaryDirectory(label: "change-\(sessionID.uuidString.lowercased())")
         defer { try? FileManager.default.removeItem(at: temp) }
         let environment = try providerEnvironment(profile: profile, privateTemporaryDirectory: temp)
-        let (promptWithMemory, memoryContext) = try promptWithSharedMemory(trimmedPrompt, session: session, profile: profile)
+        let extensionInvocation = try activeExtensionRuntimeStore.invocation(
+            projectID: extensionProjectID(for: session),
+            provider: session.provider,
+            profileID: profile.id,
+            workspacePath: session.workspacePath,
+            selectedExtensionIDs: extensionIDs
+        )
+        if let expectedExtensionFingerprint {
+            guard ActiveExtensionValidation.isSHA256(expectedExtensionFingerprint),
+                  extensionInvocation.fingerprint == expectedExtensionFingerprint.lowercased() else {
+                throw ActiveExtensionRuntimeError.reviewDigestMismatch
+            }
+        }
+        for mcpServer in extensionInvocation.mcpServers {
+            guard try MCPExecutableValidation.digestExecutable(at: mcpServer.executablePath) == mcpServer.executableDigest else {
+                throw ActiveExtensionRuntimeError.invalidConfiguration("The MCP executable changed after it was imported and reviewed.")
+            }
+        }
+        let mcpControlPlane = try makeMCPRunDirectoryLease(for: extensionInvocation, session: session, providerTemporaryDirectory: temp)
+        defer { mcpControlPlane?.remove() }
+        let (promptWithMemory, memoryContext) = allowSharedMemoryForRun
+            ? try promptWithSharedMemory(trimmedPrompt, session: session, profile: profile)
+            : (trimmedPrompt, nil)
         let planText = ([
             "APPROVED CHANGE PLAN",
             "Title: \(plan.title)",
@@ -1083,6 +1512,8 @@ public final class BridgeService: @unchecked Sendable {
             "Steps:",
         ] + plan.steps.enumerated().map { "\($0.offset + 1). \($0.element)" }).joined(separator: "\n")
         let providerPrompt = """
+        \(extensionInvocation.skillPrompt)
+        \(extensionInvocation.skillPrompt.isEmpty ? "" : "\n")
         \(planText)
 
         This plan is the user's authorization boundary. Make only the changes described by the approved plan in this isolated workspace. If the request requires work outside the plan, stop and explain what needs a new reviewed plan. Do not commit, push, merge, or change the source repository.
@@ -1094,8 +1525,16 @@ public final class BridgeService: @unchecked Sendable {
         var activeSession = session
         let emitter = ProgressEmitter(sessionID: sessionID, store: store, callback: onProgress)
         var taskID: UUID?
+        var mcpServerCommands: [MCPServerCommandConfiguration] = []
         _ = store.consumeCancellationRequest(for: sessionID)
         do {
+            try activeExtensionRuntimeStore.validateAndBind(sessionID: sessionID, invocation: extensionInvocation)
+            mcpServerCommands = try prepareMCPServerCommands(
+                invocation: extensionInvocation,
+                session: session,
+                ticketDirectory: mcpControlPlane?.directoryURL,
+                maximumToolCallsPerServer: maximumMCPToolCallsPerServer
+            )
             let startedTaskID = try beginTrackedRun(
                 sessionID: sessionID,
                 summary: "Approved change plan \(plan.reviewDigest.prefix(12)) is running.",
@@ -1111,6 +1550,10 @@ public final class BridgeService: @unchecked Sendable {
             activeSession.changesAcceptedAt = nil
             activeSession.updatedAt = Date()
             try store.saveSession(activeSession)
+            // Match the read-only launch boundary: once `.running` is visible,
+            // revokes either fail this exact live snapshot check or leave a
+            // cancellation marker for the provider/proxy to observe.
+            try activeExtensionRuntimeStore.validateCurrentInvocation(extensionInvocation)
             try store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: "change.run.started",
@@ -1130,12 +1573,14 @@ public final class BridgeService: @unchecked Sendable {
                 executableURL: executable,
                 environment: environment,
                 cancellationRequestURL: store.cancellationRequestURL(for: sessionID),
+                mcpServerCommands: mcpServerCommands,
                 onProgress: { [weak self] message in
                     emitter.emit(message)
                     _ = try? self?.parallelTaskBoard.updateProgress(taskID: startedTaskID, summary: OutputRedactor.redact(message))
                 },
                 cancellation: cancellation
             )
+            try recordMCPProxyReceipts(mcpServerCommands, sessionID: sessionID, failOnIncomplete: true)
             let output = ProviderOutput(
                 text: parsedOutput.text,
                 providerSessionID: parsedOutput.providerSessionID,
@@ -1161,7 +1606,7 @@ public final class BridgeService: @unchecked Sendable {
                     reference: try? ParallelTaskReference(kind: .diff, value: "sha256:\(currentChangeDiff.digest)")
                 )
             }
-            if profile.allowsSharedMemory {
+            if allowSharedMemoryForRun, profile.allowsSharedMemory {
                 do {
                     try sharedMemoryStore.appendTurn(
                         scope: memoryScope(for: session),
@@ -1175,6 +1620,7 @@ public final class BridgeService: @unchecked Sendable {
             }
             return output
         } catch {
+            try? recordMCPProxyReceipts(mcpServerCommands, sessionID: sessionID, failOnIncomplete: false)
             activeSession.status = (error as? AgentBridgeError) == .processCancelled ? .cancelled : .failed
             activeSession.updatedAt = Date()
             try? store.saveSession(activeSession)
@@ -1533,16 +1979,27 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     private func requireBoundSelectedProfile(for session: SessionRecord) throws -> AccountProfile {
+        try requireBoundProfile(for: session, allowUnselected: false)
+    }
+
+    private func requireBoundProfile(for session: SessionRecord, allowUnselected: Bool) throws -> AccountProfile {
         let boundID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
-        let selected = try accountProfileStore.selected(provider: session.provider)
-        guard selected.id == boundID else {
-            throw AgentBridgeError.sessionMismatch("目前選取的帳戶與工作階段綁定帳戶不同；請建立新的隔離工作區後再執行。")
+        if !allowUnselected {
+            let selected = try accountProfileStore.selected(provider: session.provider)
+            guard selected.id == boundID else {
+                throw AgentBridgeError.sessionMismatch("目前選取的帳戶與工作階段綁定帳戶不同；請建立新的隔離工作區後再執行。")
+            }
         }
         let profile = try accountProfile(id: boundID)
         guard profile.provider == session.provider else {
             throw AgentBridgeError.sessionMismatch("工作階段綁定了不同供應商的帳戶。")
         }
         return profile
+    }
+
+    private func extensionProjectID(for session: SessionRecord) throws -> String {
+        let repository = try ProjectMemoryRepositoryScope(repositoryPath: session.sourceRepositoryPath)
+        return "project-\(repository.key.prefix(48))"
     }
 
     private func requireIsolatedChangesSession(_ session: SessionRecord) throws {
@@ -2295,6 +2752,194 @@ public final class BridgeService: @unchecked Sendable {
         let url = store.rootURL.appendingPathComponent("tmp/\(label)", isDirectory: true)
         try AuditStore.createPrivateDirectory(url)
         return url
+    }
+
+    private func makeMCPRunDirectoryLease(
+        for invocation: ActiveExtensionInvocation,
+        session: SessionRecord,
+        providerTemporaryDirectory: URL
+    ) throws -> MCPRunDirectoryLease? {
+        guard !invocation.mcpServers.isEmpty else { return nil }
+        return try MCPRunDirectoryLease(
+            applicationSupportRoot: store.rootURL,
+            providerWriteRoots: [
+                URL(fileURLWithPath: session.workspacePath, isDirectory: true),
+                providerTemporaryDirectory
+            ]
+        )
+    }
+
+    private func resolvedRuntimeProxyExecutable() throws -> (path: String, digest: String) {
+        let resolved: (path: String, digest: String)
+        if let runtimeProxyExecutableURL {
+            resolved = try MCPExecutableValidation.resolveAndDigest(runtimeProxyExecutableURL.path)
+        } else {
+            let executable = try AgentBridgeHelperExecutable.resolve()
+            resolved = try MCPExecutableValidation.resolveAndDigest(executable.path)
+        }
+        return resolved
+    }
+
+    private func prepareMCPServerCommands(
+        invocation: ActiveExtensionInvocation,
+        session: SessionRecord,
+        ticketDirectory: URL?,
+        maximumToolCallsPerServer: Int?
+    ) throws -> [MCPServerCommandConfiguration] {
+        guard invocation.workspacePath == session.workspacePath else {
+            throw ActiveExtensionRuntimeError.sessionFingerprintChanged
+        }
+        guard !invocation.mcpServers.isEmpty else { return [] }
+        guard let ticketDirectory else {
+            throw AgentBridgeError.persistence("The private MCP control-plane directory is unavailable.")
+        }
+        let proxy = try resolvedRuntimeProxyExecutable()
+        return try invocation.mcpServers.map { configuration in
+            guard let inspectionDigest = invocation.mcpInspectionDigests[configuration.extensionID] else {
+                throw ActiveExtensionRuntimeError.inspectionRequired(configuration.extensionID)
+            }
+            guard try MCPExecutableValidation.digestExecutable(at: configuration.executablePath) == configuration.executableDigest else {
+                throw ActiveExtensionRuntimeError.invalidConfiguration("The MCP executable changed after it was imported and reviewed.")
+            }
+            try MCPEntrypointIntegrity.validate(configuration.entrypointPins, workspacePath: session.workspacePath)
+            let configuredProxy: (path: String, digest: String)
+            switch configuration.launchConfiguration {
+            case .stdio:
+                configuredProxy = proxy
+            case .macControlProxy(_, _, let path, let digest, _, _):
+                guard try MCPExecutableValidation.digestExecutable(at: path) == digest,
+                      proxy.path == path, proxy.digest == digest else {
+                    throw ActiveExtensionRuntimeError.invalidConfiguration("The bundled AgentBridge proxy changed after the MacControl preset was reviewed.")
+                }
+                configuredProxy = (path, digest)
+            }
+            let grant = try activeExtensionRuntimeStore.grant(
+                extensionID: configuration.extensionID,
+                projectID: invocation.projectID,
+                provider: invocation.provider,
+                profileID: invocation.profileID
+            )
+            guard let grant, grant.configurationDigest == configuration.configurationDigest else {
+                throw ActiveExtensionRuntimeError.grantMissing(configuration.extensionID)
+            }
+            let callLimit = min(configuration.maximumToolCallsPerRun, maximumToolCallsPerServer ?? configuration.maximumToolCallsPerRun)
+            let ticketURL = ticketDirectory.appendingPathComponent(
+                "mcp-proxy-\(MCPServerIdentifier.make(extensionID: configuration.extensionID)).json",
+                isDirectory: false
+            )
+            let receiptURL = ticketDirectory.appendingPathComponent(
+                "mcp-proxy-receipt-\(MCPServerIdentifier.make(extensionID: configuration.extensionID)).json",
+                isDirectory: false
+            )
+            let ticket = try MCPProxyTicket(
+                sessionID: session.id,
+                extensionID: configuration.extensionID,
+                projectID: invocation.projectID,
+                provider: invocation.provider,
+                profileID: invocation.profileID,
+                configurationDigest: configuration.configurationDigest,
+                reviewedDigest: grant.reviewedDigest,
+                serverInspectionDigest: inspectionDigest,
+                sessionExtensionFingerprint: invocation.fingerprint,
+                runtimeStoreRootPath: activeExtensionRuntimeStore.rootURL.path,
+                workspacePath: session.workspacePath,
+                cancellationRequestPath: store.cancellationRequestURL(for: session.id).path,
+                receiptPath: receiptURL.path,
+                proxyExecutablePath: configuredProxy.path,
+                proxyExecutableDigest: configuredProxy.digest,
+                serverExecutablePath: configuration.executablePath,
+                serverExecutableDigest: configuration.executableDigest,
+                serverArguments: configuration.arguments,
+                serverEntrypointPins: configuration.entrypointPins,
+                allowedTools: configuration.allowedTools,
+                startupTimeoutSeconds: configuration.startupTimeoutSeconds,
+                toolTimeoutSeconds: configuration.toolTimeoutSeconds,
+                maximumToolCallsPerRun: callLimit,
+                maximumToolResponseBytes: configuration.maximumToolResponseBytes,
+                maximumTotalToolResponseBytes: configuration.maximumTotalToolResponseBytes,
+                launchConfiguration: configuration.launchConfiguration,
+                expiresAt: Date().addingTimeInterval(1_200)
+            )
+            try MCPProxyTicketFile.write(ticket, to: ticketURL)
+            return try MCPServerCommandConfiguration(
+                configuration: configuration,
+                proxyExecutablePath: configuredProxy.path,
+                ticketURL: ticketURL,
+                receiptURL: receiptURL,
+                ticketID: ticket.ticketID,
+                inspectionDigest: inspectionDigest,
+                maximumToolCallsPerRun: callLimit
+            )
+        }
+    }
+
+    private func recordMCPProxyReceipts(
+        _ commands: [MCPServerCommandConfiguration],
+        sessionID: UUID,
+        failOnIncomplete: Bool
+    ) throws {
+        for command in commands {
+            let receiptURL = URL(fileURLWithPath: command.receiptPath, isDirectory: false)
+            guard FileManager.default.fileExists(atPath: receiptURL.path) else {
+                try store.appendEvent(AuditEvent(
+                    sessionID: sessionID,
+                    kind: "mcp.proxy.not_initialized",
+                    message: "Approved MCP server \(command.extensionID) was not initialized by the provider; no MCP call was reported."
+                ))
+                continue
+            }
+            let receipt: MCPProxyReceipt
+            do { receipt = try MCPProxyReceiptFile.read(from: receiptURL) }
+            catch {
+                try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "mcp.proxy.receipt.invalid", message: "Approved MCP server \(command.extensionID) returned an invalid private receipt."))
+                if failOnIncomplete { throw ActiveExtensionRuntimeError.proxyFailed(command.extensionID) }
+                continue
+            }
+            guard receipt.ticketID == command.ticketID,
+                  receipt.extensionID == command.extensionID,
+                  receipt.configurationDigest == command.configurationDigest else {
+                try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "mcp.proxy.receipt.invalid", message: "Approved MCP server \(command.extensionID) returned a receipt for another runtime configuration."))
+                if failOnIncomplete { throw ActiveExtensionRuntimeError.proxyFailed(command.extensionID) }
+                continue
+            }
+            guard receipt.status == .initialized else {
+                try store.appendEvent(AuditEvent(
+                    sessionID: sessionID,
+                    kind: "mcp.proxy.failed",
+                    message: "Approved MCP server \(command.extensionID) did not initialize successfully (\(receipt.failureCode?.rawValue ?? "incomplete"))."
+                ))
+                if failOnIncomplete { throw ActiveExtensionRuntimeError.proxyFailed(command.extensionID) }
+                continue
+            }
+            let kind = receipt.toolCallCount == 0 ? "mcp.proxy.initialized_unused" : "mcp.proxy.used"
+            let summary = receipt.toolCallCount == 0
+                ? "Approved MCP server \(command.extensionID) initialized; the provider reported no tool calls."
+                : "Approved MCP server \(command.extensionID) initialized and completed \(receipt.toolCallCount) allowlisted tool call(s)."
+            try store.appendEvent(AuditEvent(sessionID: sessionID, kind: kind, message: summary))
+        }
+    }
+
+    @discardableResult
+    private func cancelRunningExtensionSessions(_ sessionIDs: [UUID]) -> [UUID] {
+        sessionIDs.filter { id in
+            guard let session = try? store.session(id: id), session.status == .running else { return false }
+            do {
+                try store.requestCancellation(for: id)
+                return true
+            } catch {
+                return false
+            }
+        }
+    }
+
+    private func cancelBoundExtensionSessionsIfChanged(
+        extensionID: String,
+        previousDigest: String?,
+        newDigest: String
+    ) throws {
+        guard let previousDigest, previousDigest != newDigest else { return }
+        let affected = try activeExtensionRuntimeStore.sessionIDsUsingExtension(extensionID: extensionID)
+        _ = cancelRunningExtensionSessions(affected)
     }
 
     private func makeFreshPrivateTemporaryDirectory(label: String) throws -> URL {

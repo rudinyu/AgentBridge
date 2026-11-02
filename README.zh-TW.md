@@ -4,7 +4,7 @@
 
 ![AgentBridge macOS app icon](Assets/AppIcon-1024.png)
 
-AgentBridge 0.7.0 是一個 macOS 14+ Swift 專案，提供共用核心、命令列工具 `agentbridge`，以及原生 SwiftUI App。它透過本機官方 Codex CLI 與 Claude Code CLI 工作；App 與 CLI 的唯讀聊天可依專案與固定提交版本共用記憶，也可由使用者明確選取記憶延續到另一個提交版本。首次使用時，設定精靈會引導語言、供應商、工作區資料夾、CLI 路徑、訂閱登入、共用記憶與本機用量設定；日後可從 App 標題列的「設定精靈」重新開啟。CLI 會使用相同的已保存工作區根目錄。App 預設使用英文，也支援繁體中文。
+AgentBridge 0.8.0 是一個 macOS 14+ Swift 專案，提供共用核心、命令列工具 `agentbridge`，以及原生 SwiftUI App。它透過本機官方 Codex CLI 與 Claude Code CLI 工作；App 與 CLI 的唯讀聊天可依專案與固定提交版本共用記憶，也可由使用者明確選取記憶延續到另一個提交版本。首次使用時，設定精靈會引導語言、供應商、工作區資料夾、CLI 路徑、訂閱登入、共用記憶與本機用量設定；日後可從 App 標題列的「設定精靈」重新開啟。CLI 會使用相同的已保存工作區根目錄。App 預設使用英文，也支援繁體中文。
 
 AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登入；Claude API 是可選的付費模式，必須逐次輸入 API key、單次預算並明確確認。每月 US$140 是 AgentBridge 本機帳本上限，不是 Anthropic 帳單的硬性限制。
 
@@ -14,6 +14,7 @@ AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登
 - [使用指南](docs/HOW_TO_USE.zh-TW.md)
 - [產品差距研究](docs/PRODUCT_GAP_STUDY.zh-TW.md)
 - [功能計畫](docs/FEATURE_PLAN.zh-TW.md)
+- [自主工作流程、擴充執行與 Mac Control](docs/AUTONOMY_AND_EXTENSIONS.zh-TW.md)
 
 ## 快速開始
 
@@ -35,7 +36,9 @@ open build/AgentBridge.app
 - 只有使用者明確啟動後才會驗證。預設使用 Repository 的 `.codex/ci.sh`；自訂 executable 與獨立 argv 必須先明確核准。驗證在隔離工作區執行，並顯示命令、退出代碼、耗時及遮蔽後輸出。
 - 活動時間軸與任務看板顯示排序後的遮蔽事件，以及各工作階段實際啟動的任務記錄。最多可同時執行三個不同工作階段；取消只針對指定工作階段。
 - Codex/Claude 可共用相同 Repository/commit 的 AgentBridge App/CLI 記憶。延續到不同提交版本時，必須明確選取 App 保存的回合與／或備註，並由允許記憶共享的綁定帳戶執行。原生 TUI transcript 不會匯入。
-- Skills/MCP descriptor 以停用的中繼資料匯入。每專案授權只記錄狹窄權限；匯入或授權都不會啟用 extension 或執行腳本。
+- 自主流程先產生任務圖供檢視，再依摘要綁定的核准執行；帳戶明確綁定、最多三個並行 agent、有限次審查修正並支援取消。成果仍留在隔離工作區，由使用者接受與套用。自主模式只使用訂閱。
+- 舊版 Skills/MCP 描述資料仍是惰性中繼資料。實際 Skill 指令快照與本機 stdio MCP 設定，另須依專案、供應商和帳戶核准執行；MCP 代理強制限制精確工具清單。不自動安裝套件或執行 Skill 腳本。
+- Mac Control 透過綁定目標 App 的代理，分別要求觀察與控制同意，並提供停止控制。截圖包含整個主螢幕，可能傳給所選供應商。macOS 權限須由使用者手動授予；桌面控制是 Repository 存取之外的額外能力。
 - 本機終端使用目前 macOS 使用者權限；Git 隔離工作區不是作業系統層級的 sandbox。
 
 ## 查看官方訂閱用量

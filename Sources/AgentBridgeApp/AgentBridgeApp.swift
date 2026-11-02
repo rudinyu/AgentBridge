@@ -69,6 +69,20 @@ final class AppModel: ObservableObject {
     @Published var customVerifierArgumentsText = ""
     @Published var isVerifying = false
     @Published var taskRecords: [ParallelTaskRecord] = []
+    @Published var autonomousRuns: [AutonomousRunRecord] = []
+    @Published var selectedAutonomousRunID: UUID?
+    @Published var isPreparingAutonomousRun = false
+    @Published var isRunningAutonomousRun = false
+    @Published var isTestingMCPRuntime = false
+    @Published var autonomousStatus = ""
+    @Published var autonomousError: String?
+    @Published var activeExtensionConfigurations: [ActiveExtensionConfigurationSummary] = []
+    @Published var activeExtensionError: String?
+    @Published var activeExtensionStatus = ""
+    @Published var detectedMacControlPresetStatus: MacControlPresetStatus?
+    @Published var macControlPermissionReadiness: MacControlPermissionReadiness?
+    @Published var macControlStatusError: String?
+    @Published var isCheckingMacControlPermissions = false
     @Published var projectMemoryHandoffs: [ProjectMemoryHandoff] = []
     @Published var memoryHandoffTargetSessionID: UUID?
     @Published var selectedMemoryTurnIDs = Set<UUID>()
@@ -118,6 +132,7 @@ final class AppModel: ObservableObject {
     private var service: BridgeService?
     private var store: AuditStore?
     private var activeRunFlags: [UUID: CancellationFlag] = [:]
+    private var autonomousCancellationFlags: [UUID: CancellationFlag] = [:]
     private var activeRunSessionID: UUID?
     private var activeTerminalProfileID: UUID?
     private var activeTerminalSessionID: UUID?
@@ -144,7 +159,17 @@ final class AppModel: ObservableObject {
 
     var canPresentSetupWizard: Bool {
         activeRunFlags.isEmpty && !isVerifying && !isSwitchingTarget && !isChangingWorkspaceRoot
-            && !terminalRunning && terminalLaunch == nil
+            && !terminalRunning && terminalLaunch == nil && !hasActiveAutonomousWorkflow
+    }
+
+    var hasActiveAutonomousWorkflow: Bool {
+        isPreparingAutonomousRun || isRunningAutonomousRun || autonomousRuns.contains(where: { $0.status == .running })
+    }
+
+    var canStartAutonomousWorkflow: Bool {
+        !hasActiveAutonomousWorkflow && activeRunFlags.isEmpty && !isVerifying
+            && !isTestingMCPRuntime && !terminalRunning && terminalLaunch == nil && !isSwitchingTarget
+            && !isChangingWorkspaceRoot
     }
 
     var setupWizardSelectedProfile: AccountProfile? {
@@ -189,6 +214,10 @@ final class AppModel: ObservableObject {
 
     func localized(_ source: String) -> String {
         AppLocalization.display(source, language: appLanguage)
+    }
+
+    func localizedFormat(_ source: String, _ arguments: CVarArg...) -> String {
+        String(format: localized(source), locale: appLanguage.locale, arguments: arguments)
     }
 
     var canSendUsageCommand: Bool {
@@ -629,7 +658,10 @@ final class AppModel: ObservableObject {
     }
 
     var canStartAnotherRun: Bool {
-        activeRunFlags.count < 3 && selectedSession.map { activeRunFlags[$0.id] == nil } == true
+        !hasActiveAutonomousWorkflow
+            && !isTestingMCPRuntime
+            && activeRunFlags.count < 3
+            && selectedSession.map { activeRunFlags[$0.id] == nil } == true
     }
 
     var verifiedCurrentDiff: Bool {
@@ -692,6 +724,19 @@ final class AppModel: ObservableObject {
             sessions = try service.sessions()
             taskRecords = try service.taskRecords()
             extensionDescriptors = try service.extensionDescriptors()
+            do {
+                autonomousRuns = try service.autonomousRuns().sorted { $0.plan.createdAt > $1.plan.createdAt }
+                if selectedAutonomousRunID == nil || !autonomousRuns.contains(where: { $0.id == selectedAutonomousRunID }) {
+                    selectedAutonomousRunID = autonomousRuns.first?.id
+                }
+            } catch {
+                autonomousError = error.localizedDescription
+            }
+            do {
+                activeExtensionConfigurations = try service.activeExtensionConfigurations()
+            } catch {
+                activeExtensionError = error.localizedDescription
+            }
             if selectedSessionID == nil, let first = sessions.first {
                 selectedSessionID = first.id
                 refreshSelectedEvents()
@@ -863,6 +908,10 @@ final class AppModel: ObservableObject {
     }
 
     func selectDefaultProvider(_ provider: AgentProvider) {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+            return
+        }
         guard settings.defaultProvider != provider else { return }
         guard let service else { return }
         let previous = settings
@@ -889,6 +938,10 @@ final class AppModel: ObservableObject {
     }
 
     func selectUsageMode(_ usageMode: UsageMode) {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+            return
+        }
         guard settings.defaultProvider == .claude,
               settings.usageMode != usageMode,
               let service else { return }
@@ -1199,7 +1252,7 @@ final class AppModel: ObservableObject {
 
     func chooseWorkspaceRoot() {
         guard !isChangingWorkspaceRoot, !isRunning, !isVerifying, !isSwitchingTarget,
-              !terminalRunning, terminalLaunch == nil else { return }
+              !terminalRunning, terminalLaunch == nil, !hasActiveAutonomousWorkflow else { return }
         let panel = NSOpenPanel()
         panel.title = localized("選擇工作區資料根目錄")
         panel.message = localized("AgentBridge 會在此資料夾保存隔離工作區與共用記憶；私人設定和用量資料仍保留在 Application Support。")
@@ -1245,6 +1298,10 @@ final class AppModel: ObservableObject {
     }
 
     func saveSettings() {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+            return
+        }
         guard let service else { return }
         do {
             updateBinaryPathsInSettings()
@@ -1257,6 +1314,10 @@ final class AppModel: ObservableObject {
     }
 
     func checkAuthentication() {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Provider checks are paused while an autonomous workflow is active.")
+            return
+        }
         guard let profile = selectedAccountProfile else { errorMessage = "找不到所選帳戶設定。"; return }
         checkAuthentication(for: profile)
     }
@@ -1370,7 +1431,12 @@ final class AppModel: ObservableObject {
                 : "原生互動工作階段請從終端機面板啟動。"
             return
         }
-        guard canStartAnotherRun else { errorMessage = "最多可同時執行三個不同工作階段；目前工作階段也不能重複執行。"; return }
+        guard canStartAnotherRun else {
+            errorMessage = hasActiveAutonomousWorkflow
+                ? localized("Manual provider runs are paused while an autonomous workflow is active.")
+                : "最多可同時執行三個不同工作階段；目前工作階段也不能重複執行。"
+            return
+        }
         var apiRequest: APIUsageRequest?
         if settings.usageMode == .api {
             guard isClaudeAPIRunContext else {
@@ -1420,6 +1486,10 @@ final class AppModel: ObservableObject {
     }
 
     func saveChangePlan() {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
+            return
+        }
         guard let service, let session = selectedSession,
               session.policy.accessMode == .isolatedChanges else {
             errorMessage = "請先建立隔離變更工作階段。"
@@ -1447,6 +1517,10 @@ final class AppModel: ObservableObject {
     }
 
     func approveChangePlan() {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
+            return
+        }
         guard let service, let session = selectedSession, let plan = session.changePlan else {
             errorMessage = "請先保存一份工作計畫。"
             return
@@ -1481,7 +1555,12 @@ final class AppModel: ObservableObject {
             errorMessage = "隔離變更只支援官方 CLI 訂閱登入。"
             return
         }
-        guard canStartAnotherRun else { errorMessage = "最多可同時執行三個不同工作階段；目前工作階段也不能重複執行。"; return }
+        guard canStartAnotherRun else {
+            errorMessage = hasActiveAutonomousWorkflow
+                ? localized("Manual provider runs are paused while an autonomous workflow is active.")
+                : "最多可同時執行三個不同工作階段；目前工作階段也不能重複執行。"
+            return
+        }
         let promptValue = prompt
         guard !promptValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             errorMessage = "請輸入要交給助理的變更要求。"
@@ -1525,6 +1604,10 @@ final class AppModel: ObservableObject {
     }
 
     func restoreChangeFile(_ path: String) {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
+            return
+        }
         guard let service, let session = selectedSession else { return }
         Task { @MainActor [weak self] in
             do {
@@ -1536,6 +1619,10 @@ final class AppModel: ObservableObject {
     }
 
     func restoreAllChangeFiles() {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
+            return
+        }
         guard let service, let session = selectedSession else { return }
         Task { @MainActor [weak self] in
             do {
@@ -1565,6 +1652,10 @@ final class AppModel: ObservableObject {
     func runVerification(custom: Bool = false) {
         guard let service, let session = selectedSession,
               session.policy.accessMode == .isolatedChanges else { return }
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Verification is locked while an autonomous workflow is active.")
+            return
+        }
         guard !isRunning || activeRunFlags[session.id] == nil else {
             errorMessage = "此工作階段目前已有執行中的工作。"
             return
@@ -1615,6 +1706,10 @@ final class AppModel: ObservableObject {
     }
 
     func acceptChanges() {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
+            return
+        }
         guard let service, let session = selectedSession else { return }
         Task { @MainActor [weak self] in
             do {
@@ -1626,6 +1721,10 @@ final class AppModel: ObservableObject {
     }
 
     func applyChangesToBranch() {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
+            return
+        }
         guard let service, let session = selectedSession else { return }
         let requestedBranchName = branchName
         Task { @MainActor [weak self] in
@@ -1677,6 +1776,241 @@ final class AppModel: ObservableObject {
 
     var selectedExtensionDescriptor: ExtensionDescriptor? {
         extensionDescriptors.first(where: { $0.id == selectedExtensionID })
+    }
+
+    var selectedAutonomousRun: AutonomousRunRecord? {
+        autonomousRuns.first(where: { $0.id == selectedAutonomousRunID })
+    }
+
+    func checkProfileAuthentication(provider: AgentProvider, profileID: UUID) async -> AuthAssessment? {
+        guard let service else { return nil }
+        do {
+            let assessment = try await service.checkAuthentication(provider: provider, profileID: profileID)
+            authStatus[profileID] = assessment
+            return assessment
+        } catch {
+            autonomousError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func prepareAutonomousRun(_ request: AutonomousRunRequest) {
+        guard let service else { return }
+        guard canStartAutonomousWorkflow else {
+            autonomousError = localized("Close or cancel other provider sessions and stop the terminal before planning or running an autonomous workflow.")
+            return
+        }
+        isPreparingAutonomousRun = true
+        autonomousError = nil
+        autonomousStatus = localized("Generating a plan with the selected official CLI subscription profile…")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isPreparingAutonomousRun = false }
+            do {
+                let record = try await service.prepareAutonomousRun(request)
+                self.selectedAutonomousRunID = record.id
+                self.autonomousStatus = self.localized("Plan generation completed. Review the saved plan and digest before approval.")
+                self.refresh()
+            } catch {
+                self.autonomousError = error.localizedDescription
+                self.autonomousStatus = self.localized("Plan generation ended.")
+                self.refresh()
+            }
+        }
+    }
+
+    func approveAutonomousRun(id: UUID, reviewedDigest: String) {
+        guard let service else { return }
+        do {
+            let record = try service.approveAutonomousRun(id: id, reviewedDigest: reviewedDigest)
+            selectedAutonomousRunID = record.id
+            autonomousStatus = localized("The exact reviewed plan was approved.")
+            autonomousError = nil
+            refresh()
+        } catch {
+            autonomousError = error.localizedDescription
+        }
+    }
+
+    func startAutonomousRun(id: UUID, reviewedDigest: String) {
+        guard let service else { return }
+        guard canStartAutonomousWorkflow else {
+            autonomousError = localized("Close or cancel other provider sessions and stop the terminal before planning or running an autonomous workflow.")
+            return
+        }
+        let cancellation = CancellationFlag()
+        autonomousCancellationFlags[id] = cancellation
+        isRunningAutonomousRun = true
+        autonomousStatus = localized("Running the approved bounded workflow…")
+        autonomousError = nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.autonomousCancellationFlags.removeValue(forKey: id)
+                self.isRunningAutonomousRun = !self.autonomousCancellationFlags.isEmpty
+                self.refresh()
+            }
+            do {
+                let record = try await service.runAutonomousRun(id: id, reviewedDigest: reviewedDigest, cancellation: cancellation)
+                self.selectedAutonomousRunID = record.id
+                self.autonomousStatus = self.localized("Autonomous workflow finished. Review the final diff in the existing change review.")
+            } catch {
+                self.autonomousError = error.localizedDescription
+                self.autonomousStatus = self.localized("Autonomous workflow ended.")
+            }
+        }
+    }
+
+    func cancelAutonomousRun(id: UUID) {
+        guard let service else { return }
+        autonomousCancellationFlags[id]?.cancel()
+        do {
+            let record = try service.cancelAutonomousRun(id: id)
+            selectedAutonomousRunID = record.id
+            autonomousStatus = localized("Cancellation was sent to every planned provider session.")
+            autonomousError = nil
+            refresh()
+        } catch {
+            autonomousError = error.localizedDescription
+        }
+    }
+
+    func refreshActiveExtensionConfigurations() {
+        guard let service else { return }
+        do {
+            activeExtensionConfigurations = try service.activeExtensionConfigurations()
+            activeExtensionError = nil
+        } catch {
+            activeExtensionError = error.localizedDescription
+        }
+    }
+
+    func importSkillRuntime(descriptor: ExtensionDescriptor, sourceReference: String, skillFileURL: URL) throws -> ActiveSkillSnapshot {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        let snapshot = try service.importSkillRuntime(descriptor: descriptor, sourceReference: sourceReference, skillFileURL: skillFileURL)
+        refreshActiveExtensionConfigurations()
+        activeExtensionStatus = localized("Skill instructions were imported as a bounded snapshot; no script was executed.")
+        return snapshot
+    }
+
+    func importMCPRuntimeManifest(at manifestURL: URL) throws -> ActiveMCPConfiguration {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        let configuration = try service.importMCPRuntimeManifest(at: manifestURL)
+        refreshActiveExtensionConfigurations()
+        activeExtensionStatus = localized("MCP configuration was imported. The process has not been started.")
+        return configuration
+    }
+
+    func testMCPRuntime(extensionID: String) async throws -> MCPServerInspection {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        guard canStartAutonomousWorkflow else {
+            throw AgentBridgeError.invalidInput("Wait for provider sessions and terminals to stop before testing an MCP process.")
+        }
+        isTestingMCPRuntime = true
+        defer { isTestingMCPRuntime = false }
+        return try await service.testMCPRuntime(extensionID: extensionID)
+    }
+
+    func refreshMacControlPresetStatus(targetBundleID: String?, accessMode: MacControlAccessMode) {
+        guard let service else { return }
+        detectedMacControlPresetStatus = service.macControlPresetStatus(
+            targetBundleID: targetBundleID,
+            accessMode: accessMode
+        )
+        macControlStatusError = nil
+    }
+
+    func importMacControlPreset(targetBundleID: String, accessMode: MacControlAccessMode) throws -> ActiveMCPConfiguration {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        guard canStartAutonomousWorkflow else {
+            throw AgentBridgeError.invalidInput("Wait for provider sessions and terminals to stop before changing an extension runtime.")
+        }
+        let configuration = try service.importMacControlPreset(targetBundleID: targetBundleID, accessMode: accessMode)
+        refreshActiveExtensionConfigurations()
+        refreshMacControlPresetStatus(targetBundleID: targetBundleID, accessMode: accessMode)
+        activeExtensionStatus = localized("The Mac Control preset was imported. Screen or input access is not enabled.")
+        return configuration
+    }
+
+    func testMacControlPermissions(targetBundleID: String) async throws -> MacControlPermissionReadiness {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        guard canStartAutonomousWorkflow else {
+            throw AgentBridgeError.invalidInput("Wait for provider sessions and terminals to stop before checking Mac Control permissions.")
+        }
+        isTestingMCPRuntime = true
+        isCheckingMacControlPermissions = true
+        defer {
+            isTestingMCPRuntime = false
+            isCheckingMacControlPermissions = false
+        }
+        let readiness = try await service.testMacControlPermissions(targetBundleID: targetBundleID)
+        macControlPermissionReadiness = readiness
+        macControlStatusError = nil
+        return readiness
+    }
+
+    func stopMacControl(extensionID: String, sessionID: UUID) throws -> [UUID] {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        let cancelledSessionIDs = try service.stopMacControl(extensionID: extensionID, sessionID: sessionID)
+        activeExtensionStatus = cancelledSessionIDs.isEmpty
+            ? localized("Mac Control Control access was revoked for this scope.")
+            : localizedFormat("Mac Control was stopped and cancellation was requested for %@ affected session(s).", String(cancelledSessionIDs.count))
+        refreshActiveExtensionConfigurations()
+        return cancelledSessionIDs
+    }
+
+    func previewExtensionActivation(extensionID: String, sessionID: UUID) throws -> ActiveExtensionActivationReview {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        return try service.previewExtensionActivation(extensionID: extensionID, sessionID: sessionID)
+    }
+
+    func enableExtensionRuntime(
+        extensionID: String,
+        sessionID: UUID,
+        reviewedDigest: String,
+        explicitExecutionConsent: Bool,
+        explicitScreenCaptureConsent: Bool = false,
+        explicitInputControlConsent: Bool = false
+    ) throws -> ActiveExtensionGrant {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        let grant = try service.enableExtensionRuntime(
+            extensionID: extensionID,
+            sessionID: sessionID,
+            reviewedDigest: reviewedDigest,
+            explicitExecutionConsent: explicitExecutionConsent,
+            explicitScreenCaptureConsent: explicitScreenCaptureConsent,
+            explicitInputControlConsent: explicitInputControlConsent
+        )
+        activeExtensionStatus = localized("The extension is enabled for this exact project, provider, and account profile. New sessions will receive this snapshot.")
+        refreshActiveExtensionConfigurations()
+        return grant
+    }
+
+    func disableExtensionRuntime(extensionID: String, sessionID: UUID) throws -> Bool {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        let disabled = try service.disableExtensionRuntime(extensionID: extensionID, sessionID: sessionID)
+        activeExtensionStatus = localized("The extension was disabled for this exact project, provider, and account profile.")
+        return disabled
+    }
+
+    func createExtensionTargetSession(sourcePath: String, provider: AgentProvider, profileID: UUID) async throws -> SessionRecord {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        return try await service.createSession(
+            sourcePath: sourcePath,
+            provider: provider,
+            accessMode: .readOnly,
+            accountProfileID: profileID
+        )
+    }
+
+    func extensionProjectID(sessionID: UUID) throws -> String {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        return try service.extensionProjectID(sessionID: sessionID)
+    }
+
+    func activeExtensionsForSession(sessionID: UUID, extensionIDs: [String]? = nil) throws -> ActiveExtensionInvocation {
+        guard let service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        return try service.activeExtensionsForSession(sessionID: sessionID, extensionIDs: extensionIDs)
     }
 
     var selectedExtensionGrant: ExtensionGrant? {
@@ -1760,6 +2094,10 @@ final class AppModel: ObservableObject {
     }
 
     func openEmbeddedInteractiveTerminal() {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("The terminal is locked while an autonomous workflow is active.")
+            return
+        }
         guard let session = selectedSession, session.policy.accessMode == .interactiveManualApproval else {
             errorMessage = "請先建立互動手動核准模式的工作階段。"
             return
@@ -1787,6 +2125,10 @@ final class AppModel: ObservableObject {
     }
 
     func openSubscriptionUsageTUI() {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("The terminal is locked while an autonomous workflow is active.")
+            return
+        }
         guard settings.usageMode == .subscription else {
             errorMessage = "官方 usage TUI 只支援訂閱登入。"
             return
@@ -1859,6 +2201,10 @@ final class AppModel: ObservableObject {
     }
 
     func openProfileLoginTerminal(for profile: AccountProfile) {
+        guard !hasActiveAutonomousWorkflow else {
+            reportOperationError(localized("The terminal is locked while an autonomous workflow is active."))
+            return
+        }
         guard !terminalRunning else {
             reportOperationError(localized("Close the current terminal before opening sign-in."))
             return
@@ -2038,6 +2384,10 @@ final class AppModel: ObservableObject {
     }
 
     func selectAccountProfile(_ profileID: UUID) {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+            return
+        }
         guard let service else { return }
         let provider = settings.defaultProvider
         guard selectedProfileIDs[provider] != profileID else { return }
@@ -2058,6 +2408,10 @@ final class AppModel: ObservableObject {
     }
 
     func createAccountProfile() {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+            return
+        }
         guard let service else { return }
         let provider = settings.defaultProvider
         let name = newProfileName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2082,6 +2436,10 @@ final class AppModel: ObservableObject {
     }
 
     func setSelectedAccountMemorySharing(_ allowed: Bool) {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+            return
+        }
         guard let service, let profile = selectedAccountProfile else { return }
         do {
             try service.setAccountSharedMemoryAllowed(id: profile.id, allowed: allowed)
@@ -2120,6 +2478,15 @@ final class AppModel: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var model = AppModel()
+    @State private var mainArea: MainArea = .conversation
+
+    private enum MainArea: String, CaseIterable, Identifiable {
+        case conversation
+        case autonomous
+        case extensions
+
+        var id: String { rawValue }
+    }
 
     var body: some View {
         Group {
@@ -2128,6 +2495,7 @@ struct ContentView: View {
             } else {
                 VStack(spacing: 0) {
                     header
+                    mainAreaPicker
                     Divider()
                     HStack(spacing: 0) {
                         ScrollView {
@@ -2138,15 +2506,12 @@ struct ContentView: View {
                                 workspacePanel
                                 sessionList
                                 taskBoardPanel
-                                extensionPolicyPanel
                             }
                             .padding(12)
                         }
                         .frame(width: 330)
                         Divider()
-                        conversationPanel
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .padding(14)
+                        mainAreaContent
                     }
                     Divider()
                     statusBar
@@ -2235,9 +2600,60 @@ struct ContentView: View {
                     .background(.quaternary, in: Capsule())
             }
             Button("檢查登入與方案") { model.checkAuthentication() }
+                .disabled(model.hasActiveAutonomousWorkflow)
             Button("更新") { model.refresh() }
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
+    }
+
+    private var mainAreaPicker: some View {
+        HStack(spacing: 8) {
+            mainAreaButton(.conversation, title: "Project Conversations", symbol: "text.bubble")
+            mainAreaButton(.autonomous, title: "Autonomous Workflow", symbol: "point.3.connected.trianglepath.dotted")
+            mainAreaButton(.extensions, title: "Skills & MCP", symbol: "puzzlepiece.extension")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private func mainAreaButton(_ area: MainArea, title: String, symbol: String) -> some View {
+        Button {
+            mainArea = area
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(.callout.weight(mainArea == area ? .semibold : .regular))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(mainArea == area ? Color.accentColor.opacity(0.14) : Color.clear, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(mainArea == area ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private var mainAreaContent: some View {
+        switch mainArea {
+        case .conversation:
+            conversationPanel
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(14)
+        case .autonomous:
+            AutonomousWorkflowView(model: model) { sessionID in
+                model.selectedSessionID = sessionID
+                model.selectedSessionDidChange()
+                mainArea = .conversation
+            }
+        case .extensions:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ActiveExtensionsView(model: model)
+                    extensionPolicyPanel
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
     }
 
     private var settingsPanel: some View {
@@ -2276,6 +2692,7 @@ struct ContentView: View {
             }
             .padding(.vertical, 2)
         }
+        .disabled(model.hasActiveAutonomousWorkflow)
     }
 
     private var usagePanel: some View {
@@ -2710,6 +3127,7 @@ struct ContentView: View {
             }
             .padding(.vertical, 2)
         }
+        .disabled(model.hasActiveAutonomousWorkflow)
     }
 
     private var workspacePanel: some View {
@@ -2751,6 +3169,7 @@ struct ContentView: View {
             }
             .padding(.vertical, 2)
         }
+        .disabled(model.hasActiveAutonomousWorkflow)
     }
 
     private var sessionList: some View {
@@ -3144,9 +3563,9 @@ struct ContentView: View {
     }
 
     private var taskBoardPanel: some View {
-        GroupBox("Parallel task board") {
+        GroupBox("Parallel session task records") {
             VStack(alignment: .leading, spacing: 6) {
-                Text("App runs are limited to three different sessions at once. Each session keeps its own cancellation request and run lease.")
+                Text("These records track individual session launches. Autonomous Workflow creates a separate approved plan, coordinates several role profiles, and has its own review and cancellation state.")
                     .font(.caption2).foregroundStyle(.secondary)
                 if model.taskRecords.isEmpty {
                     Text("No run records yet.").font(.caption).foregroundStyle(.secondary)

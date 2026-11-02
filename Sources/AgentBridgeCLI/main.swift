@@ -4,6 +4,8 @@ import AgentBridgeCore
 
 @main
 enum AgentBridgeCLI {
+    private static let version = "0.8.0"
+
     static func main() async {
         do {
             try await dispatch(Array(CommandLine.arguments.dropFirst()))
@@ -16,7 +18,11 @@ enum AgentBridgeCLI {
     private static func dispatch(_ arguments: [String]) async throws {
         guard let command = arguments.first else { printHelp(); return }
         if ["help", "--help", "-h"].contains(command) { printHelp(); return }
-        if command == "version" || command == "--version" { print("AgentBridge 0.7.0"); return }
+        if command == "version" || command == "--version" { print("AgentBridge \(version)"); return }
+        if command == "mcp-proxy" || command == "mac-control-proxy" {
+            try await internalMCPProxyCommand(Array(arguments.dropFirst()))
+            return
+        }
         if command == "workspace" {
             try await workspaceCommand(Array(arguments.dropFirst()))
             return
@@ -38,7 +44,7 @@ enum AgentBridgeCLI {
         case "memory":
             try memoryCommand(Array(arguments.dropFirst()), service: service)
         case "extensions":
-            try extensionsCommand(Array(arguments.dropFirst()), service: service)
+            try await extensionsCommand(Array(arguments.dropFirst()), service: service)
         case "sessions":
             try listSessions(service: service)
         case "session":
@@ -47,6 +53,8 @@ enum AgentBridgeCLI {
             try await changesCommand(Array(arguments.dropFirst()), service: service)
         case "tasks":
             try tasksCommand(Array(arguments.dropFirst()), service: service)
+        case "autonomous":
+            try await autonomousCommand(Array(arguments.dropFirst()), service: service)
         case "run":
             try await runCommand(Array(arguments.dropFirst()), service: service)
         case "interactive":
@@ -64,8 +72,20 @@ enum AgentBridgeCLI {
         }
     }
 
+    /// Internal provider-facing endpoint. It accepts only a private ticket path;
+    /// raw MCP commands, helper paths, tools, and target scopes never arrive in argv.
+    private static func internalMCPProxyCommand(_ arguments: [String]) async throws {
+        guard arguments.count == 2,
+              arguments[0] == "--ticket",
+              arguments[1].hasPrefix("/"),
+              !arguments[1].contains("\0") else {
+            throw AgentBridgeError.invalidInput("This internal proxy accepts only --ticket /absolute/path/to/private-ticket.json.")
+        }
+        try await MCPServerProxy.run(ticketURL: URL(fileURLWithPath: arguments[1]))
+    }
+
     private static func doctor(service: BridgeService) async throws {
-        print("AgentBridge 0.7.0")
+        print("AgentBridge \(version)")
         let settings = try service.settings()
         print("登入模式：\(settings.usageMode == .subscription ? "官方 CLI 訂閱登入" : "Claude API（每次執行需單次預算與確認）")")
         for provider in AgentProvider.allCases {
@@ -675,11 +695,347 @@ enum AgentBridgeCLI {
         }
     }
 
-    private static func extensionsCommand(_ arguments: [String], service: BridgeService) throws {
+    private static func autonomousCommand(_ arguments: [String], service: BridgeService) async throws {
         guard let action = arguments.first else {
-            throw AgentBridgeError.invalidInput("用法：agentbridge extensions list|import|grant|revoke ...")
+            throw AgentBridgeError.invalidInput("Usage: agentbridge autonomous plan|approve|run|status|cancel ...")
         }
         switch action {
+        case "plan":
+            var sourcePath: String?
+            var plannerBinding: (AgentProvider, UUID)?
+            var roleBindings: [AutonomousRole: (AgentProvider, UUID)] = [:]
+            var extensions: [AutonomousRole: [String]] = [:]
+            var maxConcurrentAgents = 3
+            var maxReviewRounds = 2
+            var maxDurationSeconds = 1_800
+            var maxProviderInvocations = 20
+            var shareDependencies = false
+            var shareDiffWithReviewer = false
+            var desktopControlScope: String?
+            var desktopControlSeparateFromGit = false
+            var saveRunSummaryToMemory = false
+            var memoryDestinationProfileID: UUID?
+            var verificationMode: AutonomousVerificationSelection.Mode = .projectCI
+            var verificationExecutable: String?
+            var verificationArguments: [String] = []
+            var emitJSON = false
+            var index = 1
+            while index < arguments.count {
+                let option = arguments[index]
+                index += 1
+                switch option {
+                case "--source":
+                    sourcePath = try nextOptionValue(option, arguments: arguments, index: &index)
+                case "--planner":
+                    plannerBinding = try parseProviderProfile(try nextOptionValue(option, arguments: arguments, index: &index))
+                case "--researcher", "--implementer", "--reviewer":
+                    let role = try autonomousRole(for: option)
+                    roleBindings[role] = try parseProviderProfile(try nextOptionValue(option, arguments: arguments, index: &index))
+                case "--researcher-extension", "--implementer-extension", "--reviewer-extension":
+                    let role: AutonomousRole
+                    switch option {
+                    case "--researcher-extension": role = .researcher
+                    case "--implementer-extension": role = .implementer
+                    default: role = .reviewer
+                    }
+                    extensions[role, default: []].append(try nextOptionValue(option, arguments: arguments, index: &index))
+                case "--max-concurrent":
+                    maxConcurrentAgents = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
+                case "--max-review-rounds":
+                    maxReviewRounds = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
+                case "--max-duration-seconds":
+                    maxDurationSeconds = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
+                case "--max-provider-invocations":
+                    maxProviderInvocations = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
+                case "--share-dependencies": shareDependencies = true
+                case "--share-diff-with-reviewer": shareDiffWithReviewer = true
+                case "--desktop-control-scope": desktopControlScope = try nextOptionValue(option, arguments: arguments, index: &index)
+                case "--confirm-desktop-separate-from-git": desktopControlSeparateFromGit = true
+                case "--save-summary-to-memory": saveRunSummaryToMemory = true
+                case "--memory-destination":
+                    let rawValue = try nextOptionValue(option, arguments: arguments, index: &index)
+                    guard let profileID = UUID(uuidString: rawValue) else { throw AgentBridgeError.invalidInput("--memory-destination requires a profile UUID.") }
+                    memoryDestinationProfileID = profileID
+                case "--verification":
+                    guard let mode = AutonomousVerificationSelection.Mode(rawValue: try nextOptionValue(option, arguments: arguments, index: &index)) else {
+                        throw AgentBridgeError.invalidInput("--verification must be none, projectCI, or custom.")
+                    }
+                    verificationMode = mode
+                case "--verify-command": verificationExecutable = try nextOptionValue(option, arguments: arguments, index: &index)
+                case "--verify-arg": verificationArguments.append(try nextOptionValue(option, arguments: arguments, index: &index))
+                case "--json": emitJSON = true
+                default: throw AgentBridgeError.invalidInput("Unknown autonomous plan option \(option).")
+                }
+            }
+            guard let sourcePath, let plannerBinding,
+                  let researcherBinding = roleBindings[.researcher],
+                  let implementerBinding = roleBindings[.implementer],
+                  let reviewerBinding = roleBindings[.reviewer] else {
+                throw AgentBridgeError.invalidInput("Plan needs --source, --planner PROVIDER:PROFILE-ID, and provider/profile bindings for --researcher, --implementer, and --reviewer.")
+            }
+            guard shareDiffWithReviewer else {
+                throw AgentBridgeError.invalidInput("Add --share-diff-with-reviewer to explicitly allow the exact implementation diff to be reviewed by the selected reviewer profile.")
+            }
+            guard (desktopControlScope != nil) == desktopControlSeparateFromGit else {
+                throw AgentBridgeError.invalidInput("Desktop control requires both --desktop-control-scope and --confirm-desktop-separate-from-git.")
+            }
+            guard saveRunSummaryToMemory == (memoryDestinationProfileID != nil) else {
+                throw AgentBridgeError.invalidInput("Saving a run summary requires both --save-summary-to-memory and --memory-destination PROFILE-ID.")
+            }
+            let goal = try readBoundedStandardInput(maximumBytes: 8_000, label: "Autonomous goal")
+            let planner = try AutonomousRoleBinding(role: .planner, provider: plannerBinding.0, accountProfileID: plannerBinding.1)
+            let bindings = try [
+                AutonomousRoleBinding(role: .researcher, provider: researcherBinding.0, accountProfileID: researcherBinding.1, extensionIDs: extensions[.researcher] ?? []),
+                AutonomousRoleBinding(role: .implementer, provider: implementerBinding.0, accountProfileID: implementerBinding.1, extensionIDs: extensions[.implementer] ?? []),
+                AutonomousRoleBinding(role: .reviewer, provider: reviewerBinding.0, accountProfileID: reviewerBinding.1, extensionIDs: extensions[.reviewer] ?? [])
+            ]
+            let limits = try AutonomousRunLimits(
+                maxConcurrentAgents: maxConcurrentAgents,
+                maxReviewRounds: maxReviewRounds,
+                maxDurationSeconds: maxDurationSeconds,
+                maxProviderInvocations: maxProviderInvocations
+            )
+            let verification: AutonomousVerificationSelection
+            switch verificationMode {
+            case .none:
+                guard verificationExecutable == nil, verificationArguments.isEmpty else {
+                    throw AgentBridgeError.invalidInput("--verify-command and --verify-arg require --verification custom.")
+                }
+                verification = .none
+            case .projectCI:
+                guard verificationExecutable == nil, verificationArguments.isEmpty else {
+                    throw AgentBridgeError.invalidInput("--verify-command and --verify-arg require --verification custom.")
+                }
+                verification = .projectCI
+            case .custom:
+                guard let verificationExecutable else {
+                    throw AgentBridgeError.invalidInput("--verification custom requires --verify-command EXECUTABLE; use repeated --verify-arg for separate argv values.")
+                }
+                verification = try .custom(executablePath: verificationExecutable, arguments: verificationArguments)
+            }
+            let request = try AutonomousRunRequest(
+                goal: goal,
+                sourceRepositoryPath: sourcePath,
+                planner: planner,
+                roleBindings: bindings,
+                limits: limits,
+                shareOutputsWithDependencies: shareDependencies,
+                shareDiffWithReviewer: true,
+                desktopControlScope: desktopControlScope,
+                desktopControlSeparateFromGit: desktopControlSeparateFromGit,
+                saveRunSummaryToMemory: saveRunSummaryToMemory,
+                memoryDestinationProfileID: memoryDestinationProfileID,
+                verification: verification
+            )
+            let record = try await service.prepareAutonomousRun(request)
+            if emitJSON {
+                try printJSON(record)
+            } else {
+                printAutonomousPlan(record)
+                print("Planning started a real provider request using the selected official CLI subscription profile. The plan is not approved yet.")
+            }
+        case "approve":
+            guard arguments.count == 5,
+                  let runID = UUID(uuidString: arguments[1]),
+                  arguments[2] == "--digest",
+                  arguments[4] == "--confirm" else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge autonomous approve RUN-ID --digest REVIEW-DIGEST --confirm")
+            }
+            guard let record = try service.autonomousRun(id: runID) else {
+                throw AgentBridgeError.invalidInput("Autonomous run not found.")
+            }
+            guard record.planDigest == arguments[3].lowercased() else {
+                throw AgentBridgeError.invalidInput("The reviewed digest does not match the saved autonomous plan.")
+            }
+            _ = try service.approveAutonomousRun(id: runID, reviewedDigest: record.planDigest)
+            print("Approved the reviewed plan and its bounded repair and verification loop for digest \(record.planDigest).")
+        case "run":
+            guard arguments.count == 4,
+                  let runID = UUID(uuidString: arguments[1]),
+                  arguments[2] == "--digest" else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge autonomous run RUN-ID --digest REVIEW-DIGEST")
+            }
+            let cancellation = CancellationFlag()
+            let signalSources = makeCancellationSignalSources(cancellation)
+            defer { signalSources.forEach { $0.cancel() } }
+            let record = try await service.runAutonomousRun(
+                id: runID,
+                reviewedDigest: arguments[3].lowercased(),
+                cancellation: cancellation
+            )
+            try printJSON(record)
+        case "status":
+            let remainder = Array(arguments.dropFirst())
+            let identifiers = remainder.filter { !$0.hasPrefix("--") }
+            let options = Set(remainder.filter { $0.hasPrefix("--") })
+            guard options.isSubset(of: ["--json"]), identifiers.count <= 1 else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge autonomous status [RUN-ID] [--json]")
+            }
+            let records: [AutonomousRunRecord]
+            if let identifier = identifiers.first {
+                guard let id = UUID(uuidString: identifier) else { throw AgentBridgeError.invalidInput("RUN-ID must be a UUID.") }
+                guard let record = try service.autonomousRun(id: id) else {
+                    throw AgentBridgeError.invalidInput("Autonomous run not found.")
+                }
+                records = [record]
+            } else {
+                records = try service.autonomousRuns()
+            }
+            if options.contains("--json") {
+                try printJSON(records)
+            } else if records.isEmpty {
+                print("No autonomous runs yet.")
+            } else {
+                for record in records { printAutonomousStatus(record) }
+            }
+        case "cancel":
+            guard arguments.count == 3,
+                  let runID = UUID(uuidString: arguments[1]),
+                  arguments[2] == "--confirm" else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge autonomous cancel RUN-ID --confirm")
+            }
+            try service.cancelAutonomousRun(id: runID)
+            print("Cancellation requested for autonomous run \(runID.uuidString.lowercased()); active role sessions are being cancelled.")
+        default:
+            throw AgentBridgeError.invalidInput("Unknown autonomous action. Use plan, approve, run, status, or cancel.")
+        }
+    }
+
+    private static func autonomousRole(for option: String) throws -> AutonomousRole {
+        switch option {
+        case "--researcher": return .researcher
+        case "--implementer": return .implementer
+        case "--reviewer": return .reviewer
+        default: throw AgentBridgeError.invalidInput("Unknown autonomous role \(option).")
+        }
+    }
+
+    private static func parseProviderProfile(_ value: String) throws -> (AgentProvider, UUID) {
+        let parts = value.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let provider = AgentProvider(rawValue: String(parts[0])),
+              let profileID = UUID(uuidString: String(parts[1])) else {
+            throw AgentBridgeError.invalidInput("Provider profile must use PROVIDER:PROFILE-UUID, such as codex:00000000-0000-0000-0000-000000000001.")
+        }
+        return (provider, profileID)
+    }
+
+    private static func nextOptionValue(_ option: String, arguments: [String], index: inout Int) throws -> String {
+        guard index < arguments.count, !arguments[index].hasPrefix("--") else {
+            throw AgentBridgeError.invalidInput("\(option) requires a value.")
+        }
+        let value = arguments[index]
+        index += 1
+        return value
+    }
+
+    private static func parseInteger(_ value: String, option: String) throws -> Int {
+        guard let parsed = Int(value) else { throw AgentBridgeError.invalidInput("\(option) requires an integer.") }
+        return parsed
+    }
+
+    private static func printAutonomousPlan(_ record: AutonomousRunRecord) {
+        let plan = record.plan
+        print("Run: \(record.id.uuidString.lowercased())")
+        print("Status: \(record.status.rawValue)")
+        print("Goal: \(OutputRedactor.redact(plan.goal))")
+        print("Source: \(plan.sourceRepositoryPath) @ \(plan.baseCommit)")
+        print("Source repository fingerprint: \(plan.sourceRepositoryFingerprint.overallDigest)")
+        print("  HEAD \(plan.sourceRepositoryFingerprint.headCommit) · status \(plan.sourceRepositoryFingerprint.statusDigest)")
+        print("  tracked diff \(plan.sourceRepositoryFingerprint.trackedDiffDigest) · untracked paths \(plan.sourceRepositoryFingerprint.untrackedPathsDigest) · untracked contents \(plan.sourceRepositoryFingerprint.untrackedContentDigest)")
+        print("  Checked before execution and after desktop control/final work; agents use an isolated snapshot.")
+        if let desktopScope = plan.desktopControlScope {
+            print("Desktop control scope: \(OutputRedactor.redact(desktopScope)) · separate from Git/source access: \(plan.desktopControlSeparateFromGit)")
+        } else {
+            print("Desktop control scope: none")
+        }
+        if let memory = plan.projectMemorySnapshot {
+            print("Frozen project memory: \(memory.repositoryPath) @ \(memory.snapshotCommit) · revision \(memory.revision) · SHA-256 \(memory.digest) · truncated \(memory.wasTruncated)")
+            print("  Role profiles receiving context: \(plan.roleProfiles.filter { $0.profile.allowsSharedMemory }.map { "\($0.binding.role.rawValue):\($0.binding.provider.rawValue)/\($0.profile.name)" }.joined(separator: ", "))")
+            print("  Exact notes: \(OutputRedactor.redact(memory.notes))")
+            for turn in memory.turns {
+                print("  \(turn.provider.rawValue) memory turn \(turn.id.uuidString.lowercased()) · \(turn.timestamp.formatted()):")
+                print("    User: \(OutputRedactor.redact(turn.userText))")
+                print("    Assistant: \(OutputRedactor.redact(turn.assistantText))")
+            }
+        } else {
+            print("Frozen project memory: none (no bound profile allows shared memory)")
+        }
+        print("Save final summary to project memory: \(plan.saveRunSummaryToMemory) · destination \(plan.memoryDestinationProfileID?.uuidString.lowercased() ?? "none")")
+        print("Planner: \(plan.plannerBinding.provider.rawValue) / \(plan.plannerBinding.accountProfileID.uuidString.lowercased())")
+        print("Concurrency: \(plan.limits.maxConcurrentAgents); review rounds: \(plan.limits.maxReviewRounds); duration: \(plan.limits.maxDurationSeconds)s; provider calls: \(plan.limits.maxProviderInvocations)")
+        print("Dependency outputs shared: \(plan.shareOutputsWithDependencies); exact diff shared with reviewer: \(plan.shareDiffWithReviewer)")
+        print("Verification: \(plan.verification.mode.rawValue)\(plan.verification.executablePath.map { " · \($0)" } ?? "")")
+        if let disclosure = plan.verification.executionTrustDisclosure {
+            print("Verification trust: \(disclosure)")
+        }
+        for binding in plan.roleProfiles {
+            print("Role \(binding.binding.role.rawValue): \(binding.binding.provider.rawValue) / \(binding.profile.name) / \(binding.profile.id.uuidString.lowercased()) · shared memory \(binding.profile.allowsSharedMemory ? "allowed" : "off") · extensions \(binding.binding.extensionIDs.joined(separator: ", "))")
+        }
+        print("\nChange scope: \(plan.changeScope.title)\n\(OutputRedactor.redact(plan.changeScope.summary))")
+        for (offset, step) in plan.changeScope.steps.enumerated() { print("  \(offset + 1). \(OutputRedactor.redact(step))") }
+        print("\nTask plan:")
+        for task in plan.tasks {
+            print("  \(task.id) [\(task.role.rawValue)] \(OutputRedactor.redact(task.title)) · dependencies: \(task.dependencies.joined(separator: ", "))")
+            print("    \(OutputRedactor.redact(task.prompt))")
+        }
+        if !plan.extensionActivations.isEmpty {
+            print("\nExtension activation manifest:")
+            for activation in plan.extensionActivations {
+                print("  \(activation.role.rawValue) / \(activation.taskID) / \(activation.extensionID) · \(activation.kind) · config \(activation.configurationDigest)")
+                if let reviewedDigest = activation.reviewedDigest { print("    review digest: \(reviewedDigest)") }
+                if let commandPath = activation.commandPath { print("    command: \(commandPath) \(activation.arguments.map(\.debugDescription).joined(separator: " "))") }
+                for pin in activation.entrypointPins {
+                    print("    pinned entrypoint: \(pin.path) · SHA-256 \(pin.digest)")
+                }
+                if let executableDigest = activation.executableDigest { print("    executable SHA-256: \(executableDigest)") }
+                if let targetBundleID = activation.targetBundleID { print("    target bundle ID: \(targetBundleID) · access: \(activation.accessMode ?? "unknown")") }
+                if let proxyPath = activation.proxyExecutablePath { print("    AgentBridge proxy: \(proxyPath) · SHA-256 \(activation.proxyExecutableDigest ?? "unknown")") }
+                if !activation.permissions.isEmpty { print("    permissions: \(activation.permissions.joined(separator: ", "))") }
+                if !activation.allowedActions.isEmpty { print("    allowed actions/tools: \(activation.allowedActions.joined(separator: ", "))") }
+                if !activation.targetScope.isEmpty { print("    target scope: \(activation.targetScope.joined(separator: ", "))") }
+                if let disclosure = activation.dataDisclosure { print("    data disclosure: \(OutputRedactor.redact(disclosure))") }
+                if let callLimit = activation.maximumToolCallsPerRun,
+                   let perResultLimit = activation.maximumToolResponseBytes,
+                   let totalLimit = activation.maximumTotalToolResponseBytes {
+                    print("    tool response limits: \(callLimit) calls · \(perResultLimit) bytes/result · \(totalLimit) bytes/run")
+                }
+            }
+        }
+        print("\nReview digest: \(record.planDigest)")
+        print("Inspect all scope and verification details, then approve with: autonomous approve \(record.id.uuidString.lowercased()) --digest \(record.planDigest) --confirm")
+    }
+
+    private static func printAutonomousStatus(_ record: AutonomousRunRecord) {
+        print("\(record.id.uuidString.lowercased())  \(record.status.rawValue)  digest=\(record.planDigest)")
+        print("  Goal: \(OutputRedactor.redact(record.plan.goal))")
+        print("  Review round: \(record.currentReviewRound)/\(record.plan.limits.maxReviewRounds) · provider invocations: \(record.providerInvocationsStarted)/\(record.plan.limits.maxProviderInvocations)")
+        for progress in record.taskProgress {
+            print("  [\(progress.status.rawValue)] \(progress.id): \(OutputRedactor.redact(progress.summary))")
+        }
+        if let diffDigest = record.diffDigest { print("  Final diff: \(diffDigest) · review: \(record.reviewVerdict?.rawValue ?? "pending") · verification: \(record.verificationPassed.map(String.init) ?? "not run")") }
+        if let writerSessionID = record.writerSessionID { print("  Writer session: \(writerSessionID.uuidString.lowercased())") }
+        if let resultSummary = record.resultSummary { print("  Result: \(OutputRedactor.redact(resultSummary))") }
+        if record.plan.saveRunSummaryToMemory {
+            print("  Project memory summary saved: \(record.memorySummarySaved.map(String.init) ?? "pending")")
+        }
+    }
+
+    private static func printJSON<T: Encodable>(_ value: T) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .iso8601
+        FileHandle.standardOutput.write(try encoder.encode(value))
+        FileHandle.standardOutput.write(Data([0x0A]))
+    }
+
+    private static func extensionsCommand(_ arguments: [String], service: BridgeService) async throws {
+        guard let action = arguments.first else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge extensions list|import|grant|revoke ... or extensions runtime ...")
+        }
+        switch action {
+        case "runtime":
+            try await activeExtensionsCommand(Array(arguments.dropFirst()), service: service)
         case "list":
             guard arguments.count == 1 else { throw AgentBridgeError.invalidInput("用法：agentbridge extensions list") }
             for descriptor in try service.extensionDescriptors() {
@@ -742,6 +1098,251 @@ enum AgentBridgeCLI {
             print("Revoked the extension permission metadata for this project.")
         default:
             throw AgentBridgeError.invalidInput("不認識的 extensions 子命令。")
+        }
+    }
+
+    private static func activeExtensionsCommand(_ arguments: [String], service: BridgeService) async throws {
+        guard let action = arguments.first else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge extensions runtime list|import-skill|import-mcp|test|inspect|enable|disable ...")
+        }
+        switch action {
+        case "list":
+            guard arguments.count == 1 || (arguments.count == 2 && arguments[1] == "--json") else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge extensions runtime list [--json]")
+            }
+            let configurations = try service.activeExtensionConfigurations()
+            if arguments.last == "--json" {
+                let values: [[String: Any]] = configurations.map { configuration in
+                    [
+                        "id": configuration.id,
+                        "kind": configuration.kind.rawValue,
+                        "name": configuration.name,
+                        "version": configuration.version,
+                        "summary": configuration.summary,
+                        "sourceReference": configuration.sourceReference,
+                        "configurationDigest": configuration.configurationDigest,
+                        "skillDigest": configuration.skillDigest.map { $0 as Any } ?? NSNull(),
+                        "executablePath": configuration.executablePath.map { $0 as Any } ?? NSNull(),
+                        "arguments": configuration.arguments,
+                        "entrypointPins": configuration.entrypointPins.map { ["path": $0.path, "digest": $0.digest] },
+                        "allowedTools": configuration.allowedTools,
+                        "startupTimeoutSeconds": configuration.startupTimeoutSeconds.map { $0 as Any } ?? NSNull(),
+                        "toolTimeoutSeconds": configuration.toolTimeoutSeconds.map { $0 as Any } ?? NSNull(),
+                        "maximumToolCallsPerRun": configuration.maximumToolCallsPerRun.map { $0 as Any } ?? NSNull(),
+                        "maximumToolResponseBytes": configuration.maximumToolResponseBytes.map { $0 as Any } ?? NSNull(),
+                        "maximumTotalToolResponseBytes": configuration.maximumTotalToolResponseBytes.map { $0 as Any } ?? NSNull(),
+                        "macControlTargetBundleID": configuration.macControlTargetBundleID.map { $0 as Any } ?? NSNull(),
+                        "macControlAccessMode": configuration.macControlAccessMode.map { $0.rawValue as Any } ?? NSNull(),
+                        "macControlActionNames": configuration.macControlActionNames,
+                        "screenCaptureDisclosure": configuration.screenCaptureDisclosure.map { $0 as Any } ?? NSNull()
+                    ]
+                }
+                let data = try JSONSerialization.data(withJSONObject: values, options: [.prettyPrinted, .sortedKeys])
+                FileHandle.standardOutput.write(data)
+                FileHandle.standardOutput.write(Data([0x0A]))
+            } else if configurations.isEmpty {
+                print("No active runtime configurations have been imported.")
+            } else {
+                for configuration in configurations {
+                    print("\(configuration.kind.rawValue.uppercased()) \(configuration.id) v\(configuration.version) — \(configuration.name)")
+                    print("  digest: \(configuration.configurationDigest)")
+                    print("  source: \(configuration.sourceReference)")
+                    if let skillDigest = configuration.skillDigest { print("  Skill SHA-256: \(skillDigest)") }
+                    if let executablePath = configuration.executablePath {
+                        print("  command: \(executablePath) \(configuration.arguments.map(\.debugDescription).joined(separator: " "))")
+                        for pin in configuration.entrypointPins {
+                            print("  pinned entrypoint: \(pin.path) · SHA-256 \(pin.digest)")
+                        }
+                        print("  allowed tools: \(configuration.allowedTools.joined(separator: ", "))")
+                    }
+                    if let targetBundleID = configuration.macControlTargetBundleID {
+                        print("  Mac Control target: \(targetBundleID) · access: \(configuration.macControlAccessMode?.rawValue ?? "unknown")")
+                        print("  actions: \(configuration.macControlActionNames.joined(separator: ", "))")
+                        if let disclosure = configuration.screenCaptureDisclosure { print("  screen disclosure: \(OutputRedactor.redact(disclosure))") }
+                        print("  tool budgets: \(configuration.maximumToolCallsPerRun ?? 0) calls · \(configuration.maximumToolResponseBytes ?? 0) bytes/response · \(configuration.maximumTotalToolResponseBytes ?? 0) bytes total")
+                    }
+                }
+            }
+        case "import-skill":
+            guard arguments.count >= 2 else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge extensions runtime import-skill /path/to/SKILL.md --id ID --name NAME [--version VERSION] [--summary SUMMARY]")
+            }
+            let url = URL(fileURLWithPath: arguments[1]).standardizedFileURL
+            var identifier: String?
+            var name: String?
+            var version = "1"
+            var summary = ""
+            var index = 2
+            while index < arguments.count {
+                let option = arguments[index]
+                index += 1
+                let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                switch option {
+                case "--id": identifier = value
+                case "--name": name = value
+                case "--version": version = value
+                case "--summary": summary = value
+                default: throw AgentBridgeError.invalidInput("Unknown Skill import option \(option).")
+                }
+            }
+            guard let identifier, let name else {
+                throw AgentBridgeError.invalidInput("Skill import requires both --id and --name.")
+            }
+            let descriptor = try ExtensionDescriptor(id: identifier, kind: .skill, name: name, version: version, summary: summary)
+            let snapshot = try service.importSkillRuntime(descriptor: descriptor, sourceReference: url.path, skillFileURL: url)
+            print("Imported instructions-only Skill \(snapshot.extensionID) v\(snapshot.version).")
+            print("Content SHA-256: \(snapshot.contentDigest)\nConfiguration digest: \(snapshot.configurationDigest)")
+            print("Import did not run scripts, hooks, installers, or dependencies. Preview exact instructions and approve a project/provider/profile scope before enabling.")
+        case "import-mcp":
+            guard arguments.count == 2 else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge extensions runtime import-mcp /path/to/mcp-runtime.json")
+            }
+            let url = URL(fileURLWithPath: arguments[1]).standardizedFileURL
+            let configuration = try service.importMCPRuntimeManifest(at: url)
+            print("Imported MCP \(configuration.extensionID) v\(configuration.version).")
+            print("Command: \(configuration.executablePath) \(configuration.arguments.map(\.debugDescription).joined(separator: " "))")
+            print("Allowed tools: \(configuration.allowedTools.joined(separator: ", "))")
+            print("Configuration digest: \(configuration.configurationDigest)")
+            print("The MCP server has not been started. Test Connection is an explicit action and the process runs with your macOS user permissions.")
+        case "test":
+            guard arguments.count == 3, arguments[2] == "--confirm-start" else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge extensions runtime test EXTENSION-ID --confirm-start (starts the selected MCP process as your macOS user; allowlist is not an OS sandbox)")
+            }
+            let cancellation = CancellationFlag()
+            let signalSources = makeCancellationSignalSources(cancellation)
+            defer { signalSources.forEach { $0.cancel() } }
+            let inspection = try await service.testMCPRuntime(extensionID: arguments[1], cancellation: cancellation)
+            print("MCP initialization and tools/list succeeded for \(inspection.extensionID). No tool was called.")
+            print("Configuration digest: \(inspection.configurationDigest)")
+            print("Inspection digest: \(inspection.inspectionDigest)")
+            print("Tools: \(inspection.toolNames.joined(separator: ", "))")
+            print("\n--- Exact MCP tool definitions and input schemas ---\n\(inspection.toolDefinitionsJSON)\n--- End MCP tool definitions ---")
+            for diagnostic in inspection.diagnostics { print("  \(OutputRedactor.redact(diagnostic))") }
+            print("The exact allowlist must be reviewed and enabled separately for a project/provider/profile.")
+        case "mac-control-status":
+            let selection = try parseMacControlTargetOptions(Array(arguments.dropFirst()), requiredConfirmation: nil)
+            let status = service.macControlPresetStatus(targetBundleID: selection.targetBundleID, accessMode: selection.accessMode)
+            print("Mac Control preset status · target \(selection.targetBundleID) · mode \(selection.accessMode.rawValue)")
+            print("\(OutputRedactor.redact(status.message))")
+            if let path = status.helperPath { print("Fixed helper: \(path)") }
+            if let digest = status.helperDigest { print("Helper SHA-256: \(digest)") }
+            if let path = status.proxyExecutablePath { print("AgentBridge proxy: \(path)") }
+            if let digest = status.proxyExecutableDigest { print("Proxy SHA-256: \(digest)") }
+            print("Status detection hashes installed binaries only; it does not start the helper or access the screen.")
+        case "mac-control-import":
+            let selection = try parseMacControlTargetOptions(Array(arguments.dropFirst()), requiredConfirmation: "--confirm-import")
+            let configuration = try service.importMacControlPreset(targetBundleID: selection.targetBundleID, accessMode: selection.accessMode)
+            print("Imported typed Mac Control \(selection.accessMode.rawValue) preset \(configuration.extensionID).")
+            print("Configuration digest: \(configuration.configurationDigest)")
+            print("Target: \(configuration.macControlTargetBundleID ?? "unknown") · actions: \(configuration.macControlActionNames.joined(separator: ", "))")
+            if let disclosure = configuration.screenCaptureDisclosure { print("Screen disclosure: \(OutputRedactor.redact(disclosure))") }
+            print("Import does not start the helper, capture the screen, or enable input.")
+        case "mac-control-test":
+            let selection = try parseMacControlTargetOptions(Array(arguments.dropFirst()), requiredConfirmation: "--confirm-start")
+            let cancellation = CancellationFlag()
+            let signalSources = makeCancellationSignalSources(cancellation)
+            defer { signalSources.forEach { $0.cancel() } }
+            let readiness = try await service.testMacControlPermissions(targetBundleID: selection.targetBundleID, cancellation: cancellation)
+            print("Mac Control permission readiness · target \(readiness.targetBundleID) · checked \(readiness.checkedAt.formatted())")
+            print("Helper available: \(readiness.helperAvailable) · status tool available: \(readiness.statusToolAvailable)")
+            print(OutputRedactor.redact(readiness.statusText))
+            print("This status-only test never captures the screen, sends input, or requests macOS permission. Grant missing permissions manually in System Settings.")
+        case "mac-control-stop":
+            guard arguments.count == 4,
+                  let sessionID = UUID(uuidString: arguments[1]),
+                  arguments[3] == "--confirm" else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge extensions runtime mac-control-stop SESSION-ID EXTENSION-ID --confirm")
+            }
+            let cancelled = try service.stopMacControl(extensionID: arguments[2], sessionID: sessionID)
+            print("Mac Control Control access was revoked for the exact project/provider/profile scope.")
+            print("Cancellation requests sent to \(cancelled.count) affected provider session(s).")
+        case "inspect":
+            guard arguments.count == 3,
+                  let sessionID = UUID(uuidString: arguments[1]) else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge extensions runtime inspect SESSION-ID EXTENSION-ID")
+            }
+            let review = try service.previewExtensionActivation(extensionID: arguments[2], sessionID: sessionID)
+            print("Extension: \(review.extensionID)")
+            print("Scope: project \(review.projectID) · \(review.provider.rawValue) profile \(review.profileID.uuidString.lowercased())")
+            print("Configuration digest: \(review.configurationDigest)")
+            print("Review digest: \(review.reviewedDigest)")
+            if let skillDigest = review.skillDigest {
+                print("Skill SHA-256: \(skillDigest)")
+                print("\n--- Exact Skill instructions ---\n\(review.instructionText ?? "")\n--- End Skill instructions ---")
+            }
+            if let executablePath = review.executablePath {
+                print("Command: \(executablePath) \(review.arguments.map(\.debugDescription).joined(separator: " "))")
+                for pin in review.entrypointPins {
+                    print("Pinned entrypoint: \(pin.path) · SHA-256 \(pin.digest)")
+                }
+                print("Allowed tools: \(review.allowedTools.joined(separator: ", "))")
+                print("Tools discovered by Test Connection: \(review.inspectedTools.joined(separator: ", "))")
+                if let definitions = review.toolDefinitionsJSON {
+                    print("\n--- Exact MCP tool definitions and input schemas ---\n\(definitions)\n--- End MCP tool definitions ---")
+                }
+            }
+            if let targetBundleID = review.macControlTargetBundleID {
+                print("Mac Control target: \(targetBundleID) · access mode: \(review.macControlAccessMode?.rawValue ?? "unknown")")
+                print("Mac Control actions: \(review.macControlActionNames.joined(separator: ", "))")
+            }
+            if let calls = review.maximumToolCallsPerRun,
+               let response = review.maximumToolResponseBytes,
+               let total = review.maximumTotalToolResponseBytes {
+                print("Tool budgets: \(calls) calls · \(response) bytes/response · \(total) bytes total")
+            }
+            if let disclosure = review.screenCaptureDisclosure { print("Screen disclosure: \(OutputRedactor.redact(disclosure))") }
+            print("\nTrust notice: \(OutputRedactor.redact(review.trustWarning))")
+        case "enable":
+            guard arguments.count >= 6,
+                  let sessionID = UUID(uuidString: arguments[1]),
+                  arguments[3] == "--digest",
+                  arguments[5] == "--confirm-execution" else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge extensions runtime enable SESSION-ID EXTENSION-ID --digest REVIEW-DIGEST --confirm-execution [--confirm-screen-capture] [--confirm-input-control]")
+            }
+            let consentFlags = Array(arguments.dropFirst(6))
+            guard consentFlags.allSatisfy({ ["--confirm-screen-capture", "--confirm-input-control"].contains($0) }),
+                  Set(consentFlags).count == consentFlags.count else {
+                throw AgentBridgeError.invalidInput("Unknown or repeated Mac Control consent flag.")
+            }
+            let configuration = try service.activeExtensionConfigurations().first(where: { $0.id == arguments[2] })
+            if configuration?.requiresScreenCaptureConsent == true,
+               !consentFlags.contains("--confirm-screen-capture") {
+                throw AgentBridgeError.invalidInput("Mac Control requires --confirm-screen-capture after reviewing that full-display screenshots are sent to the selected provider.")
+            }
+            if configuration?.requiresInputControlConsent == true,
+               !consentFlags.contains("--confirm-input-control") {
+                throw AgentBridgeError.invalidInput("Control mode requires the separate --confirm-input-control consent.")
+            }
+            let grant = try service.enableExtensionRuntime(
+                extensionID: arguments[2],
+                sessionID: sessionID,
+                reviewedDigest: arguments[4].lowercased(),
+                explicitExecutionConsent: true,
+                explicitScreenCaptureConsent: consentFlags.contains("--confirm-screen-capture"),
+                explicitInputControlConsent: consentFlags.contains("--confirm-input-control")
+            )
+            print("Enabled \(grant.extensionID) for project \(grant.projectID), \(grant.provider.rawValue) profile \(grant.profileID.uuidString.lowercased()).")
+            print("Existing sessions keep their pinned extension snapshot; create a new session to use this exact approved configuration.")
+        case "disable":
+            guard arguments.count == 4,
+                  let sessionID = UUID(uuidString: arguments[1]),
+                  arguments[3] == "--confirm" else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge extensions runtime disable SESSION-ID EXTENSION-ID --confirm")
+            }
+            _ = try service.disableExtensionRuntime(extensionID: arguments[2], sessionID: sessionID)
+            print("Disabled the extension for the session's exact project/provider/profile scope.")
+        case "status":
+            guard arguments.count == 2, let sessionID = UUID(uuidString: arguments[1]) else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge extensions runtime status SESSION-ID")
+            }
+            let invocation = try service.activeExtensionsForSession(sessionID: sessionID)
+            print("Scope: project \(invocation.projectID) · \(invocation.provider.rawValue) profile \(invocation.profileID.uuidString.lowercased())")
+            print("Runtime fingerprint: \(invocation.fingerprint)")
+            for skill in invocation.skills { print("Skill: \(skill.extensionID) · \(skill.configurationDigest)") }
+            for mcp in invocation.mcpServers { print("MCP: \(mcp.extensionID) · \(mcp.configurationDigest) · tools \(mcp.allowedTools.joined(separator: ", "))") }
+            if invocation.skills.isEmpty && invocation.mcpServers.isEmpty { print("No runtime extensions are active for this scope.") }
+        default:
+            throw AgentBridgeError.invalidInput("Unknown extensions runtime action. Use list, import-skill, import-mcp, test, inspect, enable, disable, or status.")
         }
     }
 
@@ -809,7 +1410,51 @@ enum AgentBridgeCLI {
         return provider
     }
 
+    private static func parseMacControlTargetOptions(
+        _ arguments: [String],
+        requiredConfirmation: String?
+    ) throws -> (targetBundleID: String, accessMode: MacControlAccessMode) {
+        var targetBundleID: String?
+        var accessMode: MacControlAccessMode = .observe
+        var confirmed = false
+        var index = 0
+        while index < arguments.count {
+            let option = arguments[index]
+            index += 1
+            switch option {
+            case "--target":
+                guard targetBundleID == nil else { throw AgentBridgeError.invalidInput("Only one --target may be supplied.") }
+                targetBundleID = try nextOptionValue(option, arguments: arguments, index: &index)
+            case "--mode":
+                let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                guard let parsed = MacControlAccessMode(rawValue: value) else {
+                    throw AgentBridgeError.invalidInput("Mac Control mode must be observe or control.")
+                }
+                accessMode = parsed
+            case "--confirm-import", "--confirm-start":
+                guard option == requiredConfirmation, !confirmed else {
+                    throw AgentBridgeError.invalidInput("Unexpected or repeated confirmation flag \(option).")
+                }
+                confirmed = true
+            default:
+                throw AgentBridgeError.invalidInput("Unknown Mac Control option \(option).")
+            }
+        }
+        guard let targetBundleID, !targetBundleID.isEmpty else {
+            throw AgentBridgeError.invalidInput("Mac Control commands require --target BUNDLE-ID.")
+        }
+        if let requiredConfirmation, !confirmed {
+            throw AgentBridgeError.invalidInput("This Mac Control action requires \(requiredConfirmation).")
+        }
+        return (targetBundleID, accessMode)
+    }
+
     private static func readPromptFromStandardInput(maximumBytes: Int) throws -> String {
+        try readBoundedStandardInput(maximumBytes: maximumBytes, label: "提示內容")
+    }
+
+    private static func readBoundedStandardInput(maximumBytes: Int, label: String) throws -> String {
+        guard maximumBytes > 0 else { throw AgentBridgeError.invalidInput("Input byte limit must be positive.") }
         var data = Data()
         while data.count <= maximumBytes {
             let amount = min(65_536, maximumBytes + 1 - data.count)
@@ -818,14 +1463,14 @@ enum AgentBridgeCLI {
             if chunk.isEmpty { break }
             data.append(chunk)
         }
-        guard data.count <= maximumBytes else { throw AgentBridgeError.invalidInput("提示內容最多 256 KiB。") }
-        guard let text = String(data: data, encoding: .utf8) else { throw AgentBridgeError.invalidInput("提示內容必須是 UTF-8 文字。") }
+        guard data.count <= maximumBytes else { throw AgentBridgeError.invalidInput("\(label) exceeds its \(maximumBytes)-byte input limit.") }
+        guard let text = String(data: data, encoding: .utf8) else { throw AgentBridgeError.invalidInput("\(label) must be UTF-8 text.") }
         return text
     }
 
     private static func printHelp() {
         print("""
-        AgentBridge 0.7.0 — macOS Codex / Claude CLI 工作階段管理
+        AgentBridge \(version) — macOS Codex / Claude CLI 工作階段管理
 
         命令：
           agentbridge workspace show
@@ -847,7 +1492,24 @@ enum AgentBridgeCLI {
           agentbridge changes run SESSION-ID PLAN-ID REVIEW-DIGEST < prompt.txt
           agentbridge changes diff|restore|restore-all|export|verify|accept|apply ...
           agentbridge tasks [SESSION-ID]
+          agentbridge autonomous plan --source REPOSITORY --planner PROVIDER:PROFILE-ID --researcher PROVIDER:PROFILE-ID --implementer PROVIDER:PROFILE-ID --reviewer PROVIDER:PROFILE-ID --share-diff-with-reviewer [--desktop-control-scope TEXT --confirm-desktop-separate-from-git] [--save-summary-to-memory --memory-destination PROFILE-ID] [--verification none|projectCI|custom] < goal.txt
+          agentbridge autonomous approve RUN-ID --digest PLAN-DIGEST --confirm
+          agentbridge autonomous run RUN-ID --digest PLAN-DIGEST
+          agentbridge autonomous status [RUN-ID] --json
+          agentbridge autonomous cancel RUN-ID --confirm
           agentbridge extensions list|import|grant|revoke ...
+          agentbridge extensions runtime list [--json]
+          agentbridge extensions runtime import-skill /path/to/SKILL.md --id ID --name NAME [--version VERSION] [--summary SUMMARY]
+          agentbridge extensions runtime import-mcp /path/to/mcp-runtime.json
+          agentbridge extensions runtime test EXTENSION-ID --confirm-start
+          agentbridge extensions runtime inspect SESSION-ID EXTENSION-ID
+          agentbridge extensions runtime enable SESSION-ID EXTENSION-ID --digest REVIEW-DIGEST --confirm-execution [--confirm-screen-capture] [--confirm-input-control]
+          agentbridge extensions runtime disable SESSION-ID EXTENSION-ID --confirm
+          agentbridge extensions runtime status SESSION-ID
+          agentbridge extensions runtime mac-control-status --target APP-BUNDLE-ID [--mode observe|control]
+          agentbridge extensions runtime mac-control-import --target APP-BUNDLE-ID [--mode observe|control] --confirm-import
+          agentbridge extensions runtime mac-control-test --target APP-BUNDLE-ID --confirm-start
+          agentbridge extensions runtime mac-control-stop SESSION-ID EXTENSION-ID --confirm
           agentbridge interactive SESSION-ID [--profile PROFILE-ID]
           agentbridge usage-tui --provider codex|claude --profile PROFILE-ID
           agentbridge memory show SESSION-ID
@@ -861,6 +1523,13 @@ enum AgentBridgeCLI {
           agentbridge budget reconcile SESSION-ID --profile PROFILE-ID --actual-usd USD --confirm
 
         `run` 從標準輸入讀取最多 256 KiB 的提示文字，不會把提示放在程序參數或稽核檔。
+        `autonomous plan` 會立即開始一次真實的官方 CLI 訂閱模型規劃請求；目標從標準輸入讀取，最多 8,000 位元組。每個角色與規劃者都要明確指定供應商及設定檔 UUID，例如 `--planner codex:00000000-0000-0000-0000-000000000001`。Claude API 模式不會用於自主流程。
+        規劃命令會保存尚未核准的不可變計畫。先完整檢視角色、擴充功能、檔案範圍、限制與驗證設定，再以 `autonomous approve RUN-ID --digest PLAN-DIGEST --confirm` 核准；單次核准只涵蓋該計畫中的修正回合與驗證。執行時必須再次提供完全相同的 `--digest`。`status --json` 可供自動化讀取工作階段進度、審查結果與驗證狀態；中斷的執行不會自動重播。
+        跨帳戶輸出分享需要來源與接收設定檔都允許共用記憶。預設不會把依賴任務的內容交給下一個角色；精確實作差異一律需明確使用 `--share-diff-with-reviewer`，且實作者與審查者設定檔都必須同意共用記憶。
+        如需使用 Mac Control Control mode，計畫命令必須帶 `--desktop-control-scope` 與 `--confirm-desktop-separate-from-git`；僅實作者角色可選 Control。這兩項內容會納入不可變計畫摘要。
+        `--save-summary-to-memory --memory-destination PROFILE-ID` 是獨立明確同意；目的設定檔必須是此次計畫綁定且已允許共用記憶的帳戶。未提供時不會保存結果摘要。
+        範例：`agentbridge autonomous plan --source /work/repo --planner codex:00000000-0000-0000-0000-000000000001 --researcher claude:00000000-0000-0000-0000-000000000002 --implementer codex:00000000-0000-0000-0000-000000000001 --reviewer claude:00000000-0000-0000-0000-000000000002 --share-diff-with-reviewer --verification projectCI < goal.txt`
+        `autonomous status --json` 只輸出 AgentBridge 保存的執行狀態，不會呼叫模型或延續已中斷的工作。
         `budget reconcile` 只手動結算停止中的 Claude API 工作階段；先對照 Anthropic 帳單，再輸入實際美元金額並明確指定 `--confirm`。不會呼叫 provider；兩本帳本皆可按同一金額安全重試。
         API 模式需先選擇 usage api，並在每次執行提供上限、環境變數名稱與明確確認。
         usage-tui 只在目前選取的 provider 帳戶為訂閱登入時啟動其原生 CLI；等待登入完成並看到可輸入提示符後，再由 App 的固定按鈕送出 /usage。此畫面不會被解析或存入 AgentBridge。
@@ -870,7 +1539,9 @@ enum AgentBridgeCLI {
         `changes verify` 只在明確呼叫時執行 .codex/ci.sh。自訂驗證需 `--approve-custom`，並用重複 `--arg` 傳入獨立 argv 值；不會經過 shell。
         `changes accept` 與 `changes apply` 都要求目前差異成功驗證。Apply 只建立本機分支的未提交隔離工作樹，遇來源基準不同時會拒絕；不會提交、推送或合併。
         `memory carry-forward` 只複製明確選取的 App 記憶回合/備註到同一儲存庫的另一個提交，且要求目標綁定帳戶允許共享記憶；原生 TUI 對話不會匯入。
-        `extensions import` 只讀入中繼資料 JSON。Grant/revoke 是每專案政策中繼資料，不會啟用或執行 provider extension，也不會在匯入時執行腳本。
+        舊版 `extensions import` 只讀入惰性中繼資料 JSON。這些舊 grant 不會啟用 Skill 或 MCP。`runtime import-skill` 只會快照最多 64 KiB 的 SKILL.md 指示文字；`runtime import-mcp` 讀入包含絕對 `command`、獨立 `args` 陣列及 `allowedTools` 的有界 JSON manifest，不會啟動程序。
+        `runtime test` 需要 `--confirm-start`，並以目前 macOS 使用者權限啟動所選 MCP，只執行 initialize 與 tools/list，不會呼叫 MCP 工具或模型。允許工具清單只限制 agent 可選工具，並不是作業系統沙箱。先用 `runtime inspect` 檢視完整設定、Skill 內容或已發現工具及摘要，再用完全相同的 `--digest` 和 `--confirm-execution` 啟用到指定工作階段的專案/供應商/帳戶設定檔。舊版 metadata grant 不會生效；改變設定後必須重新測試與審閱。
+        Mac Control 僅使用 AgentBridge 內建型別化代理與固定安裝 helper。`mac-control-test` 需要 `--confirm-start`，只呼叫 `mac_status` 讀取權限狀態；不截圖、不送輸入，也不會自動要求 TCC。若缺少 macOS 權限，請在系統設定手動開啟。啟用時必須在檢視 digest 後明確提供 `--confirm-screen-capture`；Control mode 還需要獨立的 `--confirm-input-control`。完整主螢幕截圖可能包含其他視窗，會傳給選定 provider，且無法文字遮蔽；目標 app 限制只套用於輸入，不會裁切截圖。`mac-control-stop` 會撤銷該範圍 Control grant 並取消受影響的 provider 工作階段。
         新帳戶預設開啟共用記憶；`--share-memory` 可作為明確開啟標記。App 與 CLI 的唯讀聊天回合可在允許共用記憶的帳戶設定間共用；原生 Terminal 的使用者輸入與輸出不會被擷取。
         `memory show/notes/clear` 只管理 App 保存的同專案同提交記憶；clear 需要 `--confirm`。
         新工作階段位於所選資料根目錄的 workspaces/<session-id>；共享記憶位於 shared-memory。第一次使用前，請在 App 選擇資料根目錄，或執行 `agentbridge workspace set /absolute/path/to/root`。

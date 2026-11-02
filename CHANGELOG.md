@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0 — 2026-11-02
+
+- Added a subscription-only autonomous planner and dependency scheduler with explicit role accounts, digest-bound plan approval, bounded concurrency and repair, exact-diff review, optional approved verification, persistent status and cancellation.
+- Kept project memory available through a consent-aware frozen context, with explicit dependency sharing and an optional bounded result summary; no provider or account switch bypasses sharing consent.
+- Added actual Skill instruction snapshots and installed local stdio MCP activation, separate from legacy metadata grants. Per-run proxy tickets, exact tool filtering, revocation, execution limits and minimal child environments control MCP use without changing global provider settings.
+- Added a Mac Control preset with target-App restrictions, separate Observe/Control and screen/input consent, readiness checks and Stop Control. Screen capture includes the full main display; macOS permissions remain manual.
+- Added dedicated Autonomous Workflow and Skills & MCP app views, CLI operations and separate English and Traditional Chinese design/use documentation. No automatic commit, push, merge, API fallback, package installation or Skill script execution was added.
+
 ## 0.7.0 — 2026-11-01
 
 - Added a resumable first-use setup wizard with language and provider selection, a required workspace-data folder, optional CLI-path and subscription-login checks, per-account shared-memory consent, local usage settings, and an honest readiness summary.

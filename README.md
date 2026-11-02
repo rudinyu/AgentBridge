@@ -4,7 +4,7 @@
 
 ![AgentBridge macOS app icon](Assets/AppIcon-1024.png)
 
-AgentBridge 0.7.0 is a Swift project for macOS 14 and later. It includes a shared core, the `agentbridge` command-line tool, and a native SwiftUI app. It works through the official Codex CLI and Claude Code CLI installed on the Mac. Read-only conversations from the app and CLI can share memory by source repository and pinned commit; users can explicitly carry selected memory to a different commit. A first-use setup wizard guides language, provider, workspace folder, CLI path, subscription login, shared memory, and local usage settings; open it again from **Setup Wizard** in the app header. The CLI uses the same saved workspace root. The app defaults to English and supports Traditional Chinese.
+AgentBridge 0.8.0 is a Swift project for macOS 14 and later. It includes a shared core, the `agentbridge` command-line tool, and a native SwiftUI app. It works through the official Codex CLI and Claude Code CLI installed on the Mac. Read-only conversations from the app and CLI can share memory by source repository and pinned commit; users can explicitly carry selected memory to a different commit. A first-use setup wizard guides language, provider, workspace folder, CLI path, subscription login, shared memory, and local usage settings; open it again from **Setup Wizard** in the app header. The CLI uses the same saved workspace root. The app defaults to English and supports Traditional Chinese.
 
 AgentBridge uses each official CLI's subscription login by default. Codex is subscription-only. Claude API is an optional paid mode that requires an API key, a per-run USD budget, and explicit confirmation every time. The local US$140 monthly ledger is not a hard limit on Anthropic's billing.
 
@@ -14,6 +14,7 @@ AgentBridge uses each official CLI's subscription login by default. Codex is sub
 - [How to Use](docs/HOW_TO_USE.md) · [繁體中文](docs/HOW_TO_USE.zh-TW.md)
 - [Product Gap Study](docs/PRODUCT_GAP_STUDY.md) · [繁體中文](docs/PRODUCT_GAP_STUDY.zh-TW.md)
 - [Feature Plan](docs/FEATURE_PLAN.md) · [繁體中文](docs/FEATURE_PLAN.zh-TW.md)
+- [Autonomous Workflows, Active Extensions and Mac Control](docs/AUTONOMY_AND_EXTENSIONS.md) · [繁體中文](docs/AUTONOMY_AND_EXTENSIONS.zh-TW.md)
 
 ## Quick start
 
@@ -35,7 +36,9 @@ open build/AgentBridge.app
 - Verification runs only after the user starts it. The default is the repository's `.codex/ci.sh`; a custom executable and its separate argv must be explicitly approved. Verification is isolated to the session workspace and reports the command, exit code, duration, and redacted output.
 - The activity timeline and task board show ordered, redacted events and launched run records across sessions. Up to three different sessions can run concurrently; cancellation targets a session.
 - Codex and Claude can share AgentBridge App/CLI memory for the same repository and commit. Carry-forward to a different commit is an explicit selection of App-owned turns and/or notes, bound to an account that permits shared memory. Native TUI transcripts are not imported.
-- Skills/MCP descriptors can be imported as inert metadata. Per-project grants record narrow permissions only; importing or granting never activates an extension or runs scripts.
+- Autonomous workflows generate a task graph for review, then execute the digest-approved plan with explicit account bindings, at most three concurrent agents, bounded review/repair and cancellation. Results remain isolated for manual acceptance and apply. Autonomous mode uses subscriptions only.
+- Legacy Skills/MCP descriptors remain inert metadata. Active Skill instruction snapshots and local stdio MCP configurations require separate execution approval for the project, provider and account. An MCP proxy enforces the exact tool list. No automatic installation or Skill scripts are supported.
+- Mac Control uses a target-bound proxy with separate Observe and Control consent and a Stop Control action. Screenshots include the entire main display and may be sent to the selected provider. macOS permissions must be granted manually; desktop control is an explicit additional capability beyond repository access.
 - The local terminal runs with the current macOS user's permissions. A Git workspace is not an operating-system sandbox.
 
 ## Checking provider subscription usage

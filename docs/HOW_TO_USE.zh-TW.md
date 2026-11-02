@@ -166,7 +166,7 @@ printf '%s' '依核准計畫完成修改。' | \
 
 若要將記憶延續到另一個 commit，請選擇相同 canonical Repository、不同提交版本的來源和目標工作階段。目標工作階段綁定的帳戶必須允許共用記憶。選取來源回合與／或備註，檢查來源／目標 commit，再建立交接。目標工作階段下一次允許的提示只會收到所選內容，並以有界（16 KiB）、標明不可信的歷史 JSON envelope 傳入且保留 provenance。交接存於所選工作區資料根目錄下的 `shared-memory/project-handoffs/`。原生 provider TUI transcript 永不匯入。
 
-**Skills and MCP policy** 面板會將 descriptor JSON 檔匯入為惰性中繼資料。檢視要求範圍，只選擇狹窄的每專案權限，再明確授權或撤銷。這些授權只是政策中繼資料：不會啟用 provider extension、連線 MCP server 或執行腳本。
+**Skills & MCP** 中的舊政策面板可匯入描述資料 JSON，仍只保存惰性中繼資料，授權不會執行任何內容。若要真正載入 Skill 指令或連接已安裝的 MCP，請使用下方說明的獨立擴充執行控制。
 
 CLI 也提供對應操作：
 
@@ -188,7 +188,25 @@ CLI 也提供對應操作：
 
 `changes apply` 會回傳未提交的本機 worktree。自訂 `changes verify` 會直接將 argv 傳給 executable。CLI 同樣受訂閱模式、計畫核准、驗證、來源 commit 和帳戶共享記憶同意檢查，不會繞過這些限制。
 
-### 10. CLI 常用操作
+### 10. 自主工作流程
+
+開啟 **Autonomous Workflow**，選擇來源 Repository 並填入具體目標，再選擇規劃、調查、實作與審查角色的實際供應商／帳戶。呼叫使用訂閱登入；允許相依任務或完整實作 diff 傳給其他角色前，先確認帳戶的共享同意。
+
+設定並行、審查修正輪數、時間與呼叫上限，並行數和審查輪數最多三個／三輪。選擇不驗證、專案 CI，或已檢視的自訂執行檔與獨立參數。**Generate plan** 會發出真正的規劃請求，但不會核准工作。檢視每個任務、相依、提示、來源 commit、帳戶、記憶選擇、擴充、驗證與限制；確認已檢視，核准畫面摘要後再啟動。綁定變更後必須重新核准。
+
+核准前請檢視完整凍結的專案記憶；允許共享的角色會跨供應商與帳戶取得同一快照。選擇保存最終摘要及允許共享的目標帳戶，才會把一次流程結果追加到共用記憶。相依任務輸出分享是另一項獨立選擇。
+
+查看任務進度與審查／驗證結果；取消會停止派送並要求終止程序，中斷工作不自動重跑。完成後在 **Project Conversations** 開啟實作者的隔離變更，沿用 diff、驗證、接受與套用控制，不自動 commit、push 或 merge。CLI 的 `autonomous` 提供相同規劃、核准、執行、狀態與取消操作；完整參數和 JSON 狀態輸出請查看 `agentbridge help`。
+
+### 11. Skills、MCP 實際執行與 Mac Control
+
+選好專案工作階段後開啟 **Skills & MCP**，匯入真正 SKILL.md 快照或已安裝本機 stdio MCP 的設定。匯入不執行；先檢視 MCP 執行檔、獨立參數與精確工具清單，再明確啟動連線測試。測試會執行該程式，進行初始化與工具查詢。預覽啟用、檢視摘要、指令／工具與信任提醒，再明確同意並為指定專案／供應商／帳戶啟用；舊中繼資料授權不足以啟用。設定變更和撤銷會使綁定失效，若要求請建立新工作階段。首版不支援 Skill 腳本／hooks 或遠端 HTTP／OAuth MCP。
+
+**Mac Control** 選擇已安裝 helper 的預設整合並指定目標 bundle ID，先自行開啟目標 App，再使用 **Observe**；匯入預設整合後，先按 **Test Connection** 檢查工具清單，再預覽與啟用。權限測試只讀取就緒狀態，不授予 macOS 權限；若需要，請手動授予輔助使用及螢幕錄製。檢視畫面存取同意後才能啟用；**Control** 另須同意輸入。受保護的系統、憑證、終端及 AgentBridge 目標會遭拒絕。截圖包含整個主螢幕且可能傳給所選供應商；目標限制的是輸入，不是圖片範圍，請先關閉私人視窗。**Stop Control** 撤銷範圍並要求取消，無法撤回已送出操作。一般桌面同意不包含憑證、系統驗證、安全設定或重大交易。
+
+產生流程計畫前，為角色選擇已啟用擴充的 ID；核准會綁定其範圍與上限。Repository 唯讀不會使另外核准的外部工具變成唯讀。詳見[設計與驗證邊界](AUTONOMY_AND_EXTENSIONS.zh-TW.md)。
+
+### 12. CLI 常用操作
 
 建置後的 CLI 位於 `build/swiftpm/debug/agentbridge`。提示由標準輸入提供，不會放在程序參數中：
 
@@ -207,7 +225,7 @@ printf '%s' 'Key decisions and next steps.' | "$CLI" memory notes "$SESSION_ID"
 
 CLI 亦支援 `agentbridge cancel SESSION_ID` 取消執行、`agentbridge budget` 檢視 API 帳本，以及 `agentbridge help` 查看完整命令。清除共用記憶需加上明確確認：`agentbridge memory clear SESSION_ID --confirm`。
 
-### 11. 常見狀況
+### 13. 常見狀況
 
 - **找不到 provider CLI：** 在 App 的「CLI 執行檔」指定路徑，或先把官方 CLI 加入登入環境可找到的路徑，再按「檢查登入與方案」。
 - **顯示未登入或未確認方案：** 在 provider 官方 CLI 完成訂閱登入；對新帳戶，使用 AgentBridge 的登入終端，再重新檢查。
@@ -216,7 +234,7 @@ CLI 亦支援 `agentbridge cancel SESSION_ID` 取消執行、`agentbridge budget
 - **API 呼叫被拒絕或保留金額未退回：** 檢查 `agentbridge budget` 或 App 顯示的 UTC 月帳本。費用未知、失敗或取消時，保留額不會被當作零費用退回。
 - **工作區與來源 Repository 不一致：** 這是刻意的快照邊界；建立工作階段後的來源變更不會自動複製進來。
 
-### 12. 簽署、公證與驗證 App
+### 14. 簽署、公證與驗證 App
 
 `scripts/package-app.sh` 會重建未簽署的開發 App。準備好發行版本並通過 `.codex/ci.sh` 後，使用共用 `macos-notarization-release` helper 進行正式簽署與公證。helper 從使用者層級設定讀取 Apple 公證認證（Keychain profile 或 App Store Connect API key），與 Claude API key 分開；不要把簽署憑證或 Apple `.p8` 私鑰放進 Repository。App 簽署身份必須是 Developer ID Application。App 內的 `agentbridge` helper 要先簽署，再簽外層 App。
 

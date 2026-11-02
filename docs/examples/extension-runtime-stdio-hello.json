@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "example.hello",
+  "name": "Local Hello MCP",
+  "version": "1.0.0",
+  "summary": "A no-dependency local stdio example with one harmless greeting tool.",
+  "command": "/usr/bin/python3",
+  "args": [
+    "-u",
+    "-c",
+    "import json,sys\nfor line in sys.stdin:\n message=json.loads(line)\n request_id=message.get('id')\n if request_id is None: continue\n method=message.get('method')\n if method=='initialize': result={'protocolVersion':'2025-03-26','capabilities':{'tools':{}},'serverInfo':{'name':'local-hello','version':'1.0.0'}}\n elif method=='tools/list': result={'tools':[{'name':'hello','description':'Return a greeting for the supplied name.','inputSchema':{'type':'object','properties':{'name':{'type':'string'}},'additionalProperties':False}}]}\n elif method=='tools/call':\n  name=message.get('params',{}).get('arguments',{}).get('name','world')\n  result={'content':[{'type':'text','text':'Hello, '+str(name)+'!'}],'isError':False}\n else:\n  print(json.dumps({'jsonrpc':'2.0','id':request_id,'error':{'code':-32601,'message':'Method not supported'}}),flush=True)\n  continue\n print(json.dumps({'jsonrpc':'2.0','id':request_id,'result':result}),flush=True)"
+  ],
+  "allowedTools": [
+    "hello"
+  ],
+  "startupTimeoutSeconds": 15,
+  "toolTimeoutSeconds": 30,
+  "maximumToolCallsPerRun": 8,
+  "maximumToolResponseBytes": 65536,
+  "maximumTotalToolResponseBytes": 262144
+}

@@ -33,7 +33,7 @@ Icon 以深靛藍底色呈現兩個不同助理節點，透過一道明亮的弧
 
 ## 目標與實作方式
 
-AgentBridge 0.7.0 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCore`、`agentbridge` CLI 與原生 SwiftUI App。App 和 CLI 共用已保存的工作區資料根目錄，以及私有設定、帳戶、工作階段索引、稽核、用量控制與 API 帳本。App 預設使用英文，並內建英文與繁體中文資源，可在 App 內選擇並保存語言。設定精靈會續接尚未完成的首次設定，也可從標題列重新開啟；`SetupWizardFlow` 將必要的工作區限制與選用的 CLI／登入狀態摘要做成可測試的核心邏輯。App 的內嵌終端使用 SwiftTerm 1.20.0；Release bundle 由 `scripts/package-app.sh` 組裝，不維護兩份 Xcode 專案設定。
+AgentBridge 0.8.0 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCore`、`agentbridge` CLI 與原生 SwiftUI App。App 和 CLI 共用已保存的工作區資料根目錄，以及私有設定、帳戶、工作階段索引、稽核、用量控制與 API 帳本。App 預設使用英文，並內建英文與繁體中文資源，可在 App 內選擇並保存語言。設定精靈會續接尚未完成的首次設定，也可從標題列重新開啟；`SetupWizardFlow` 將必要的工作區限制與選用的 CLI／登入狀態摘要做成可測試的核心邏輯。App 的內嵌終端使用 SwiftTerm 1.20.0；Release bundle 由 `scripts/package-app.sh` 組裝，不維護兩份 Xcode 專案設定。
 
 供應商整合透過本機官方 CLI 執行：Codex 使用 `codex exec --json` 或原生互動 CLI，Claude Code 使用 `claude -p --output-format stream-json` 或原生互動 CLI。程式不匯出或複製 OAuth 憑證，也不把 CLI session ID 當成跨供應商記憶。此專案使用 Swift 管理本機程序，不另外引入 Codex/Claude SDK runtime。
 
@@ -54,6 +54,9 @@ AgentBridge 0.7.0 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCor
 | `ProjectMemoryStore` | 依 canonical Repository 儲存明確選取的回合／備註交接，並保留來源／目標提交 provenance |
 | `ParallelTaskBoard` | 記錄實際啟動的 App/CLI 操作、工作階段狀態、核准、進度、取消及結果參照 |
 | `ExtensionPolicyStore` | 保存惰性 descriptor metadata 與明確的每專案狹窄授權；不會啟用或執行 provider extension |
+| 自主編排 | 驗證模型產生的任務圖、綁定核准、排程相依任務與有限次審查修正，並保存流程狀態 |
+| 擴充執行器 | 保存 Skill 快照與 MCP 啟動設定，另行要求綁定摘要的執行同意 |
+| MCP 代理／Mac Control | 依有效授權過濾工具與呼叫；Mac Control 另強制限制目標 App 及觀察／控制模式 |
 | `BudgetLedger` | 依帳戶分開的 Claude API 月度上限、保守預留和結算；內建帳戶沿用舊版 US$140 帳本 |
 | `UsageControlStore` / `APICostControlLedger` | 逐帳戶執行次數與選用日／工作階段 USD 上限、門檻去重、有筆數上限的設定稽核、並行呼叫預留及帳單恢復 |
 | `OutputRedactor` | 遮蔽常見 token 格式與本次已知 API key |
@@ -81,7 +84,9 @@ App 與 CLI 共用已保存的根目錄。CLI 可用 `agentbridge workspace set 
 
 活動時間軸呈現排序後且已遮蔽的 `AuditEvent`，provider 輸出只在官方 CLI 確實回報時才顯示。任務看板保存每個實際啟動的操作、進度、核准狀態、終止狀態及 diff／驗證參照。App 最多同時執行三個不同工作階段；與 CLI 共用的程序層級執行租約會阻止同一工作階段重複執行。取消與執行租約以各工作階段為範圍。未啟動的操作不會被記為執行中。
 
-Extension 匯入僅為 metadata。Descriptor 和每專案 grant 記錄待審查的要求與核准範圍；不會連接 MCP server、安裝 Skill、載入 provider instructions 或執行腳本。此版本不包含啟用 provider extension。
+舊版擴充描述資料與每專案政策授權仍只是中繼資料。獨立的擴充執行器可匯入真正且有大小限制的 Skill 指令快照，或已安裝的本機 stdio MCP 設定。啟用時須依專案、供應商與帳戶檢視摘要並明確同意執行。Skill 指令加入受管理提示；MCP 伺服器透過每次執行的代理啟動，依核准工具清單過濾工具發現與呼叫。Mac Control 另有目標 App 限制、畫面／輸入同意、即時撤銷與取消；截圖包含整個主螢幕。不修改供應商全域設定、不安裝套件，也不執行 Skill hooks／腳本。詳見[自主工作流程與擴充執行](docs/AUTONOMY_AND_EXTENSIONS.zh-TW.md)。
+
+自主規劃使用唯讀訂閱工作階段，並嚴格驗證產生的任務圖。使用者核准會綁定來源提交、角色帳戶、任務提示、修改範圍、擴充、共享、驗證程式及執行上限。排程器平行執行獨立調查，再協調隔離實作與完整 diff 審查，並限制修正輪數。流程可執行已核准的驗證，但不自動接受或套用結果。綁定變更、前置任務失敗、無效審查或取消都會停止後續工作。持久化狀態與 CLI 共用，中斷流程不自動重跑。
 
 方案與帳戶資訊只顯示官方 CLI 驗證狀態實際回報的欄位。Claude CLI 可回報登入帳號和訂閱方案；Codex CLI 若未提供方案欄位，畫面不自行推測。建立其他帳戶時，使用者必須在官方登入流程完成登入。
 
@@ -99,7 +104,7 @@ provider CLI 決定原生互動 TUI transcript 是否保存。AgentBridge 不會
 
 非互動程序使用直接 executable/argv，不經 shell；提示透過標準輸入提供。子程序環境採白名單，不繼承 API key、proxy 或雲端憑證。輸出與錯誤緩衝有上限，稽核事件會遮蔽常見祕密。執行有每 session 租約、取消標記、程序群組終止及 bounded escalation；CLI 的 SIGINT/SIGTERM/SIGHUP 也會轉為取消。
 
-唯讀 Codex 非互動使用 read-only sandbox 及不升權核准；唯讀 Claude 非互動限於 `Read,Glob,Grep`、關閉 hooks/MCP，並使用 `dontAsk`。隔離變更使用 Codex `workspace-write` 或 Claude `acceptEdits` 及狹窄工具允許清單；隔離工作區仍是工作流程邊界，不是 macOS sandbox。原生互動模式保留 provider TUI，Codex 維持唯讀 sandbox，Claude 使用 Manual 權限模式；在原生 TUI 核准的 Claude 指令可能編輯隔離 clone、讀取工作區外資料或使用網路。
+唯讀 Codex 非互動使用 read-only sandbox 且不要求升權；唯讀 Claude 將內建工具限於 `Read,Glob,Grep` 並使用 `dontAsk`，hooks 與未核准 MCP 仍停用。明確核准的 MCP 經過代理，因為 Claude 的 `--tools` 只限制內建工具，不能過濾 MCP。外部工具仍可能影響 Repository 以外的系統，其獨立核准能力必須保持可見。隔離變更使用 Codex `workspace-write` 或 Claude `acceptEdits` 與狹窄內建工具；工作區是流程邊界，不是 macOS sandbox。非互動 Codex 無法在執行中提示額外權限，AgentBridge 不會繞過核准。原生互動模式保留供應商 TUI：Codex 維持唯讀，Claude 使用 Manual 權限；原生 TUI 中核准的指令可能存取工作區外檔案或網路。
 
 內嵌終端直接將 PTY 接到官方 CLI，不保存原始終端畫面或輸入。只有按下固定的 `/usage` 按鈕後，App 才會將有限數量的可見 SwiftTerm 列暫存在記憶體供盡力解析；辨識到用量值或 15 秒後停止取樣，再按固定按鈕可重新啟動。正規化報告產生後即丟棄原始文字，不會記錄、保存或傳給模型。SwiftTerm 不允許 OSC 52 剪貼簿讀寫及 terminal link 開啟，並限制 scrollback。獨立「本機終端機」使用者 shell 以目前 macOS 帳戶權限執行；Repository clone 不會限制其檔案或網路存取。
 

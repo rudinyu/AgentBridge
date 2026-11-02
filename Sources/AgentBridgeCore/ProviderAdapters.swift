@@ -99,7 +99,13 @@ public enum RuntimeEnvironment {
 }
 
 public enum ProviderCommandBuilder {
-    public static func codexRunArguments(workspacePath: String, resumeID: String? = nil) throws -> [String] {
+    public static func codexRunArguments(
+        workspacePath: String,
+        resumeID: String? = nil,
+        activeMCPServers: [MCPServerCommandConfiguration] = [],
+        mcpWorkingDirectory: String? = nil,
+        mcpEnvironment: [String: String] = [:]
+    ) throws -> [String] {
         var arguments = [
             "--no-daemon",
             "--disable", "hooks", "--disable", "plugins", "--disable", "apps",
@@ -113,15 +119,28 @@ public enum ProviderCommandBuilder {
         arguments += [
             "--json", "--ignore-user-config", "--ignore-rules",
             "-c", "forced_login_method=\"chatgpt\"",
-            "-c", "model_provider=\"openai\"",
-            "-"
+            "-c", "model_provider=\"openai\""
         ]
+        let extensionArguments = try codexMCPArguments(
+            servers: activeMCPServers,
+            projectWorkspacePath: workspacePath,
+            workingDirectory: mcpWorkingDirectory ?? workspacePath,
+            environment: mcpEnvironment
+        )
+        arguments += extensionArguments
+        arguments.append("-")
         return arguments
     }
 
     /// Runs headless Codex with scoped `workspace-write` access after AgentBridge
     /// plan approval. Runtime escalation is unavailable, so restricted commands fail closed.
-    public static func codexChangeArguments(workspacePath: String, resumeID: String? = nil) throws -> [String] {
+    public static func codexChangeArguments(
+        workspacePath: String,
+        resumeID: String? = nil,
+        activeMCPServers: [MCPServerCommandConfiguration] = [],
+        mcpWorkingDirectory: String? = nil,
+        mcpEnvironment: [String: String] = [:]
+    ) throws -> [String] {
         var arguments = [
             "--no-daemon",
             "--disable", "hooks", "--disable", "plugins", "--disable", "apps",
@@ -135,23 +154,48 @@ public enum ProviderCommandBuilder {
         arguments += [
             "--json", "--ignore-user-config", "--ignore-rules",
             "-c", "forced_login_method=\"chatgpt\"",
-            "-c", "model_provider=\"openai\"",
-            "-"
+            "-c", "model_provider=\"openai\""
         ]
+        arguments += try codexMCPArguments(
+            servers: activeMCPServers,
+            projectWorkspacePath: workspacePath,
+            workingDirectory: mcpWorkingDirectory ?? workspacePath,
+            environment: mcpEnvironment
+        )
+        arguments.append("-")
         return arguments
     }
 
-    public static func claudeReadOnlyArguments(workspacePath: String, sessionID: UUID, resumeID: String? = nil) throws -> [String] {
+    public static func claudeReadOnlyArguments(
+        workspacePath: String,
+        sessionID: UUID,
+        resumeID: String? = nil,
+        activeMCPServers: [MCPServerCommandConfiguration] = [],
+        mcpWorkingDirectory: String? = nil,
+        mcpEnvironment: [String: String] = [:]
+    ) throws -> [String] {
+        let mcpConfiguration = try claudeMCPConfiguration(
+            servers: activeMCPServers,
+            workingDirectory: mcpWorkingDirectory ?? workspacePath,
+            environment: mcpEnvironment
+        )
+        let mcpToolNames = try claudeMCPToolNames(activeMCPServers)
+        let builtInTools = ["Read", "Glob", "Grep"]
         var arguments = [
             "--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
             "--permission-mode", "dontAsk", "--permission-prompts", "none",
-            "--restricted", "--safe-mode", "--setting-sources", "",
-            "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
+            "--restricted"
+        ]
+        if activeMCPServers.isEmpty { arguments.append("--safe-mode") }
+        arguments += [
+            "--setting-sources", "",
+            "--strict-mcp-config", "--mcp-config", mcpConfiguration,
             "--disable-slash-commands", "--no-chrome",
             "--settings", "{\"disableAllHooks\":true,\"apiKeyHelper\":\"\",\"forceLoginMethod\":\"claudeai\"}",
-            "--tools", "Read,Glob,Grep", "--add-dir", workspacePath,
+            "--tools", builtInTools.joined(separator: ","), "--add-dir", workspacePath,
             "--input-format", "text"
         ]
+        if !mcpToolNames.isEmpty { arguments += ["--allowedTools"] + mcpToolNames }
         if let resumeID {
             try validateResumeID(resumeID)
             arguments += ["--resume", resumeID]
@@ -162,18 +206,37 @@ public enum ProviderCommandBuilder {
     }
 
     /// Allows file-editing tools after AgentBridge has recorded plan approval.
-    /// Bash, MCP, plugins, hooks, and other tool integrations remain disabled.
-    public static func claudeChangeArguments(workspacePath: String, sessionID: UUID, resumeID: String? = nil) throws -> [String] {
+    /// MCP access, when explicitly enabled, is limited by the per-run proxy ticket.
+    public static func claudeChangeArguments(
+        workspacePath: String,
+        sessionID: UUID,
+        resumeID: String? = nil,
+        activeMCPServers: [MCPServerCommandConfiguration] = [],
+        mcpWorkingDirectory: String? = nil,
+        mcpEnvironment: [String: String] = [:]
+    ) throws -> [String] {
+        let mcpConfiguration = try claudeMCPConfiguration(
+            servers: activeMCPServers,
+            workingDirectory: mcpWorkingDirectory ?? workspacePath,
+            environment: mcpEnvironment
+        )
+        let mcpToolNames = try claudeMCPToolNames(activeMCPServers)
+        let builtInTools = ["Read", "Glob", "Grep", "Edit", "Write"]
         var arguments = [
             "--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
             "--permission-mode", "acceptEdits", "--permission-prompts", "none",
-            "--restricted", "--safe-mode", "--setting-sources", "",
-            "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
+            "--restricted"
+        ]
+        if activeMCPServers.isEmpty { arguments.append("--safe-mode") }
+        arguments += [
+            "--setting-sources", "",
+            "--strict-mcp-config", "--mcp-config", mcpConfiguration,
             "--disable-slash-commands", "--no-chrome",
             "--settings", "{\"disableAllHooks\":true,\"apiKeyHelper\":\"\",\"forceLoginMethod\":\"claudeai\"}",
-            "--tools", "Read,Glob,Grep,Edit,Write", "--add-dir", workspacePath,
+            "--tools", builtInTools.joined(separator: ","), "--add-dir", workspacePath,
             "--input-format", "text"
         ]
+        if !mcpToolNames.isEmpty { arguments += ["--allowedTools"] + mcpToolNames }
         if let resumeID {
             try validateResumeID(resumeID)
             arguments += ["--resume", resumeID]
@@ -342,23 +405,149 @@ public enum ProviderCommandBuilder {
         }
     }
 
-    public static func claudeAPIArguments(workspacePath: String, budgetUSD: Double) throws -> [String] {
+    public static func claudeAPIArguments(
+        workspacePath: String,
+        budgetUSD: Double,
+        activeMCPServers: [MCPServerCommandConfiguration] = [],
+        mcpWorkingDirectory: String? = nil,
+        mcpEnvironment: [String: String] = [:]
+    ) throws -> [String] {
         let cents = (budgetUSD * 100).rounded()
         guard budgetUSD.isFinite, budgetUSD >= 0.01, budgetUSD <= 140, abs((cents / 100) - budgetUSD) < 0.000_000_1 else {
             throw AgentBridgeError.invalidInput("Claude API 單次上限必須介於 US$0.01 至 US$140，最多兩位小數。")
         }
         let formattedBudget = String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), budgetUSD)
-        return [
+        let mcpConfiguration = try claudeMCPConfiguration(
+            servers: activeMCPServers,
+            workingDirectory: mcpWorkingDirectory ?? workspacePath,
+            environment: mcpEnvironment
+        )
+        let mcpToolNames = try claudeMCPToolNames(activeMCPServers)
+        let builtInTools = ["Read", "Glob", "Grep"]
+        var arguments = [
             "--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
             "--permission-mode", "dontAsk", "--permission-prompts", "none",
-            "--restricted", "--safe-mode", "--setting-sources", "",
-            "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
+            "--restricted"
+        ]
+        if activeMCPServers.isEmpty { arguments.append("--safe-mode") }
+        arguments += [
+            "--setting-sources", "",
+            "--strict-mcp-config", "--mcp-config", mcpConfiguration,
             "--disable-slash-commands", "--no-chrome",
             "--settings", "{\"disableAllHooks\":true,\"apiKeyHelper\":\"\",\"forceLoginMethod\":\"console\"}",
-            "--tools", "Read,Glob,Grep", "--add-dir", workspacePath,
+            "--tools", builtInTools.joined(separator: ","), "--add-dir", workspacePath,
             "--input-format", "text", "--no-session-persistence",
             "--max-budget-usd", formattedBudget, "--max-turns", "3"
         ]
+        if !mcpToolNames.isEmpty { arguments += ["--allowedTools"] + mcpToolNames }
+        return arguments
+    }
+
+    private static func codexMCPArguments(
+        servers: [MCPServerCommandConfiguration],
+        projectWorkspacePath: String,
+        workingDirectory: String,
+        environment: [String: String]
+    ) throws -> [String] {
+        guard servers.count <= 16 else { throw AgentBridgeError.invalidInput("At most 16 MCP servers can be enabled in one session.") }
+        guard isSafeAbsolutePath(projectWorkspacePath) else {
+            throw AgentBridgeError.invalidInput("Codex project workspace must be an absolute path for managed MCP isolation.")
+        }
+
+        // `--ignore-user-config` skips CODEX_HOME/config.toml but trusted
+        // project `.codex/config.toml` files can still add MCP servers. Mark
+        // this exact workspace untrusted for the invocation so its project
+        // configuration layer is not loaded. This override is needed even
+        // when no AgentBridge MCP server is selected.
+        var arguments = [
+            "-c", "projects.\(tomlBasicString(projectWorkspacePath)).trust_level=\"untrusted\""
+        ]
+        guard !servers.isEmpty else { return arguments }
+        guard isSafeAbsolutePath(workingDirectory) else {
+            throw AgentBridgeError.invalidInput("MCP working directory must be an absolute path.")
+        }
+        guard environment.allSatisfy({ isEnvironmentKey($0.key) && !$0.value.contains("\0") }) else {
+            throw AgentBridgeError.invalidInput("MCP server environment contains an invalid key or value.")
+        }
+        let serverIDs = servers.map(\.serverID)
+        guard Set(serverIDs).count == serverIDs.count else {
+            throw AgentBridgeError.invalidInput("MCP server IDs must be unique.")
+        }
+        let serverTables = servers.map { server in
+            let fields: [(String, String)] = [
+                ("command", tomlBasicString(server.commandPath)),
+                ("args", tomlArray(server.arguments)),
+                ("cwd", tomlBasicString(workingDirectory)),
+                ("env", tomlInlineTable(environment)),
+                ("enabled_tools", tomlArray(server.allowedTools)),
+                ("required", "true"),
+                ("startup_timeout_sec", String(server.startupTimeoutSeconds)),
+                ("tool_timeout_sec", String(server.toolTimeoutSeconds))
+            ]
+            return "\(server.serverID) = { " + fields.map { "\($0.0) = \($0.1)" }.joined(separator: ", ") + " }"
+        }
+        let serverTable = "{ " + serverTables.joined(separator: ", ") + " }"
+        arguments += ["-c", "mcp_servers=\(serverTable)"]
+        return arguments
+    }
+
+    private static func claudeMCPConfiguration(
+        servers: [MCPServerCommandConfiguration],
+        workingDirectory: String,
+        environment: [String: String]
+    ) throws -> String {
+        guard servers.count <= 16 else { throw AgentBridgeError.invalidInput("At most 16 MCP servers can be enabled in one session.") }
+        guard servers.isEmpty || isSafeAbsolutePath(workingDirectory) else {
+            throw AgentBridgeError.invalidInput("MCP working directory must be an absolute path.")
+        }
+        guard environment.allSatisfy({ isEnvironmentKey($0.key) && !$0.value.contains("\0") }) else {
+            throw AgentBridgeError.invalidInput("MCP server environment contains an invalid key or value.")
+        }
+        var mcpServers: [String: Any] = [:]
+        for server in servers {
+            guard mcpServers[server.serverID] == nil else { throw AgentBridgeError.invalidInput("MCP server IDs must be unique.") }
+            mcpServers[server.serverID] = [
+                "type": "stdio",
+                "command": server.commandPath,
+                "args": server.arguments,
+                "cwd": workingDirectory,
+                "env": environment,
+                "timeout": server.toolTimeoutSeconds * 1_000
+            ]
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["mcpServers": mcpServers], options: [.sortedKeys, .withoutEscapingSlashes])
+        guard let json = String(data: data, encoding: .utf8), json.utf8.count <= 128 * 1_024 else {
+            throw AgentBridgeError.invalidInput("Active MCP configuration exceeds its inline size limit.")
+        }
+        return json
+    }
+
+    private static func claudeMCPToolNames(_ servers: [MCPServerCommandConfiguration]) throws -> [String] {
+        let names = servers.sorted { $0.extensionID < $1.extensionID }.flatMap { server in
+            server.allowedTools.sorted().map { "mcp__\(server.serverID)__\($0)" }
+        }
+        guard names.allSatisfy({ $0.utf8.count <= 128 }) else {
+            throw AgentBridgeError.invalidInput("A fully qualified Claude MCP tool name exceeds Claude's 128-character limit.")
+        }
+        return names
+    }
+
+    private static func tomlArray(_ values: [String]) -> String {
+        "[" + values.map(tomlBasicString).joined(separator: ", ") + "]"
+    }
+
+    private static func tomlInlineTable(_ values: [String: String]) -> String {
+        "{ " + values.keys.sorted().map { "\($0) = \(tomlBasicString(values[$0] ?? ""))" }.joined(separator: ", ") + " }"
+    }
+
+    private static func isEnvironmentKey(_ value: String) -> Bool {
+        guard !value.isEmpty, value.utf8.count <= 128 else { return false }
+        return value.utf8.allSatisfy { (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 95 }
+    }
+
+    private static func isSafeAbsolutePath(_ value: String) -> Bool {
+        value.hasPrefix("/") && !value.contains("\0")
+            && !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
     }
 }
 
@@ -587,22 +776,47 @@ public final class ProviderAdapter: Sendable {
         environment: [String: String],
         cancellationRequestURL: URL?,
         apiBudgetUSD: Double? = nil,
+        mcpServerCommands: [MCPServerCommandConfiguration] = [],
         onProgress: (@Sendable (String) -> Void)? = nil,
         cancellation: CancellationFlag = CancellationFlag()
     ) async throws -> (ProcessResult, ProviderOutput) {
         let resumeID = session.providerSessionID
+        let activeMCPServers = mcpServerCommands
+        let mcpEnvironment = activeMCPServers.isEmpty ? [:] : MCPRuntimeEnvironment.nativeServerEnvironment(
+            provider: provider,
+            privateDirectory: mcpPrivateDirectory(from: environment, fallback: session.workspacePath)
+        )
         let arguments: [String]
         if let apiBudgetUSD {
             guard provider == .claude, resumeID == nil else {
                 throw AgentBridgeError.sessionMismatch("API 模式目前僅支援新的 Claude 工作階段。")
             }
-            arguments = try ProviderCommandBuilder.claudeAPIArguments(workspacePath: session.workspacePath, budgetUSD: apiBudgetUSD)
+            arguments = try ProviderCommandBuilder.claudeAPIArguments(
+                workspacePath: session.workspacePath,
+                budgetUSD: apiBudgetUSD,
+                activeMCPServers: activeMCPServers,
+                mcpWorkingDirectory: session.workspacePath,
+                mcpEnvironment: mcpEnvironment
+            )
         } else {
             switch provider {
             case .codex:
-                arguments = try ProviderCommandBuilder.codexRunArguments(workspacePath: session.workspacePath, resumeID: resumeID)
+                arguments = try ProviderCommandBuilder.codexRunArguments(
+                    workspacePath: session.workspacePath,
+                    resumeID: resumeID,
+                    activeMCPServers: activeMCPServers,
+                    mcpWorkingDirectory: session.workspacePath,
+                    mcpEnvironment: mcpEnvironment
+                )
             case .claude:
-                arguments = try ProviderCommandBuilder.claudeReadOnlyArguments(workspacePath: session.workspacePath, sessionID: session.id, resumeID: resumeID)
+                arguments = try ProviderCommandBuilder.claudeReadOnlyArguments(
+                    workspacePath: session.workspacePath,
+                    sessionID: session.id,
+                    resumeID: resumeID,
+                    activeMCPServers: activeMCPServers,
+                    mcpWorkingDirectory: session.workspacePath,
+                    mcpEnvironment: mcpEnvironment
+                )
             }
         }
         let lineHandler: (@Sendable (String) -> Void)?
@@ -638,21 +852,33 @@ public final class ProviderAdapter: Sendable {
         executableURL: URL,
         environment: [String: String],
         cancellationRequestURL: URL?,
+        mcpServerCommands: [MCPServerCommandConfiguration] = [],
         onProgress: (@Sendable (String) -> Void)? = nil,
         cancellation: CancellationFlag = CancellationFlag()
     ) async throws -> (ProcessResult, ProviderOutput) {
+        let activeMCPServers = mcpServerCommands
+        let mcpEnvironment = activeMCPServers.isEmpty ? [:] : MCPRuntimeEnvironment.nativeServerEnvironment(
+            provider: provider,
+            privateDirectory: mcpPrivateDirectory(from: environment, fallback: session.workspacePath)
+        )
         let arguments: [String]
         switch provider {
         case .codex:
             arguments = try ProviderCommandBuilder.codexChangeArguments(
                 workspacePath: session.workspacePath,
-                resumeID: session.providerSessionID
+                resumeID: session.providerSessionID,
+                activeMCPServers: activeMCPServers,
+                mcpWorkingDirectory: session.workspacePath,
+                mcpEnvironment: mcpEnvironment
             )
         case .claude:
             arguments = try ProviderCommandBuilder.claudeChangeArguments(
                 workspacePath: session.workspacePath,
                 sessionID: session.id,
-                resumeID: session.providerSessionID
+                resumeID: session.providerSessionID,
+                activeMCPServers: activeMCPServers,
+                mcpWorkingDirectory: session.workspacePath,
+                mcpEnvironment: mcpEnvironment
             )
         }
         let lineHandler: (@Sendable (String) -> Void)?
@@ -683,6 +909,13 @@ public final class ProviderAdapter: Sendable {
             throw AgentBridgeError.providerFailed(provider, "CLI 結束代碼 \(result.exitCode)。")
         }
         return (result, try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated))
+    }
+
+    private func mcpPrivateDirectory(from environment: [String: String], fallback: String) -> URL {
+        if let path = environment["TMPDIR"], path.hasPrefix("/"), !path.contains("\0") {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return URL(fileURLWithPath: fallback, isDirectory: true)
     }
 
     public func runInteractiveClaude(

@@ -3,14 +3,24 @@
 [繁體中文](FEATURE_PLAN.zh-TW.md)
 
 - **Status:** Proposed
-- **Basis:** AgentBridge 0.6.0 source and docs, [Product Gap Study](PRODUCT_GAP_STUDY.md), and first-party product docs reviewed 2026-10-27
-- **Last reviewed:** 2026-10-27
+- **Basis:** AgentBridge 0.8.0 working tree, the 0.6.0 competitive-scan baseline, [Product Gap Study](PRODUCT_GAP_STUDY.md), and first-party CLI documentation
+- **Last reviewed:** 2026-11-01
 
 ### Product goal
 
 Make AgentBridge the local-first workspace shared by Codex and Claude Code. Users should be able to choose a real signed-in account and plan, work in an isolated workspace, understand the agent's actions, review each change, and explicitly accept the result. Keep using the providers' official CLIs and sign-in flows; do not copy provider credentials or rebuild their native interactive TUIs.
 
-### Implementation status — AgentBridge 0.6.0 (2026-10-27)
+### Current additions — AgentBridge 0.8.0
+
+AgentBridge 0.8.0 adds a subscription-only autonomous workflow with a generated and reviewed dependency graph, selected role accounts, bounded concurrency and repair, exact-diff review, approved verification, persistent status and cancellation. It does not automatically accept, commit, push or merge results. Each provider start continues to use the account's local usage controls. Sharing between roles respects profile consent.
+
+Active Skills/MCP are separate from the legacy metadata registry: reviewed Skill instruction snapshots enter managed prompts, while approved installed local stdio MCP servers run through a per-invocation tool-filtering proxy. Import does not execute anything. Configuration changes and revocation invalidate authorization. Script-backed Skills, automatic installation and remote HTTP/OAuth MCP are outside this initial runtime.
+
+Mac Control is included as a typed preset with target-App enforcement, default Observe mode, additional Control consent, permission-readiness checks and Stop Control. Screen capture includes the entire main display and may reach the selected provider; it is not a target-window crop. macOS permission grants remain manual. See [Autonomous Workflows and Active Extensions](AUTONOMY_AND_EXTENSIONS.md) for architecture, scope and validation boundaries.
+
+These additions require their own build/test and release verification. Acceptance of the 0.7.0 notarized artifact does not establish acceptance of 0.8.0.
+
+### Historical baseline — AgentBridge 0.6.0 (2026-10-27)
 
 AgentBridge 0.6.0 uses English by default and supports English and Traditional Chinese throughout the app UI. Users can change and save the language in the app header; both localization resources are bundled with the app.
 
@@ -83,9 +93,9 @@ Every item below is a release requirement. Do not claim safe code modification i
 
 ### Later work that does not block the first release
 
-- Task scheduling beyond tracking launched local runs, independent parallel provider agents, and mobile/remote monitoring. Parallel work must follow the single-task plan, diff, and verification flow above.
-- Browser automation, web preview, screenshot/recording artifacts. The first release should fully support text artifacts such as plans, diffs, command output, and test reports.
-- Actual provider extension activation, MCP connections, hooks, setup scripts, GitHub issues/PRs, and Linear/Slack integrations. The 0.6.0 extension UI stores inert descriptors and per-project permission metadata only; this does not activate or execute extensions.
+- Calendar/background scheduling and mobile/remote monitoring beyond the new bounded local autonomous workflow.
+- Browser-specific automation, web previews and recording artifacts beyond the scoped Mac Control preset. Plans, diffs, command output and test reports remain the primary persistent artifacts.
+- Remote HTTP/OAuth MCP, Skill scripts, hooks, automatic installation, GitHub issues/PRs and Linear/Slack integrations. Local stdio MCP and Skill instruction activation are covered by the current additions above; old metadata grants remain inert.
 - Attachments, images, drag-and-drop, advanced search, bulk rename/archive, historical usage analytics/export, collapsible panels, and localizations beyond English and Traditional Chinese.
 - A third model provider. First complete safe changes, review, handoff, and spend control for Codex and Claude.
 

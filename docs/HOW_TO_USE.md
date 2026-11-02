@@ -164,7 +164,7 @@ The **Activity** timeline shows ordered redacted audit events, including recorde
 
 To carry memory across commits, choose a source session and a target session for the same canonical repository and different commits. The target session's bound account must allow shared memory. Select the source turns and/or notes, review the source and target commits, and create the handoff. The next allowed target-session prompt receives only that selection as a bounded (16 KiB), clearly marked untrusted historical JSON envelope with provenance. Handoffs are stored below the selected workspace data root in `shared-memory/project-handoffs/`. Native provider TUI transcripts are never imported.
 
-The **Skills and MCP policy** panel accepts a descriptor JSON file as inert metadata. Review the requested scopes, select only narrow per-project permissions, and explicitly grant or revoke them. The grant is policy metadata only: it does not activate a provider extension, connect an MCP server, or run scripts.
+The legacy policy panel under **Skills & MCP** accepts descriptor JSON as inert metadata. Its grants do not execute anything. Use the separate active-runtime controls described below to load actual Skill instructions or connect an installed MCP server.
 
 The CLI offers focused counterparts:
 
@@ -186,7 +186,25 @@ The CLI offers focused counterparts:
 
 `changes apply` returns a local uncommitted worktree. `changes verify` sends custom argv directly to the executable. The CLI commands do not bypass the same subscription, plan approval, verification, base-commit, and account-consent checks as the app.
 
-### 10. Common CLI operations
+### 10. Autonomous workflows
+
+Open **Autonomous Workflow**, select the source repository and enter a specific goal. Select the actual provider/account for the planner, researcher, implementer and reviewer. Calls use subscription login. Confirm profile sharing consent before allowing dependencies or the exact implementation diff to reach other roles.
+
+Choose concurrency, review/repair, duration and invocation limits; concurrency and review rounds cannot exceed three. Choose no verification, project CI or a reviewed custom executable with separate arguments. **Generate plan** makes a real planning request, but does not approve its work. Inspect every task, dependency, prompt, source commit, account, memory choice, extension, verifier and limit. Acknowledge review, approve the displayed digest, then start. Changed bindings require new approval.
+
+Inspect the exact frozen project-memory context before approval. Each consenting role receives that snapshot across provider/account choices. Select Save final summary and a consenting destination profile to append one workflow result to shared memory. Dependency-output sharing is a separate choice.
+
+Inspect task progress and review/verification results. Cancel stops scheduling and requests termination. Interrupted work is not replayed automatically. After completion, open the implementer's changes in **Project Conversations** and use existing diff, verification, acceptance and apply controls. No automatic commit, push or merge occurs. The CLI exposes matching plan/approve/run/status/cancel operations under `autonomous`; consult `agentbridge help` for exact flags and JSON status output.
+
+### 11. Active Skills, MCP and Mac Control
+
+With a project session selected, open **Skills & MCP**. Import an actual SKILL.md snapshot or a runtime manifest for an installed local stdio MCP server. Import is inert. Inspect the MCP command, argv and exact tool list before explicitly testing; testing starts that local program for initialization and tool discovery. Preview activation, review the digest, instructions/tools and trust warning, explicitly consent, then enable for the selected project/provider/profile. Old metadata grants are insufficient. Changes and revocation invalidate bindings; use a fresh session when prompted. Skill scripts/hooks and remote HTTP/OAuth MCP are not supported by this initial runtime.
+
+For **Mac Control**, select the installed-helper preset and a target bundle ID. Open the target app yourself and start with **Observe**. Import the preset, then select **Test Connection** to inspect its tools before previewing and enabling it. Permission testing reads readiness and does not grant macOS permissions; grant Accessibility and Screen Recording manually if required. Enable only after reviewing screen-access consent; **Control** additionally requires input consent. Protected system, credential, terminal and AgentBridge targets are refused. Screenshots include the entire main display and may be sent to the selected provider; the target restricts input, not image capture. Close private windows first. **Stop Control** revokes scope and requests cancellation, but cannot undo delivered actions. General desktop consent does not authorize credentials, system authentication, security changes or consequential transactions.
+
+Select enabled extension IDs for each workflow role before generating its plan. Their scope and limits are bound into approval. Repository read-only mode does not make a separately approved external tool read-only. See the [design and validation boundaries](AUTONOMY_AND_EXTENSIONS.md).
+
+### 12. Common CLI operations
 
 After building, the CLI is at `build/swiftpm/debug/agentbridge`. Prompts are read from standard input rather than placed in process arguments:
 
@@ -205,7 +223,7 @@ printf '%s' 'Key decisions and next steps.' | "$CLI" memory notes "$SESSION_ID"
 
 The CLI also supports `agentbridge cancel SESSION_ID` to cancel a run, `agentbridge budget` to view the API ledger, and `agentbridge help` to show all commands. Clearing shared memory requires explicit confirmation: `agentbridge memory clear SESSION_ID --confirm`.
 
-### 11. Troubleshooting
+### 13. Troubleshooting
 
 - **Provider CLI not found:** Set its path under **CLI Executables**, or add the official CLI to a path visible to the login environment, then click **Check Sign-in and Plan**.
 - **Not signed in or plan not confirmed:** Complete subscription login in the provider's official CLI. For a new account, use AgentBridge's login terminal, then check again.
@@ -214,7 +232,7 @@ The CLI also supports `agentbridge cancel SESSION_ID` to cancel a run, `agentbri
 - **API run is rejected or a reservation is not returned:** Check `agentbridge budget` or the UTC monthly balance shown in the app. Unknown, failed, or cancelled charges are not treated as free and the reservation is retained.
 - **Workspace differs from the source repository:** This is the snapshot boundary. Source changes made after session creation are not copied into that workspace automatically.
 
-### 12. Sign, notarize, and verify the app
+### 14. Sign, notarize, and verify the app
 
 `scripts/package-app.sh` rebuilds an unsigned development app. After preparing a release and passing `.codex/ci.sh`, use the shared `macos-notarization-release` helper for signing and notarization. It reads Apple notarization authentication from user-level configuration (a Keychain profile or App Store Connect API key), separate from the Claude API key. Do not place signing credentials or Apple's `.p8` private key in the repository. The app identity must be a Developer ID Application certificate. Sign the embedded `agentbridge` helper before signing the outer app bundle.
 
