@@ -190,6 +190,7 @@ public enum UsageStatisticsAggregator {
         accountProfileID: UUID,
         sessions: [SessionRecord],
         events: [AuditEvent],
+        additionalActivitySessionIDs: Set<UUID> = [],
         selectedSessionID: UUID? = nil,
         now: Date = Date()
     ) -> UsageStatisticsSnapshot {
@@ -197,7 +198,7 @@ public enum UsageStatisticsAggregator {
             let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
             guard session.provider == provider, profileID == accountProfileID else { return nil }
             return session.id
-        })
+        }).union(additionalActivitySessionIDs)
         let uniqueEvents = Dictionary(events
             .filter { matchingSessionIDs.contains($0.sessionID) && $0.timestamp <= now }
             .map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

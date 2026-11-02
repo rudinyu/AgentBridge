@@ -259,6 +259,31 @@ public final class AccountProfileStore: @unchecked Sendable {
         }
     }
 
+    /// Holds the profile-store lock while the caller copies approved context
+    /// into its destination, so consent cannot be revoked between validation
+    /// and that synchronous copy.
+    func withSharedMemoryConsent<T>(profileIDs: Set<UUID>, _ operation: () throws -> T) throws -> T {
+        try withStoreLock {
+            let document = try readDocument()
+            for id in profileIDs {
+                let allowsSharing: Bool
+                if id == AccountProfile.defaultID(for: .codex) {
+                    allowsSharing = document.defaultCodexSharedMemoryAllowed ?? true
+                } else if id == AccountProfile.defaultID(for: .claude) {
+                    allowsSharing = document.defaultClaudeSharedMemoryAllowed ?? true
+                } else if let profile = document.profiles.first(where: { $0.id == id }) {
+                    allowsSharing = profile.allowsSharedMemory
+                } else {
+                    throw AccountProfileError.profileNotFound(id)
+                }
+                guard allowsSharing else {
+                    throw AgentBridgeError.sessionMismatch("共享記憶同意已變更；請重新檢視交接內容。")
+                }
+            }
+            return try operation()
+        }
+    }
+
     /// Returns only the provider-specific configuration-directory override.
     /// The default profile deliberately returns no overrides so the app does
     /// not change or inspect the user's existing provider login.

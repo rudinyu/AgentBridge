@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0 — 2026-11-02
+
+- Added project-independent discussion chats before Git selection, with persistent redacted transcripts, account-bound subscription calls and consent-aware context sharing.
+- Added reviewed context handoffs to create a new local Git project or link an existing repository while preserving the original chat.
+- Made Chats the default app entry and added CLI chat operations and separate English/Traditional Chinese guidance.
+
 ## 0.8.0 — 2026-11-02
 
 - Added a subscription-only autonomous planner and dependency scheduler with explicit role accounts, digest-bound plan approval, bounded concurrency and repair, exact-diff review, optional approved verification, persistent status and cancellation.

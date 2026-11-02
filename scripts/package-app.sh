@@ -2,6 +2,61 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_NAME="AgentBridge.app"
+APP_NAME_WAS_SET=false
+print_usage() {
+  cat <<'USAGE'
+Usage: ./scripts/package-app.sh [--app-name NAME.app]
+
+Creates the app bundle under this repository's build/ directory.
+The default output is build/AgentBridge.app.
+
+Example:
+  ./scripts/package-app.sh --app-name AgentBridge-0.9.0-dev.app
+USAGE
+}
+
+while (($# > 0)); do
+  case "$1" in
+    --app-name)
+      if (($# < 2)); then
+        printf 'Error: --app-name requires a NAME.app value.\n' >&2
+        print_usage >&2
+        exit 2
+      fi
+      if [[ "$APP_NAME_WAS_SET" == true ]]; then
+        printf 'Error: --app-name may only be specified once.\n' >&2
+        print_usage >&2
+        exit 2
+      fi
+      APP_NAME="$2"
+      APP_NAME_WAS_SET=true
+      shift 2
+      ;;
+    --help|-h)
+      if (($# != 1)); then
+        printf 'Error: --help must be used by itself.\n' >&2
+        print_usage >&2
+        exit 2
+      fi
+      print_usage
+      exit 0
+      ;;
+    *)
+      printf 'Error: unknown option: %s\n' "$1" >&2
+      print_usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ ! "$APP_NAME" =~ ^[A-Za-z0-9._-]+\.app$ || "$APP_NAME" == *..* ]]; then
+  printf 'Error: --app-name must be a simple NAME.app without slash or dot-dot.\n' >&2
+  print_usage >&2
+  exit 2
+fi
+
+APP="$ROOT/build/$APP_NAME"
 DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 export DEVELOPER_DIR
 export TMPDIR="$ROOT/build/tmp"
@@ -20,7 +75,6 @@ SWIFTPM_OPTIONS=(
 swift build "${SWIFTPM_OPTIONS[@]}" --product agentbridge
 swift build "${SWIFTPM_OPTIONS[@]}" --product AgentBridgeApp
 
-APP="$ROOT/build/AgentBridge.app"
 if [[ -L "$APP" ]]; then
   rm "$APP"
 elif [[ -e "$APP" ]]; then
@@ -84,8 +138,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key><string>org.agentbridge.app</string>
   <key>CFBundleName</key><string>AgentBridge</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.8.0</string>
-  <key>CFBundleVersion</key><string>7</string>
+    <key>CFBundleShortVersionString</key><string>0.9.0</string>
+  <key>CFBundleVersion</key><string>8</string>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hant</string></array>
   <key>LSMinimumSystemVersion</key><string>14.0</string>

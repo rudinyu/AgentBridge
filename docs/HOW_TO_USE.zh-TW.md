@@ -20,11 +20,11 @@
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh
-open build/AgentBridge.app
+./scripts/package-app.sh --app-name AgentBridge-0.9.0-dev.app
+open build/AgentBridge-0.9.0-dev.app
 ```
 
-CI 腳本會建置 CLI、App 並執行核心測試；封裝腳本會建立未簽署的本機 App。上述步驟不登入 provider、不呼叫模型，也不產生 Claude API 費用。若已建置，只要重新開啟 `build/AgentBridge.app` 即可。若要交付給其他 Mac，請完成本文最後的 Developer ID 簽署與 Apple 公證流程。
+CI 腳本會建置 CLI、App 並執行核心測試；封裝腳本會建立未簽署的本機 App。上述步驟不登入 provider、不呼叫模型，也不產生 Claude API 費用。若已建置此開發版，只要重新開啟 `build/AgentBridge-0.9.0-dev.app` 即可。若要交付給其他 Mac，請完成本文最後的 Developer ID 簽署與 Apple 公證流程。
 
 第一次開啟 App 時，請選擇或建立存放工作區資料的資料夾。AgentBridge 必須先有這項設定才會建立工作階段，不會暗中把資料夾放在 Application Support。App 和 CLI 共用已保存的位置。自選資料夾會包含隔離的工作階段工作區與共用記憶：
 
@@ -54,7 +54,11 @@ CLI=build/swiftpm/debug/agentbridge
 
 如果找不到 CLI，可在 App 左側「CLI 執行檔」填入執行檔路徑，或使用 `agentbridge settings binary codex|claude /absolute/path/to/cli` 設定。官方 CLI 管理其登入資料；AgentBridge 不複製現有憑證。
 
-### 3. 開始一段唯讀 App 對話
+### 3. 先討論，再建立專案
+
+開啟 **Chats**，按 **New Chat**，選擇供應商／帳戶即可傳送訊息，不必先有儲存庫。討論固定使用訂閱登入，保存獨立有界逐字稿，後續脈絡受帳戶共享同意限制。方向明確後選擇 **Create Git Project** 或 **Link Existing Project**，明確選取要移轉的已完成回合（也可完全不移轉），檢視目的位置與摘要後再確認。新本機儲存庫只有空白初始提交；核准內容另存於 AgentBridge 記憶，原始聊天保留。詳見[先聊天流程](CHAT_FIRST_WORKFLOW.zh-TW.md)。
+
+### 3a. 開始一段唯讀 App 對話
 
 1. 在左側「助理」選 Codex 或 Claude。Codex 只提供官方 CLI 訂閱登入。
 2. 在「官方 CLI 帳戶」確認目前帳戶。若需要其他帳戶，先依下節新增並登入。

@@ -3,14 +3,20 @@
 [繁體中文](FEATURE_PLAN.zh-TW.md)
 
 - **Status:** Proposed
-- **Basis:** AgentBridge 0.8.0 working tree, the 0.6.0 competitive-scan baseline, [Product Gap Study](PRODUCT_GAP_STUDY.md), and first-party CLI documentation
-- **Last reviewed:** 2026-11-01
+- **Basis:** AgentBridge 0.9.0 working tree, the 0.6.0 competitive-scan baseline, [Product Gap Study](PRODUCT_GAP_STUDY.md), and first-party CLI documentation
+- **Last reviewed:** 2026-11-02
 
 ### Product goal
 
 Make AgentBridge the local-first workspace shared by Codex and Claude Code. Users should be able to choose a real signed-in account and plan, work in an isolated workspace, understand the agent's actions, review each change, and explicitly accept the result. Keep using the providers' official CLIs and sign-in flows; do not copy provider credentials or rebuild their native interactive TUIs.
 
-### Current additions — AgentBridge 0.8.0
+### Current additions — AgentBridge 0.9.0
+
+Start with a saved chat before selecting a Git project. Discussions bind a provider/account, use official subscription sign-in, and keep consent-aware context across provider switches. A reviewed handoff can create a new local Git project or link an existing repository, carrying only selected completed turns into separate project memory. The original discussion remains available. See [Chat first, then a Git project](CHAT_FIRST_WORKFLOW.md).
+
+This development version still requires the user-selected data folder. It does not require a repository for discussion, initialize Git during chat, or use API credits for discussion calls. Signing and notarization of 0.9.0 remain separate release work.
+
+### Previous additions — AgentBridge 0.8.0
 
 AgentBridge 0.8.0 adds a subscription-only autonomous workflow with a generated and reviewed dependency graph, selected role accounts, bounded concurrency and repair, exact-diff review, approved verification, persistent status and cancellation. It does not automatically accept, commit, push or merge results. Each provider start continues to use the account's local usage controls. Sharing between roles respects profile consent.
 
@@ -18,7 +24,7 @@ Active Skills/MCP are separate from the legacy metadata registry: reviewed Skill
 
 Mac Control is included as a typed preset with target-App enforcement, default Observe mode, additional Control consent, permission-readiness checks and Stop Control. Screen capture includes the entire main display and may reach the selected provider; it is not a target-window crop. macOS permission grants remain manual. See [Autonomous Workflows and Active Extensions](AUTONOMY_AND_EXTENSIONS.md) for architecture, scope and validation boundaries.
 
-These additions require their own build/test and release verification. Acceptance of the 0.7.0 notarized artifact does not establish acceptance of 0.8.0.
+The 0.8.0 build 7 artifact completed Developer ID signing, Apple notarization, stapling and Gatekeeper verification. That result does not establish release acceptance of the 0.9.0 working tree.
 
 ### Historical baseline — AgentBridge 0.6.0 (2026-10-27)
 

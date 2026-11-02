@@ -4,13 +4,16 @@
 
 ![AgentBridge macOS app icon](Assets/AppIcon-1024.png)
 
-AgentBridge 0.8.0 is a Swift project for macOS 14 and later. It includes a shared core, the `agentbridge` command-line tool, and a native SwiftUI app. It works through the official Codex CLI and Claude Code CLI installed on the Mac. Read-only conversations from the app and CLI can share memory by source repository and pinned commit; users can explicitly carry selected memory to a different commit. A first-use setup wizard guides language, provider, workspace folder, CLI path, subscription login, shared memory, and local usage settings; open it again from **Setup Wizard** in the app header. The CLI uses the same saved workspace root. The app defaults to English and supports Traditional Chinese.
+AgentBridge 0.9.0 is a Swift project for macOS 14 and later. It includes a shared core, the `agentbridge` command-line tool, and a native SwiftUI app. It works through the official Codex CLI and Claude Code CLI installed on the Mac. Read-only conversations from the app and CLI can share memory by source repository and pinned commit; users can explicitly carry selected memory to a different commit. A first-use setup wizard guides language, provider, workspace folder, CLI path, subscription login, shared memory, and local usage settings; open it again from **Setup Wizard** in the app header. The CLI uses the same saved workspace root. The app defaults to English and supports Traditional Chinese.
 
 AgentBridge uses each official CLI's subscription login by default. Codex is subscription-only. Claude API is an optional paid mode that requires an API key, a per-run USD budget, and explicit confirmation every time. The local US$140 monthly ledger is not a hard limit on Anthropic's billing.
+
+Start with **New Chat** to discuss an idea without a Git repository. When ready, create or link a project after reviewing the context handoff. Discussions retain their own transcript and account consent; see [Chat-first Workflow](docs/CHAT_FIRST_WORKFLOW.md).
 
 ## Documentation
 
 - [Architecture and Design](ARCHITECTURE.md) · [繁體中文](ARCHITECTURE.zh-TW.md)
+- [Chat-first Workflow](docs/CHAT_FIRST_WORKFLOW.md) · [繁體中文](docs/CHAT_FIRST_WORKFLOW.zh-TW.md)
 - [How to Use](docs/HOW_TO_USE.md) · [繁體中文](docs/HOW_TO_USE.zh-TW.md)
 - [Product Gap Study](docs/PRODUCT_GAP_STUDY.md) · [繁體中文](docs/PRODUCT_GAP_STUDY.zh-TW.md)
 - [Feature Plan](docs/FEATURE_PLAN.md) · [繁體中文](docs/FEATURE_PLAN.zh-TW.md)
@@ -23,11 +26,11 @@ Requirements: macOS 14 or later, Swift 6, and an Xcode toolchain. Install and si
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh
-open build/AgentBridge.app
+./scripts/package-app.sh --app-name AgentBridge-0.9.0-dev.app
+open build/AgentBridge-0.9.0-dev.app
 ```
 
-`.codex/ci.sh` builds the CLI and app and runs the core tests. `scripts/package-app.sh` bundles the designed icon into an unsigned local `build/AgentBridge.app`. For distribution, sign with Developer ID, submit it to Apple for notarization, staple the ticket, and verify the app; see the [How to Use guide](docs/HOW_TO_USE.md). Building and checking do not require provider login, call a model, or incur Claude API charges. The CLI is at `build/swiftpm/debug/agentbridge`.
+`.codex/ci.sh` builds the CLI and app and runs the core tests. `scripts/package-app.sh --app-name AgentBridge-0.9.0-dev.app` bundles the icon into a separate unsigned development app and preserves the signed 0.8.0 bundle. The script default still creates `build/AgentBridge.app`. For distribution, sign with Developer ID, submit it to Apple for notarization, staple the ticket, and verify the app; see the [How to Use guide](docs/HOW_TO_USE.md). Building and checking do not require provider login, call a model, or incur Claude API charges. The CLI is at `build/swiftpm/debug/agentbridge`.
 
 ### Default boundaries
 

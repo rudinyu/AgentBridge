@@ -99,6 +99,43 @@ public enum RuntimeEnvironment {
 }
 
 public enum ProviderCommandBuilder {
+    /// Builds a disposable Codex conversation outside any Git project. The
+    /// working directory is an empty AgentBridge-owned directory, and no MCP
+    /// servers, project instructions, Skills, or resume ID are supplied.
+    public static func codexDiscussionArguments(workspacePath: String) -> [String] {
+        [
+            "--no-daemon",
+            "--disable", "hooks", "--disable", "plugins", "--disable", "apps",
+            "--disable", "skill_mcp_dependency_install", "--disable", "in_app_browser",
+            "--sandbox", "read-only", "--cd", workspacePath, "exec",
+            "--skip-git-repo-check", "--ephemeral",
+            "--json", "--ignore-user-config", "--ignore-rules",
+            "-c", "forced_login_method=\"chatgpt\"",
+            "-c", "model_provider=\"openai\"",
+            "-c", "features.shell_tool=false",
+            "-c", "features.multi_agent=false",
+            "-c", "features.goals=false",
+            "-c", "features.memories=false",
+            "-c", "features.remote_plugin=false",
+            "-c", "web_search=\"disabled\"",
+            "-c", "history.persistence=\"none\"",
+            "-"
+        ]
+    }
+
+    /// Builds a Claude subscription conversation without persistent vendor
+    /// history or any built-in, MCP, browser, or slash-command tools.
+    public static func claudeDiscussionArguments() -> [String] {
+        [
+            "--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+            "--permission-mode", "dontAsk", "--permission-prompts", "none", "--restricted", "--safe-mode",
+            "--setting-sources", "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
+            "--disable-slash-commands", "--no-chrome",
+            "--settings", "{\"disableAllHooks\":true,\"apiKeyHelper\":\"\",\"forceLoginMethod\":\"claudeai\"}",
+            "--tools", "", "--no-session-persistence", "--input-format", "text"
+        ]
+    }
+
     public static func codexRunArguments(
         workspacePath: String,
         resumeID: String? = nil,
@@ -832,6 +869,51 @@ public final class ProviderAdapter: Sendable {
             arguments: arguments,
             environment: environment,
             workingDirectoryURL: URL(fileURLWithPath: session.workspacePath, isDirectory: true),
+            standardInput: Data(prompt.utf8),
+            timeout: 300,
+            outputLimit: 1_048_576,
+            cancellationRequestURL: cancellationRequestURL,
+            standardOutputLineHandler: lineHandler
+        )
+        let result = try await runner.run(spec, cancellation: cancellation)
+        if result.timedOut { throw AgentBridgeError.processTimedOut }
+        if result.wasCancelled { throw AgentBridgeError.processCancelled }
+        guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "CLI 結束代碼 \(result.exitCode)。") }
+        return (result, try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated))
+    }
+
+    public func runDiscussion(
+        provider: AgentProvider,
+        discussionWorkspaceURL: URL,
+        prompt: String,
+        executableURL: URL,
+        environment: [String: String],
+        cancellationRequestURL: URL?,
+        onProgress: (@Sendable (String) -> Void)? = nil,
+        cancellation: CancellationFlag = CancellationFlag()
+    ) async throws -> (ProcessResult, ProviderOutput) {
+        let arguments: [String]
+        switch provider {
+        case .codex:
+            arguments = ProviderCommandBuilder.codexDiscussionArguments(workspacePath: discussionWorkspaceURL.path)
+        case .claude:
+            arguments = ProviderCommandBuilder.claudeDiscussionArguments()
+        }
+        let lineHandler: (@Sendable (String) -> Void)?
+        if let onProgress {
+            lineHandler = { @Sendable line in
+                if let message = ProviderOutputParser.progressMessage(provider: provider, jsonLine: line) {
+                    onProgress(message)
+                }
+            }
+        } else {
+            lineHandler = nil
+        }
+        let spec = ProcessSpec(
+            executableURL: executableURL,
+            arguments: arguments,
+            environment: environment,
+            workingDirectoryURL: discussionWorkspaceURL,
             standardInput: Data(prompt.utf8),
             timeout: 300,
             outputLimit: 1_048_576,

@@ -2,7 +2,7 @@
 
 [Traditional Chinese](HOW_TO_USE.zh-TW.md)
 
-This guide covers setup, sign-in, starting conversations, switching providers and accounts, shared memory, and enabling Claude API when needed. The app and CLI share a saved user-selected workspace data folder, while private settings, account profiles, session/audit metadata, and usage/budget ledgers stay in Application Support.
+This guide covers setup, sign-in, project-independent discussions, creating/linking projects, switching providers and accounts, shared memory, and enabling Claude API when needed. The app and CLI share a saved user-selected workspace data folder, while private settings, account profiles, session/audit metadata, and usage/budget ledgers stay in Application Support.
 
 ### 1. Set up and launch the app
 
@@ -18,11 +18,11 @@ Run these commands from the AgentBridge repository:
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh
-open build/AgentBridge.app
+./scripts/package-app.sh --app-name AgentBridge-0.9.0-dev.app
+open build/AgentBridge-0.9.0-dev.app
 ```
 
-The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built the app, open `build/AgentBridge.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
+The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built this development version, open `build/AgentBridge-0.9.0-dev.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
 
 The first time the app opens, choose or create a folder for workspace data. AgentBridge requires this selection before it can create sessions; it does not silently choose a folder under Application Support. The app and CLI use the same saved location. The selected folder contains isolated session workspaces and shared memory:
 
@@ -52,7 +52,11 @@ CLI=build/swiftpm/debug/agentbridge
 
 If a CLI cannot be found, enter its executable path under **CLI Executables**, or set it with `agentbridge settings binary codex|claude /absolute/path/to/cli`. The official CLI manages its own login data; AgentBridge does not copy existing credentials.
 
-### 3. Start a read-only App conversation
+### 3. Start with a discussion, before Git
+
+Open **Chats** and choose **New Chat**. Select a provider/account and send the first message; no repository is required. Discussion chats always use subscription login, keep their own bounded transcript, and apply account sharing consent to future context. When ready, choose **Create Git Project** or **Link Existing Project**, select exactly which completed turns to transfer (including none), inspect the destination and digest, and explicitly confirm. A new local repository starts with an empty commit; transferred context stays in AgentBridge memory. The original chat remains available. See [Chat-first Workflow](CHAT_FIRST_WORKFLOW.md).
+
+### 3a. Open a read-only project conversation
 
 1. Choose Codex or Claude under **Assistant**. Codex only offers official CLI subscription login.
 2. Confirm the account under **Official CLI Accounts**. To use another account, add and sign in to it first as described below.

@@ -46,8 +46,17 @@ final class AppModel: ObservableObject {
     @Published var setupWizardAuthCheckInProgress = false
     @Published var settings = BridgeSettings()
     @Published var sessions: [SessionRecord] = []
+    @Published var discussions: [DiscussionRecord] = []
     @Published var events: [AuditEvent] = []
     @Published var selectedSessionID: UUID?
+    @Published var selectedDiscussionID: UUID?
+    @Published var isProjectConversationActive = false
+    @Published var discussionProgress: [UUID: String] = [:]
+    @Published var isPreparingDiscussionHandoff = false
+    @Published var isApplyingDiscussionHandoff = false
+    @Published var newDiscussionProvider: AgentProvider = .codex
+    @Published var newDiscussionProfileID: UUID?
+    @Published var discussionProfilePreferences: [AgentProvider: UUID] = [:]
     @Published var requestedAccessMode: AccessMode = .readOnly
     @Published var repositoryPath = ""
     @Published var workspaceRootPath = ""
@@ -132,6 +141,8 @@ final class AppModel: ObservableObject {
     private var service: BridgeService?
     private var store: AuditStore?
     private var activeRunFlags: [UUID: CancellationFlag] = [:]
+    private var discussionCancellationFlags: [UUID: CancellationFlag] = [:]
+    private var hasInitializedNewDiscussionTarget = false
     private var autonomousCancellationFlags: [UUID: CancellationFlag] = [:]
     private var activeRunSessionID: UUID?
     private var activeTerminalProfileID: UUID?
@@ -149,6 +160,8 @@ final class AppModel: ObservableObject {
     private static let setupWizardStepPreferenceKey = "setupWizard.step"
     private static let setupWizardProviderPreferenceKey = "setupWizard.provider"
     private static let setupWizardProfileNamePreferenceKey = "setupWizard.profileName"
+    private static let newDiscussionProviderPreferenceKey = "discussion.newProvider"
+    private static let discussionProfilePreferencesKey = "discussion.profilePreferences"
     private static func setupWizardCLIPathPreferenceKey(for provider: AgentProvider) -> String {
         "setupWizard.cliPath.\(provider.rawValue)"
     }
@@ -160,6 +173,17 @@ final class AppModel: ObservableObject {
     var canPresentSetupWizard: Bool {
         activeRunFlags.isEmpty && !isVerifying && !isSwitchingTarget && !isChangingWorkspaceRoot
             && !terminalRunning && terminalLaunch == nil && !hasActiveAutonomousWorkflow
+            && !hasActiveDiscussionOperation
+    }
+
+    var hasActiveDiscussionOperation: Bool {
+        !discussionCancellationFlags.isEmpty || isPreparingDiscussionHandoff || isApplyingDiscussionHandoff
+            || discussions.contains(where: { $0.status.isInFlight })
+    }
+
+    func isDiscussionRunning(id: UUID) -> Bool {
+        discussionCancellationFlags[id] != nil
+            || discussions.first(where: { $0.id == id })?.status == .running
     }
 
     var hasActiveAutonomousWorkflow: Bool {
@@ -229,6 +253,18 @@ final class AppModel: ObservableObject {
 
     init() {
         appLanguage = AppLanguage.saved
+        if let savedProvider = UserDefaults.standard.string(forKey: Self.newDiscussionProviderPreferenceKey)
+            .flatMap(AgentProvider.init(rawValue:)) {
+            newDiscussionProvider = savedProvider
+        }
+        if let savedProfiles = UserDefaults.standard.dictionary(forKey: Self.discussionProfilePreferencesKey) as? [String: String] {
+            for (providerRawValue, profileRawValue) in savedProfiles {
+                guard let provider = AgentProvider(rawValue: providerRawValue),
+                      let profileID = UUID(uuidString: profileRawValue) else { continue }
+                discussionProfilePreferences[provider] = profileID
+            }
+        }
+        newDiscussionProfileID = discussionProfilePreferences[newDiscussionProvider]
         do {
             guard try RuntimePaths.workspaceRootConfiguration() != nil else {
                 status = "請選擇工作區資料根目錄以開始。"
@@ -306,14 +342,16 @@ final class AppModel: ObservableObject {
 
     func dismissSetupWizardForNow() {
         guard SetupWizardFlow.canDismiss(workspaceRootConfigured: workspaceRootIsConfigured),
-              !isChangingWorkspaceRoot, !terminalRunning, terminalLaunch == nil else { return }
+              !isChangingWorkspaceRoot, !terminalRunning, terminalLaunch == nil,
+              !hasActiveDiscussionOperation else { return }
         isSetupWizardPresented = false
         errorMessage = nil
     }
 
     func finishSetupWizard() {
         guard SetupWizardFlow.canDismiss(workspaceRootConfigured: workspaceRootIsConfigured),
-              !isChangingWorkspaceRoot, !terminalRunning, terminalLaunch == nil else { return }
+              !isChangingWorkspaceRoot, !terminalRunning, terminalLaunch == nil,
+              !hasActiveDiscussionOperation else { return }
         UserDefaults.standard.set(true, forKey: Self.setupWizardCompletedPreferenceKey)
         setupWizardStep = .welcome
         isSetupWizardPresented = false
@@ -637,6 +675,41 @@ final class AppModel: ObservableObject {
         sessions.first(where: { $0.id == selectedSessionID })
     }
 
+    var selectedDiscussion: DiscussionRecord? {
+        discussions.first(where: { $0.id == selectedDiscussionID })
+    }
+
+    func profileName(for provider: AgentProvider, profileID: UUID) -> String {
+        accountProfiles[provider]?.first(where: { $0.id == profileID })?.name
+            ?? localized("Current local login")
+    }
+
+    func profileAllowsSharedMemory(provider: AgentProvider, profileID: UUID) -> Bool {
+        accountProfiles[provider]?.first(where: { $0.id == profileID })?.allowsSharedMemory ?? false
+    }
+
+    func preferredDiscussionProfileID(for provider: AgentProvider) -> UUID? {
+        discussionProfilePreferences[provider]
+            ?? (newDiscussionProvider == provider ? newDiscussionProfileID : nil)
+            ?? selectedProfileIDs[provider]
+            ?? accountProfiles[provider]?.first?.id
+    }
+
+    func openDiscussion(_ id: UUID) {
+        selectedDiscussionID = id
+        isProjectConversationActive = false
+    }
+
+    func openProjectSession(_ id: UUID) {
+        selectedDiscussionID = nil
+        isProjectConversationActive = true
+        guard selectedSessionID != id else {
+            selectedSessionDidChange()
+            return
+        }
+        selectedSessionID = id
+    }
+
     var selectedChangePlanDraftMatchesSaved: Bool {
         guard let plan = selectedSession?.changePlan else { return false }
         return ChangePlanDraft(
@@ -721,7 +794,9 @@ final class AppModel: ObservableObject {
                 accountProfiles[provider] = try service.accountProfiles(provider: provider)
                 selectedProfileIDs[provider] = try service.selectedAccountProfile(provider: provider).id
             }
+            reconcileNewDiscussionTarget()
             sessions = try service.sessions()
+            refreshDiscussions()
             taskRecords = try service.taskRecords()
             extensionDescriptors = try service.extensionDescriptors()
             do {
@@ -775,6 +850,36 @@ final class AppModel: ObservableObject {
             try refreshUsageStatisticsIfNeeded(service: service, force: forceUsageStatistics)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func refreshDiscussions() {
+        guard let service else {
+            discussions = []
+            return
+        }
+        do {
+            discussions = try service.discussions()
+            if let selectedDiscussionID,
+               !discussions.contains(where: { $0.id == selectedDiscussionID }) {
+                self.selectedDiscussionID = nil
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    private func refreshDiscussion(id: UUID) -> DiscussionRecord? {
+        guard let service else { return nil }
+        do {
+            let discussion = try service.discussion(id: id)
+            if discussions.first(where: { $0.id == id }) != discussion {
+                replaceDiscussion(discussion)
+            }
+            return discussion
+        } catch {
+            return nil
         }
     }
 
@@ -908,8 +1013,8 @@ final class AppModel: ObservableObject {
     }
 
     func selectDefaultProvider(_ provider: AgentProvider) {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+            errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
         guard settings.defaultProvider != provider else { return }
@@ -938,8 +1043,8 @@ final class AppModel: ObservableObject {
     }
 
     func selectUsageMode(_ usageMode: UsageMode) {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+            errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
         guard settings.defaultProvider == .claude,
@@ -1252,7 +1357,8 @@ final class AppModel: ObservableObject {
 
     func chooseWorkspaceRoot() {
         guard !isChangingWorkspaceRoot, !isRunning, !isVerifying, !isSwitchingTarget,
-              !terminalRunning, terminalLaunch == nil, !hasActiveAutonomousWorkflow else { return }
+              !terminalRunning, terminalLaunch == nil, !hasActiveAutonomousWorkflow,
+              !hasActiveDiscussionOperation else { return }
         let panel = NSOpenPanel()
         panel.title = localized("選擇工作區資料根目錄")
         panel.message = localized("AgentBridge 會在此資料夾保存隔離工作區與共用記憶；私人設定和用量資料仍保留在 Application Support。")
@@ -1298,8 +1404,8 @@ final class AppModel: ObservableObject {
     }
 
     func saveSettings() {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+            errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
         guard let service else { return }
@@ -1314,8 +1420,8 @@ final class AppModel: ObservableObject {
     }
 
     func checkAuthentication() {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Provider checks are paused while an autonomous workflow is active.")
+        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+            errorMessage = localized("Provider checks are paused while a discussion request is active.")
             return
         }
         guard let profile = selectedAccountProfile else { errorMessage = "找不到所選帳戶設定。"; return }
@@ -1414,6 +1520,7 @@ final class AppModel: ObservableObject {
                 let session = try await service.createSession(sourcePath: repositoryPath, provider: provider, accessMode: access)
                 status = session.sourceWasDirty ? "工作階段已建立。來源未提交變更已排除。" : "工作階段已建立。"
                 refresh()
+                isProjectConversationActive = true
                 selectedSessionID = session.id
                 selectedSessionDidChange()
             } catch {
@@ -1421,6 +1528,270 @@ final class AppModel: ObservableObject {
                 status = "無法建立工作階段。"
             }
         }
+    }
+
+    func createDiscussion(provider: AgentProvider? = nil, profileID: UUID? = nil) {
+        guard let service else { return }
+        let targetProvider = provider ?? newDiscussionProvider
+        guard let targetProfileID = profileID
+            ?? (targetProvider == newDiscussionProvider ? newDiscussionProfileID : nil)
+            ?? discussionProfilePreferences[targetProvider]
+            ?? selectedProfileIDs[targetProvider]
+            ?? accountProfiles[targetProvider]?.first?.id else {
+            errorMessage = localized("No account profile is available for this provider.")
+            return
+        }
+        do {
+            let discussion = try service.createDiscussion(provider: targetProvider, accountProfileID: targetProfileID)
+            discussions = try service.discussions()
+            discussionProfilePreferences[targetProvider] = targetProfileID
+            persistDiscussionProfilePreferences()
+            selectedDiscussionID = discussion.id
+            isProjectConversationActive = false
+            discussionProgress.removeValue(forKey: discussion.id)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func setDiscussionTarget(id: UUID, provider: AgentProvider, profileID: UUID) {
+        guard !hasActiveDiscussionOperation else {
+            errorMessage = localized("A discussion request or project handoff is already in progress.")
+            return
+        }
+        if let discussion = discussions.first(where: { $0.id == id }), discussion.status.isInFlight {
+            errorMessage = localized("A discussion request or project handoff is already in progress.")
+            return
+        }
+        guard let service,
+              accountProfiles[provider]?.contains(where: { $0.id == profileID }) == true else {
+            errorMessage = localized("Choose an available account profile.")
+            return
+        }
+        do {
+            let discussion = try service.setDiscussionTarget(id: id, provider: provider, accountProfileID: profileID)
+            replaceDiscussion(discussion)
+            discussionProfilePreferences[provider] = profileID
+            persistDiscussionProfilePreferences()
+            discussionProgress.removeValue(forKey: id)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func setDiscussionProvider(id: UUID, provider: AgentProvider) {
+        guard let profileID = preferredDiscussionProfileID(for: provider) else {
+            errorMessage = localized("No account profile is available for this provider.")
+            return
+        }
+        setDiscussionTarget(id: id, provider: provider, profileID: profileID)
+    }
+
+    func selectNewDiscussionProvider(_ provider: AgentProvider) {
+        newDiscussionProvider = provider
+        UserDefaults.standard.set(provider.rawValue, forKey: Self.newDiscussionProviderPreferenceKey)
+        let profileID = discussionProfilePreferences[provider]
+            ?? selectedProfileIDs[provider]
+            ?? accountProfiles[provider]?.first?.id
+        newDiscussionProfileID = profileID
+        if let profileID {
+            discussionProfilePreferences[provider] = profileID
+            persistDiscussionProfilePreferences()
+        }
+    }
+
+    func selectNewDiscussionProfile(_ profileID: UUID) {
+        guard accountProfiles[newDiscussionProvider]?.contains(where: { $0.id == profileID }) == true else { return }
+        newDiscussionProfileID = profileID
+        discussionProfilePreferences[newDiscussionProvider] = profileID
+        persistDiscussionProfilePreferences()
+    }
+
+    func sendDiscussionMessage(id: UUID, prompt: String, isShareable: Bool) {
+        guard let service,
+              let discussion = discussions.first(where: { $0.id == id }) else { return }
+        let message = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return }
+        guard !hasActiveDiscussionOperation, !discussion.status.isInFlight,
+              discussionCancellationFlags[id] == nil else { return }
+
+        let hasConsent = profileAllowsSharedMemory(provider: discussion.provider, profileID: discussion.accountProfileID)
+        let cancellation = CancellationFlag()
+        discussionCancellationFlags[id] = cancellation
+        discussionProgress[id] = localized("Sending with the official CLI subscription sign-in…")
+        errorMessage = nil
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let startingRevision = discussion.revision
+            let refreshTask = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    guard let self, self.discussionCancellationFlags[id] != nil else { return }
+                    if let latest = self.refreshDiscussion(id: id),
+                       latest.revision != startingRevision || latest.status.isInFlight {
+                        return
+                    }
+                    do {
+                        try await Task.sleep(nanoseconds: 250_000_000)
+                    } catch {
+                        return
+                    }
+                }
+            }
+            defer {
+                refreshTask.cancel()
+                self.discussionCancellationFlags.removeValue(forKey: id)
+                self.refreshDiscussions()
+            }
+            do {
+                _ = try await service.sendDiscussionMessage(
+                    id: id,
+                    prompt: message,
+                    isShareable: isShareable && hasConsent,
+                    cancellation: cancellation
+                ) { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.refreshDiscussion(id: id)
+                        guard self.selectedDiscussionID == id else { return }
+                        self.discussionProgress[id] = progress
+                    }
+                }
+                let persistedDiscussion = self.refreshDiscussion(id: id)
+                if persistedDiscussion?.status == .completed || !cancellation.isCancelled {
+                    self.discussionProgress[id] = self.localized("Response complete.")
+                } else {
+                    self.discussionProgress[id] = self.localized("Cancellation requested…")
+                }
+            } catch {
+                let persistedDiscussion = self.refreshDiscussion(id: id)
+                if cancellation.isCancelled || persistedDiscussion?.status == .cancelled {
+                    self.discussionProgress[id] = self.localized("Cancellation requested…")
+                } else {
+                    self.discussionProgress[id] = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func cancelDiscussion(id: UUID) {
+        guard let service else { return }
+        let cancellation = discussionCancellationFlags[id]
+        cancellation?.cancel()
+
+        guard let latest = refreshDiscussion(id: id) else {
+            if cancellation != nil {
+                discussionProgress[id] = localized("Cancellation requested…")
+            }
+            return
+        }
+        guard latest.status == .running else {
+            if latest.status == .completed {
+                discussionProgress[id] = localized("Response complete.")
+            } else if cancellation != nil {
+                discussionProgress[id] = localized("Cancellation requested…")
+            }
+            return
+        }
+
+        do {
+            try service.cancelDiscussion(id: id)
+            discussionProgress[id] = localized("Cancellation requested…")
+            refreshDiscussion(id: id)
+        } catch {
+            let updated = refreshDiscussion(id: id)
+            if updated?.status == .completed {
+                discussionProgress[id] = localized("Response complete.")
+            } else if updated?.status == .cancelled || cancellation != nil {
+                discussionProgress[id] = localized("Cancellation requested…")
+            } else if updated?.status == .running {
+                discussionProgress[id] = error.localizedDescription
+            }
+        }
+    }
+
+    func prepareDiscussionProjectHandoff(
+        discussionID: UUID,
+        destinationPath: String,
+        mode: DiscussionProjectMode,
+        targetProvider: AgentProvider,
+        targetProfileID: UUID,
+        selectedTurnIDs: Set<UUID>,
+        accessMode: AccessMode = .readOnly
+    ) async throws -> DiscussionProjectHandoff {
+        guard let service else { throw AgentBridgeError.persistence("The workspace data root is not ready.") }
+        isPreparingDiscussionHandoff = true
+        defer { isPreparingDiscussionHandoff = false }
+        let handoff = try await service.prepareDiscussionProjectHandoff(
+            discussionID: discussionID,
+            destinationPath: destinationPath,
+            mode: mode,
+            targetProvider: targetProvider,
+            targetProfileID: targetProfileID,
+            selectedTurnIDs: selectedTurnIDs,
+            accessMode: accessMode
+        )
+        refreshDiscussions()
+        return handoff
+    }
+
+    func createOrAttachProjectFromDiscussion(
+        handoffID: UUID,
+        reviewedDigest: String
+    ) async throws -> SessionRecord {
+        guard let service else { throw AgentBridgeError.persistence("The workspace data root is not ready.") }
+        isApplyingDiscussionHandoff = true
+        defer { isApplyingDiscussionHandoff = false }
+        let session = try await service.createOrAttachProjectFromDiscussion(
+            handoffID: handoffID,
+            reviewedDigest: reviewedDigest,
+            explicitConfirmation: true
+        )
+        refresh()
+        refreshDiscussions()
+        selectedDiscussionID = nil
+        isProjectConversationActive = true
+        selectedSessionID = session.id
+        return session
+    }
+
+    private func replaceDiscussion(_ discussion: DiscussionRecord) {
+        if let index = discussions.firstIndex(where: { $0.id == discussion.id }) {
+            discussions[index] = discussion
+        } else {
+            discussions.insert(discussion, at: 0)
+        }
+        discussions.sort { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func reconcileNewDiscussionTarget() {
+        if !hasInitializedNewDiscussionTarget {
+            if UserDefaults.standard.string(forKey: Self.newDiscussionProviderPreferenceKey) == nil {
+                newDiscussionProvider = settings.defaultProvider
+            }
+            hasInitializedNewDiscussionTarget = true
+        }
+        let availableProfiles = accountProfiles[newDiscussionProvider] ?? []
+        if let newDiscussionProfileID,
+           availableProfiles.contains(where: { $0.id == newDiscussionProfileID }) { return }
+        let preferredProfileID = discussionProfilePreferences[newDiscussionProvider]
+        let selectedProfileID = selectedProfileIDs[newDiscussionProvider]
+        newDiscussionProfileID = [preferredProfileID, selectedProfileID, availableProfiles.first?.id]
+            .compactMap { $0 }
+            .first(where: { id in availableProfiles.contains(where: { $0.id == id }) })
+        if let newDiscussionProfileID {
+            discussionProfilePreferences[newDiscussionProvider] = newDiscussionProfileID
+            persistDiscussionProfilePreferences()
+        }
+    }
+
+    private func persistDiscussionProfilePreferences() {
+        let values = Dictionary(uniqueKeysWithValues: discussionProfilePreferences.map {
+            ($0.key.rawValue, $0.value.uuidString.lowercased())
+        })
+        UserDefaults.standard.set(values, forKey: Self.discussionProfilePreferencesKey)
     }
 
     func runPrompt() {
@@ -2337,6 +2708,7 @@ final class AppModel: ObservableObject {
     }
 
     private func selectOrCreateSession(for provider: AgentProvider, anchoredTo anchor: SessionRecord) {
+        guard isProjectConversationActive else { return }
         guard let profileID = selectedProfileIDs[provider], let service else { return }
         let access: AccessMode
         if settings.usageMode == .subscription,
@@ -2384,8 +2756,8 @@ final class AppModel: ObservableObject {
     }
 
     func selectAccountProfile(_ profileID: UUID) {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+            errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
         guard let service else { return }
@@ -2408,8 +2780,8 @@ final class AppModel: ObservableObject {
     }
 
     func createAccountProfile() {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+            errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
         guard let service else { return }
@@ -2436,8 +2808,8 @@ final class AppModel: ObservableObject {
     }
 
     func setSelectedAccountMemorySharing(_ allowed: Bool) {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Provider and account settings are locked while an autonomous workflow is active.")
+        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+            errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
         guard let service, let profile = selectedAccountProfile else { return }
@@ -2478,9 +2850,11 @@ final class AppModel: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var model = AppModel()
-    @State private var mainArea: MainArea = .conversation
+    @State private var mainArea: MainArea = .chats
+    @State private var isProjectConfigurationExpanded = false
 
     private enum MainArea: String, CaseIterable, Identifiable {
+        case chats
         case conversation
         case autonomous
         case extensions
@@ -2498,18 +2872,11 @@ struct ContentView: View {
                     mainAreaPicker
                     Divider()
                     HStack(spacing: 0) {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 12) {
-                                settingsPanel
-                                usagePanel
-                                accountPanel
-                                workspacePanel
-                                sessionList
-                                taskBoardPanel
-                            }
-                            .padding(12)
+                        if mainArea == .chats {
+                            chatsSidebar
+                        } else {
+                            projectSidebar
                         }
-                        .frame(width: 330)
                         Divider()
                         mainAreaContent
                     }
@@ -2583,7 +2950,8 @@ struct ContentView: View {
                 .font(.title2.weight(.semibold)).foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
                 Text("AgentBridge").font(.headline)
-                Text("Codex 與 Claude 共用專案記憶").font(.caption).foregroundStyle(.secondary)
+                Text("Start with a chat; hand off to Git when you’re ready.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             Picker("語言", selection: $model.appLanguage) {
@@ -2594,13 +2962,17 @@ struct ContentView: View {
             Button(model.localized("Setup Wizard")) { model.openSetupWizard() }
                 .disabled(!model.canPresentSetupWizard)
             if let session = model.selectedSession {
-                Text("\(session.provider.rawValue.capitalized) · \(model.selectedSessionProfileName)")
-                    .font(.caption.weight(.medium))
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(.quaternary, in: Capsule())
+                if model.isProjectConversationActive {
+                    Text("\(session.provider.rawValue.capitalized) · \(model.selectedSessionProfileName)")
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(.quaternary, in: Capsule())
+                }
             }
-            Button("檢查登入與方案") { model.checkAuthentication() }
-                .disabled(model.hasActiveAutonomousWorkflow)
+            if model.selectedDiscussionID == nil {
+                Button("檢查登入與方案") { model.checkAuthentication() }
+                    .disabled(model.hasActiveAutonomousWorkflow || model.hasActiveDiscussionOperation)
+            }
             Button("更新") { model.refresh() }
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
@@ -2608,6 +2980,7 @@ struct ContentView: View {
 
     private var mainAreaPicker: some View {
         HStack(spacing: 8) {
+            mainAreaButton(.chats, title: "Chats", symbol: "bubble.left.and.bubble.right")
             mainAreaButton(.conversation, title: "Project Conversations", symbol: "text.bubble")
             mainAreaButton(.autonomous, title: "Autonomous Workflow", symbol: "point.3.connected.trianglepath.dotted")
             mainAreaButton(.extensions, title: "Skills & MCP", symbol: "puzzlepiece.extension")
@@ -2620,8 +2993,18 @@ struct ContentView: View {
     private func mainAreaButton(_ area: MainArea, title: String, symbol: String) -> some View {
         Button {
             mainArea = area
+            switch area {
+            case .chats:
+                model.isProjectConversationActive = false
+            case .conversation:
+                model.selectedDiscussionID = nil
+                model.isProjectConversationActive = model.selectedSessionID != nil
+            case .autonomous, .extensions:
+                model.selectedDiscussionID = nil
+                model.isProjectConversationActive = model.selectedSessionID != nil
+            }
         } label: {
-            Label(title, systemImage: symbol)
+            Label(model.localized(title), systemImage: symbol)
                 .font(.callout.weight(mainArea == area ? .semibold : .regular))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
@@ -2634,14 +3017,17 @@ struct ContentView: View {
     @ViewBuilder
     private var mainAreaContent: some View {
         switch mainArea {
+        case .chats:
+            chatsPanel
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(14)
         case .conversation:
             conversationPanel
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(14)
         case .autonomous:
             AutonomousWorkflowView(model: model) { sessionID in
-                model.selectedSessionID = sessionID
-                model.selectedSessionDidChange()
+                model.openProjectSession(sessionID)
                 mainArea = .conversation
             }
         case .extensions:
@@ -2653,6 +3039,196 @@ struct ContentView: View {
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    private var chatsSidebar: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                GroupBox("Start a chat") {
+                    VStack(alignment: .leading, spacing: 9) {
+                        Picker("Provider", selection: Binding(
+                            get: { model.newDiscussionProvider },
+                            set: { model.selectNewDiscussionProvider($0) }
+                        )) {
+                            Text("Codex").tag(AgentProvider.codex)
+                            Text("Claude").tag(AgentProvider.claude)
+                        }
+                        if let profile = model.accountProfiles[model.newDiscussionProvider]?.first(where: {
+                            $0.id == model.newDiscussionProfileID
+                        }) {
+                            Picker("Account", selection: Binding(
+                                get: { model.newDiscussionProfileID ?? profile.id },
+                                set: { model.selectNewDiscussionProfile($0) }
+                            )) {
+                                ForEach(model.accountProfiles[model.newDiscussionProvider] ?? []) { account in
+                                    Text(account.name).tag(account.id)
+                                }
+                            }
+                        } else {
+                            Text("No account profile is available for this provider.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text("Chats always use the provider’s official CLI subscription sign-in. Claude API usage is not available here.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button {
+                            model.createDiscussion()
+                        } label: {
+                            Label("New Chat", systemImage: "plus.bubble")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isChangingWorkspaceRoot)
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                GroupBox("Chats") {
+                    if model.discussions.isEmpty {
+                        Text("No saved chats yet. Start a New Chat whenever you are ready.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 5)
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(model.discussions) { discussion in
+                                Button {
+                                    model.openDiscussion(discussion.id)
+                                } label: {
+                                    discussionRow(discussion)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+
+                GroupBox("Project sessions") {
+                    if model.sessions.isEmpty {
+                        Text("Project sessions appear here after you create or link a Git project.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 5)
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(model.sessions) { session in
+                                Button {
+                                    model.openProjectSession(session.id)
+                                    mainArea = .conversation
+                                } label: {
+                                    projectSessionRow(session)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(12)
+        }
+        .frame(width: 300)
+    }
+
+    private var projectSidebar: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                settingsPanel
+                usagePanel
+                accountPanel
+                DisclosureGroup("Project configuration", isExpanded: $isProjectConfigurationExpanded) {
+                    workspacePanel
+                        .padding(.top, 8)
+                }
+                sessionList
+                taskBoardPanel
+            }
+            .padding(12)
+        }
+        .frame(width: 330)
+    }
+
+    private func discussionRow(_ discussion: DiscussionRecord) -> some View {
+        let isSelected = model.selectedDiscussionID == discussion.id
+        let title = discussion.turns.first?.userText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let titleText = title.flatMap { $0.isEmpty ? nil : String($0.prefix(46)) }
+            ?? model.localized("New conversation")
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: discussion.provider == .codex ? "sparkle" : "message")
+                Text(titleText)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if discussion.status.isInFlight {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            Text(model.localizedFormat(
+                "%@ · %@ · %@",
+                discussion.provider.rawValue.capitalized,
+                model.profileName(for: discussion.provider, profileID: discussion.accountProfileID),
+                discussion.updatedAt.formatted(date: .abbreviated, time: .shortened)
+            ))
+                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+        .contentShape(Rectangle())
+    }
+
+    private func projectSessionRow(_ session: SessionRecord) -> some View {
+        let isSelected = model.isProjectConversationActive && model.selectedSessionID == session.id
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: session.provider == .codex ? "sparkle" : "message")
+            Text(model.localizedFormat(
+                "%@ · %@",
+                session.provider.rawValue.capitalized,
+                URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent
+            ))
+                    .font(.callout.weight(.medium)).lineLimit(1)
+            }
+            Text(model.localizedFormat("%@ · %@", model.profileName(for: session), String(session.snapshotCommit.prefix(12))))
+                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var chatsPanel: some View {
+        if let discussion = model.selectedDiscussion {
+            DiscussionChatView(model: model, discussionID: discussion.id) { session in
+                model.openProjectSession(session.id)
+                mainArea = .conversation
+            }
+        } else {
+            VStack(spacing: 14) {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.system(size: 36)).foregroundStyle(.secondary)
+                Text("Start with a chat")
+                    .font(.title2.weight(.semibold))
+                Text("Discuss an idea first. You can create a Git project or link an existing one later, after reviewing exactly what to carry over.")
+                    .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                    .frame(maxWidth: 520)
+                Button {
+                    model.createDiscussion()
+                } label: {
+                    Label("New Chat", systemImage: "plus.bubble")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.isChangingWorkspaceRoot)
+                Text("Chats are saved under your selected workspace data root and stay separate from Git projects until you choose a handoff.")
+                    .font(.caption).foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center).frame(maxWidth: 520)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -2692,7 +3268,7 @@ struct ContentView: View {
             }
             .padding(.vertical, 2)
         }
-        .disabled(model.hasActiveAutonomousWorkflow)
+        .disabled(model.hasActiveAutonomousWorkflow || model.hasActiveDiscussionOperation)
     }
 
     private var usagePanel: some View {
@@ -3127,11 +3703,11 @@ struct ContentView: View {
             }
             .padding(.vertical, 2)
         }
-        .disabled(model.hasActiveAutonomousWorkflow)
+        .disabled(model.hasActiveAutonomousWorkflow || model.hasActiveDiscussionOperation)
     }
 
     private var workspacePanel: some View {
-        GroupBox("專案") {
+        GroupBox("Project") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -3169,7 +3745,7 @@ struct ContentView: View {
             }
             .padding(.vertical, 2)
         }
-        .disabled(model.hasActiveAutonomousWorkflow)
+        .disabled(model.hasActiveAutonomousWorkflow || model.hasActiveDiscussionOperation)
     }
 
     private var sessionList: some View {
@@ -3178,7 +3754,10 @@ struct ContentView: View {
                 ContentUnavailableView("尚無工作階段", systemImage: "bubble.left.and.bubble.right")
                     .frame(minHeight: 120)
             } else {
-                List(model.sessions, selection: $model.selectedSessionID) { session in
+                List(model.sessions, selection: Binding(
+                    get: { model.selectedSessionID },
+                    set: { if let id = $0 { model.openProjectSession(id) } }
+                )) { session in
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Image(systemName: session.provider == .codex ? "sparkle" : "message")
@@ -3755,8 +4334,30 @@ struct ContentView: View {
             if model.isRunning || model.isSwitchingTarget || model.terminalRunning { ProgressView().controlSize(.small) }
             Text(model.localized(model.status)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
-            Text("AgentBridge 0.7.0").font(.caption2).foregroundStyle(.tertiary)
+            Text(appVersionFooterText).font(.caption2).foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 14).padding(.vertical, 7)
+    }
+
+    private var appVersionFooterText: String {
+        let version = appBundleMetadata("CFBundleShortVersionString")
+        let build = appBundleMetadata("CFBundleVersion")
+
+        switch (version, build) {
+        case let (.some(version), .some(build)):
+            return model.localizedFormat("AgentBridge %@ · Build %@", version, build)
+        case let (.some(version), .none):
+            return model.localizedFormat("AgentBridge %@", version)
+        case let (.none, .some(build)):
+            return model.localizedFormat("AgentBridge · Build %@", build)
+        case (.none, .none):
+            return model.localized("AgentBridge")
+        }
+    }
+
+    private func appBundleMetadata(_ key: String) -> String? {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String else { return nil }
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedValue.isEmpty ? nil : trimmedValue
     }
 }

@@ -27,7 +27,7 @@ The provider CLIs, SwiftTerm, and AgentBridgeCore in this diagram run on the use
 
 ### Purpose and implementation
 
-AgentBridge 0.8.0 is a standalone SwiftPM repository with a shared `AgentBridgeCore`, the `agentbridge` CLI, and a native SwiftUI app. The app and CLI use the same saved workspace-data root and private settings, account profiles, session index, audit store, usage controls, and API ledgers. The app defaults to English and includes bundled English and Traditional Chinese localizations with an in-app language preference. Its setup wizard resumes incomplete first-use setup and can be reopened from the header; `SetupWizardFlow` keeps the required workspace gate and optional CLI/sign-in readiness summary testable in the core. The embedded terminal uses SwiftTerm 1.20.0. `scripts/package-app.sh` assembles the release bundle, so the project does not maintain a second Xcode project configuration.
+AgentBridge 0.9.0 is a standalone SwiftPM repository with a shared `AgentBridgeCore`, the `agentbridge` CLI, and a native SwiftUI app. The app and CLI use the same saved workspace-data root and private settings, account profiles, session index, audit store, usage controls, and API ledgers. The app defaults to English and includes bundled English and Traditional Chinese localizations with an in-app language preference. Its setup wizard resumes incomplete first-use setup and can be reopened from the header; `SetupWizardFlow` keeps the required workspace gate and optional CLI/sign-in readiness summary testable in the core. The embedded terminal uses SwiftTerm 1.20.0. `scripts/package-app.sh` assembles the release bundle, so the project does not maintain a second Xcode project configuration.
 
 Provider execution goes through the official CLIs installed locally: Codex uses `codex exec --json` or its native interactive CLI; Claude Code uses `claude -p --output-format stream-json` or its native interactive CLI. AgentBridge does not export or copy OAuth credentials and does not treat a provider session ID as cross-provider memory. It manages local processes in Swift and does not add a Codex or Claude SDK runtime.
 
@@ -72,6 +72,10 @@ The setup wizard opens automatically when the app has no usable workspace root a
 The chosen folder is organized as `<root>/workspaces/<lowercase-session-uuid>/` for unique isolated Git copies and `<root>/shared-memory/` for shared conversation memory. App settings, account-profile information, dedicated provider CLI profile directories (where those CLIs store profile credentials), session indexes, audit events, usage controls, and budget ledgers remain in the private `~/Library/Application Support/AgentBridge` directory. The selected root itself is saved in that private app data.
 
 Changing the selected root copies existing workspaces and shared memory to the new location, then updates existing session records to point to the copies. The previous directories remain intact. If a destination contains different data for an existing workspace or memory file, migration stops without overwriting either copy. New sessions are created under the selected root. A root change is a storage-location change only; it does not rewrite a session's source repository path or pinned commit.
+
+### Chat-first discussions
+
+Discussion records have UUID-based identity independent of Git. Their bounded transcript lives below the selected data root and uses per-turn source/destination sharing consent. Every send uses subscription authentication, existing local usage controls and a fresh no-tool execution context. A reviewed, digest-bound handoff creates a new local repository with an empty initial commit or links an existing repository without modifying it, then copies approved context into the normal project memory scope. Original discussions remain available. See [Chat-first Workflow](docs/CHAT_FIRST_WORKFLOW.md).
 
 ### Sessions, workspace isolation, and accounts
 

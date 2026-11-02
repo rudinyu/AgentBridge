@@ -85,6 +85,98 @@ final class WorkspaceRootConfigurationTests: XCTestCase {
         XCTAssertTrue(fileManager.fileExists(atPath: actualRoot.path))
     }
 
+    func testChangeRootMigratesDiscussionsAndUpdatesTheirDataRootWithoutRemovingSource() async throws {
+        let fileManager = FileManager.default
+        let testRoot = try makeTemporaryDirectory()
+        defer { try? fileManager.removeItem(at: testRoot) }
+        let privateRoot = testRoot.appendingPathComponent("private", isDirectory: true)
+        let oldRoot = testRoot.appendingPathComponent("old-workspace", isDirectory: true)
+        let newRoot = testRoot.appendingPathComponent("new-workspace", isDirectory: true)
+        try fileManager.createDirectory(at: oldRoot, withIntermediateDirectories: true)
+        try WorkspaceRootConfigurationStore.save(
+            selectedRootURL: oldRoot,
+            priorRootURLs: [],
+            privateRootURL: privateRoot
+        )
+
+        let oldAuditStore = try AuditStore(
+            rootURL: privateRoot,
+            workspaceRootURL: oldRoot,
+            managedWorkspaceRoots: []
+        )
+        let oldService = try BridgeService(store: oldAuditStore)
+        var discussion = try oldService.createDiscussion(provider: .codex)
+        discussion.turns.append(DiscussionTurn(
+            provider: .codex,
+            accountProfileID: AccountProfile.defaultID(for: .codex),
+            sourceSharedMemoryConsent: true,
+            isShareable: false,
+            userText: "Keep this discussion when the workspace folder changes.",
+            assistantText: "The original conversation remains available."
+        ))
+        discussion.revision += 1
+        let oldDiscussionStore = try DiscussionStore(rootURL: oldRoot.appendingPathComponent("discussions", isDirectory: true))
+        discussion = try oldDiscussionStore.save(discussion)
+
+        _ = try await WorkspaceRootCoordinator.changeRoot(to: newRoot, privateRootURL: privateRoot)
+
+        let newAuditStore = try AuditStore(
+            rootURL: privateRoot,
+            workspaceRootURL: newRoot,
+            managedWorkspaceRoots: [oldRoot]
+        )
+        let newService = try BridgeService(store: newAuditStore)
+        let migrated = try newService.discussion(id: discussion.id)
+        XCTAssertEqual(migrated.dataRootPath, newRoot.path)
+        XCTAssertEqual(migrated.turns.map(\.id), discussion.turns.map(\.id))
+        XCTAssertEqual(migrated.turns.map(\.userText), discussion.turns.map(\.userText))
+        XCTAssertEqual(migrated.turns.compactMap(\.assistantText), discussion.turns.compactMap(\.assistantText))
+        XCTAssertEqual(migrated.turns.map(\.isShareable), discussion.turns.map(\.isShareable))
+        XCTAssertEqual(try oldDiscussionStore.record(id: discussion.id)?.dataRootPath, oldRoot.path)
+        XCTAssertTrue(fileManager.fileExists(atPath: oldRoot.appendingPathComponent("discussions/\(discussion.id.uuidString.lowercased()).json").path))
+    }
+
+    func testChangeRootBlocksWhenASourceDiscussionIsInFlight() async throws {
+        let fileManager = FileManager.default
+        let testRoot = try makeTemporaryDirectory()
+        defer { try? fileManager.removeItem(at: testRoot) }
+        let privateRoot = testRoot.appendingPathComponent("private", isDirectory: true)
+        let oldRoot = testRoot.appendingPathComponent("old-workspace", isDirectory: true)
+        let newRoot = testRoot.appendingPathComponent("new-workspace", isDirectory: true)
+        try fileManager.createDirectory(at: oldRoot, withIntermediateDirectories: true)
+        try WorkspaceRootConfigurationStore.save(
+            selectedRootURL: oldRoot,
+            priorRootURLs: [],
+            privateRootURL: privateRoot
+        )
+        let oldAuditStore = try AuditStore(
+            rootURL: privateRoot,
+            workspaceRootURL: oldRoot,
+            managedWorkspaceRoots: []
+        )
+        let oldService = try BridgeService(store: oldAuditStore)
+        let discussion = try oldService.createDiscussion(provider: .codex)
+        let discussionStore = try DiscussionStore(rootURL: oldRoot.appendingPathComponent("discussions", isDirectory: true))
+        var active = try XCTUnwrap(discussionStore.record(id: discussion.id))
+        active.status = .running
+        _ = try discussionStore.save(active)
+        let activeLease = try oldAuditStore.acquireRunLease(for: discussion.id)
+        defer { withExtendedLifetime(activeLease) {} }
+
+        do {
+            _ = try await WorkspaceRootCoordinator.changeRoot(to: newRoot, privateRootURL: privateRoot)
+            XCTFail("Workspace root migration must not move an in-flight discussion.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch = error else { return XCTFail("Unexpected migration error: \(error)") }
+        }
+        XCTAssertEqual(
+            try WorkspaceRootConfigurationStore.load(privateRootURL: privateRoot)?.selectedRootURL,
+            oldRoot
+        )
+        XCTAssertFalse(fileManager.fileExists(atPath: newRoot.appendingPathComponent("discussions/\(discussion.id.uuidString.lowercased()).json").path))
+        XCTAssertEqual(try discussionStore.record(id: discussion.id)?.status, .running)
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AgentBridge-WorkspaceRoot-\(UUID().uuidString.lowercased())", isDirectory: true)

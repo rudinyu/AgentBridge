@@ -33,7 +33,7 @@ Icon 以深靛藍底色呈現兩個不同助理節點，透過一道明亮的弧
 
 ## 目標與實作方式
 
-AgentBridge 0.8.0 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCore`、`agentbridge` CLI 與原生 SwiftUI App。App 和 CLI 共用已保存的工作區資料根目錄，以及私有設定、帳戶、工作階段索引、稽核、用量控制與 API 帳本。App 預設使用英文，並內建英文與繁體中文資源，可在 App 內選擇並保存語言。設定精靈會續接尚未完成的首次設定，也可從標題列重新開啟；`SetupWizardFlow` 將必要的工作區限制與選用的 CLI／登入狀態摘要做成可測試的核心邏輯。App 的內嵌終端使用 SwiftTerm 1.20.0；Release bundle 由 `scripts/package-app.sh` 組裝，不維護兩份 Xcode 專案設定。
+AgentBridge 0.9.0 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCore`、`agentbridge` CLI 與原生 SwiftUI App。App 和 CLI 共用已保存的工作區資料根目錄，以及私有設定、帳戶、工作階段索引、稽核、用量控制與 API 帳本。App 預設使用英文，並內建英文與繁體中文資源，可在 App 內選擇並保存語言。設定精靈會續接尚未完成的首次設定，也可從標題列重新開啟；`SetupWizardFlow` 將必要的工作區限制與選用的 CLI／登入狀態摘要做成可測試的核心邏輯。App 的內嵌終端使用 SwiftTerm 1.20.0；Release bundle 由 `scripts/package-app.sh` 組裝，不維護兩份 Xcode 專案設定。
 
 供應商整合透過本機官方 CLI 執行：Codex 使用 `codex exec --json` 或原生互動 CLI，Claude Code 使用 `claude -p --output-format stream-json` 或原生互動 CLI。程式不匯出或複製 OAuth 憑證，也不把 CLI session ID 當成跨供應商記憶。此專案使用 Swift 管理本機程序，不另外引入 Codex/Claude SDK runtime。
 
@@ -139,3 +139,7 @@ App 依選取帳戶動態統計 AgentBridge 管理的執行嘗試，顯示滾動
 官方 CLI 文件連結、建置步驟與對 CLI 限制的說明請見 [繁體中文版 README](README.zh-TW.md)。
 
 ---
+
+### 先聊天的討論流程
+
+討論以獨立 UUID 識別，不依賴 Git；有界逐字稿放在使用者選定的資料根目錄，後續脈絡依來源與目標帳戶的逐次共享同意決定。每次使用訂閱登入、本機用量控制及不啟用工具的全新執行脈絡。檢視並核准摘要後，才建立含空白初始提交的新本機儲存庫，或只讀連結既有儲存庫，將核准內容另行複製到一般專案記憶，保留原始討論。詳見[先聊天流程](docs/CHAT_FIRST_WORKFLOW.zh-TW.md)。

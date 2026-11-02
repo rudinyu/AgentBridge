@@ -4,7 +4,7 @@ import AgentBridgeCore
 
 @main
 enum AgentBridgeCLI {
-    private static let version = "0.8.0"
+    private static let version = "0.9.0"
 
     static func main() async {
         do {
@@ -21,6 +21,11 @@ enum AgentBridgeCLI {
         if command == "version" || command == "--version" { print("AgentBridge \(version)"); return }
         if command == "mcp-proxy" || command == "mac-control-proxy" {
             try await internalMCPProxyCommand(Array(arguments.dropFirst()))
+            return
+        }
+        if command == "chat" &&
+            (arguments.count == 1 || (arguments.count == 2 && ["help", "--help", "-h"].contains(arguments[1]))) {
+            printChatHelp()
             return
         }
         if command == "workspace" {
@@ -63,6 +68,8 @@ enum AgentBridgeCLI {
             try await usageTUICommand(Array(arguments.dropFirst()), service: service)
         case "cancel":
             try cancelCommand(Array(arguments.dropFirst()), service: service)
+        case "chat":
+            try await chatCommand(Array(arguments.dropFirst()), service: service)
         case "events":
             try showEvents(Array(arguments.dropFirst()), service: service)
         case "budget":
@@ -139,6 +146,312 @@ enum AgentBridgeCLI {
         default:
             throw AgentBridgeError.invalidInput("不認識的 workspace 子命令；用法：agentbridge workspace show|set /absolute/path/to/root")
         }
+    }
+
+    private static func chatCommand(_ arguments: [String], service: BridgeService) async throws {
+        guard let action = arguments.first else { printChatHelp(); return }
+        switch action {
+        case "help", "--help", "-h":
+            guard arguments.count == 1 else { throw AgentBridgeError.invalidInput("用法：agentbridge chat help") }
+            printChatHelp()
+        case "new":
+            var provider: AgentProvider?
+            var profileID: UUID?
+            var index = 1
+            while index < arguments.count {
+                let option = arguments[index]
+                index += 1
+                switch option {
+                case "--provider":
+                    guard provider == nil else { throw AgentBridgeError.invalidInput("--provider 不可重複。") }
+                    provider = try parseProvider(nextOptionValue(option, arguments: arguments, index: &index))
+                case "--profile":
+                    guard profileID == nil else { throw AgentBridgeError.invalidInput("--profile 不可重複。") }
+                    let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                    guard let parsed = UUID(uuidString: value) else { throw AgentBridgeError.invalidInput("--profile 需要有效的設定檔 UUID。") }
+                    profileID = parsed
+                default:
+                    throw AgentBridgeError.invalidInput("不認識的 chat new 選項 \(option)。")
+                }
+            }
+            guard let provider else { throw AgentBridgeError.invalidInput("用法：agentbridge chat new --provider codex|claude [--profile PROFILE-ID]") }
+            let resolvedProfileID: UUID
+            if let profileID {
+                resolvedProfileID = profileID
+            } else {
+                resolvedProfileID = try service.selectedAccountProfile(provider: provider).id
+            }
+            let discussion = try service.createDiscussion(provider: provider, accountProfileID: resolvedProfileID)
+            print("已建立討論：\(discussion.id.uuidString.lowercased())")
+            print("供應商：\(discussion.provider.rawValue) · 設定檔：\(discussion.accountProfileID.uuidString.lowercased())")
+            print("資料根目錄：\(discussion.dataRootPath)")
+            print("此討論不需要 Git repository；建立或連結專案時才需要指定目的地。")
+        case "list":
+            guard arguments.count == 1 else { throw AgentBridgeError.invalidInput("用法：agentbridge chat list") }
+            let discussions = try service.discussions()
+            if discussions.isEmpty { print("尚無討論。"); return }
+            for discussion in discussions {
+                print("\(discussion.id.uuidString.lowercased())  \(discussion.provider.rawValue)  \(discussion.status.rawValue)  turns=\(discussion.turns.count)  linked=\(discussion.linkedSessionIDs.count)")
+                print("  設定檔：\(discussion.accountProfileID.uuidString.lowercased()) · 更新：\(discussion.updatedAt)")
+            }
+        case "show":
+            guard arguments.count == 2, let discussionID = UUID(uuidString: arguments[1]) else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge chat show CHAT-ID")
+            }
+            let discussion = try service.discussion(id: discussionID)
+            print("討論：\(discussion.id.uuidString.lowercased())")
+            print("狀態：\(discussion.status.rawValue) · Revision：\(discussion.revision)")
+            print("目標：\(discussion.provider.rawValue) · 設定檔：\(discussion.accountProfileID.uuidString.lowercased())")
+            print("建立：\(discussion.createdAt) · 更新：\(discussion.updatedAt)")
+            if discussion.transcriptWasTruncated { print("注意：保存的對話內容曾依儲存上限截短。") }
+            if !discussion.linkedSessionIDs.isEmpty {
+                print("連結工作階段：\(discussion.linkedSessionIDs.map { $0.uuidString.lowercased() }.joined(separator: ", "))")
+            }
+            for turn in discussion.turns {
+                print("\n[回合 \(turn.id.uuidString.lowercased()) · \(turn.provider.rawValue) · \(turn.timestamp)]")
+                print("共享標記：\(turn.isShareable ? "允許" : "排除") · 來源帳戶同意：\(turn.sourceSharedMemoryConsent ? "是" : "否") · 交接仍需目標帳戶同意")
+                print("使用者（完整文字）：\(String(reflecting: OutputRedactor.redact(turn.userText)))")
+                if let assistantText = turn.assistantText {
+                    print("助理（完整文字）：\(String(reflecting: OutputRedactor.redact(assistantText)))")
+                } else {
+                    print("助理：尚無完成回覆。")
+                }
+            }
+        case "target":
+            guard arguments.count >= 2, let discussionID = UUID(uuidString: arguments[1]) else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge chat target CHAT-ID --provider codex|claude --profile PROFILE-ID")
+            }
+            var provider: AgentProvider?
+            var profileID: UUID?
+            var index = 2
+            while index < arguments.count {
+                let option = arguments[index]
+                index += 1
+                switch option {
+                case "--provider":
+                    guard provider == nil else { throw AgentBridgeError.invalidInput("--provider 不可重複。") }
+                    provider = try parseProvider(nextOptionValue(option, arguments: arguments, index: &index))
+                case "--profile":
+                    guard profileID == nil else { throw AgentBridgeError.invalidInput("--profile 不可重複。") }
+                    let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                    guard let parsed = UUID(uuidString: value) else { throw AgentBridgeError.invalidInput("--profile 需要有效的設定檔 UUID。") }
+                    profileID = parsed
+                default:
+                    throw AgentBridgeError.invalidInput("不認識的 chat target 選項 \(option)。")
+                }
+            }
+            guard let provider, let profileID else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge chat target CHAT-ID --provider codex|claude --profile PROFILE-ID")
+            }
+            let discussion = try service.setDiscussionTarget(id: discussionID, provider: provider, accountProfileID: profileID)
+            print("已更新討論目標：\(discussion.provider.rawValue) · \(discussion.accountProfileID.uuidString.lowercased())")
+        case "send":
+            guard arguments.count >= 2, let discussionID = UUID(uuidString: arguments[1]) else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge chat send CHAT-ID [--share|--no-share] < prompt.txt")
+            }
+            var isShareable = true
+            var sharingOptionWasSet = false
+            var index = 2
+            while index < arguments.count {
+                let option = arguments[index]
+                guard !sharingOptionWasSet, (option == "--share" || option == "--no-share") else {
+                    throw AgentBridgeError.invalidInput("chat send 只接受一次 --share 或 --no-share；提示文字必須從標準輸入讀取。")
+                }
+                sharingOptionWasSet = true
+                isShareable = option == "--share"
+                index += 1
+            }
+            let prompt = try readPromptFromStandardInput(maximumBytes: DiscussionStore.maximumTextBytes)
+            guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw AgentBridgeError.invalidInput("提示文字不可為空。")
+            }
+            let cancellation = CancellationFlag()
+            let signalSources = makeCancellationSignalSources(cancellation)
+            defer { signalSources.forEach { $0.cancel() } }
+            let output = try await service.sendDiscussionMessage(
+                id: discussionID,
+                prompt: prompt,
+                isShareable: isShareable,
+                cancellation: cancellation
+            ) { progress in
+                FileHandle.standardError.write(Data("• \(OutputRedactor.redact(progress))\n".utf8))
+            }
+            FileHandle.standardOutput.write(Data((OutputRedactor.redact(output.text) + "\n").utf8))
+        case "cancel":
+            guard arguments.count == 2, let discussionID = UUID(uuidString: arguments[1]) else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge chat cancel CHAT-ID")
+            }
+            try service.cancelDiscussion(id: discussionID)
+            print("已送出討論取消要求：\(discussionID.uuidString.lowercased())")
+        case "project":
+            try await chatProjectCommand(Array(arguments.dropFirst()), service: service)
+        default:
+            throw AgentBridgeError.invalidInput("不認識的 chat 子命令 \(action)。使用 `agentbridge chat help` 查看用法。")
+        }
+    }
+
+    private static func chatProjectCommand(_ arguments: [String], service: BridgeService) async throws {
+        guard let action = arguments.first else {
+            throw AgentBridgeError.invalidInput("用法：agentbridge chat project preview|apply ...")
+        }
+        switch action {
+        case "preview":
+            guard arguments.count >= 2, let discussionID = UUID(uuidString: arguments[1]) else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge chat project preview CHAT-ID --mode new|existing --path /absolute/path --provider codex|claude --profile PROFILE-ID [--access read-only|changes] [--turn TURN-ID ... | --no-context]")
+            }
+            var mode: DiscussionProjectMode?
+            var destinationPath: String?
+            var provider: AgentProvider?
+            var profileID: UUID?
+            var accessMode: AccessMode = .readOnly
+            var accessModeWasSet = false
+            var selectedTurnIDs: Set<UUID>?
+            var noContext = false
+            var index = 2
+            while index < arguments.count {
+                let option = arguments[index]
+                index += 1
+                switch option {
+                case "--mode":
+                    guard mode == nil else { throw AgentBridgeError.invalidInput("--mode 不可重複。") }
+                    switch try nextOptionValue(option, arguments: arguments, index: &index) {
+                    case "new": mode = .createNew
+                    case "existing": mode = .attachExisting
+                    default: throw AgentBridgeError.invalidInput("--mode 必須是 new 或 existing。")
+                    }
+                case "--path":
+                    guard destinationPath == nil else { throw AgentBridgeError.invalidInput("--path 不可重複。") }
+                    let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                    guard value.hasPrefix("/"), !value.contains("\0") else {
+                        throw AgentBridgeError.invalidInput("--path 必須是絕對本機路徑。")
+                    }
+                    destinationPath = value
+                case "--provider":
+                    guard provider == nil else { throw AgentBridgeError.invalidInput("--provider 不可重複。") }
+                    provider = try parseProvider(nextOptionValue(option, arguments: arguments, index: &index))
+                case "--profile":
+                    guard profileID == nil else { throw AgentBridgeError.invalidInput("--profile 不可重複。") }
+                    let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                    guard let parsed = UUID(uuidString: value) else { throw AgentBridgeError.invalidInput("--profile 需要有效的設定檔 UUID。") }
+                    profileID = parsed
+                case "--access":
+                    guard !accessModeWasSet else { throw AgentBridgeError.invalidInput("--access 不可重複。") }
+                    accessModeWasSet = true
+                    switch try nextOptionValue(option, arguments: arguments, index: &index) {
+                    case "read-only": accessMode = .readOnly
+                    case "changes": accessMode = .isolatedChanges
+                    default: throw AgentBridgeError.invalidInput("--access 必須是 read-only 或 changes。")
+                    }
+                case "--turn":
+                    guard !noContext else { throw AgentBridgeError.invalidInput("--no-context 與 --turn 互斥。") }
+                    let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                    guard let id = UUID(uuidString: value) else { throw AgentBridgeError.invalidInput("--turn 需要有效的回合 UUID。") }
+                    var selected = selectedTurnIDs ?? []
+                    guard selected.insert(id).inserted else { throw AgentBridgeError.invalidInput("同一個 --turn 不可重複。") }
+                    selectedTurnIDs = selected
+                case "--no-context":
+                    guard !noContext, selectedTurnIDs == nil else { throw AgentBridgeError.invalidInput("--no-context 與 --turn 互斥，且不可重複。") }
+                    noContext = true
+                    selectedTurnIDs = []
+                default:
+                    throw AgentBridgeError.invalidInput("不認識的 chat project preview 選項 \(option)。")
+                }
+            }
+            guard let mode, let destinationPath, let provider, let profileID else {
+                throw AgentBridgeError.invalidInput("請指定 --mode、--path、--provider 與 --profile。")
+            }
+            let handoff = try await service.prepareDiscussionProjectHandoff(
+                discussionID: discussionID,
+                destinationPath: destinationPath,
+                mode: mode,
+                targetProvider: provider,
+                targetProfileID: profileID,
+                selectedTurnIDs: selectedTurnIDs,
+                accessMode: accessMode
+            )
+            print("專案交接預覽：\(handoff.id.uuidString.lowercased())")
+            print("來源討論：\(handoff.discussionID.uuidString.lowercased()) · revision \(handoff.discussionRevision)")
+            print("目的地：\(handoff.destinationPath)")
+            print("模式：\(handoff.mode == .createNew ? "建立新 Git 專案" : "連結既有 Git 專案")")
+            if handoff.mode == .createNew {
+                print("初始 Git 提交：建立空樹提交；聊天內容不會進入 Git 歷史。套用時僅上列核准內容匯入 AgentBridge 記憶。")
+            } else if let expectedCommit = handoff.expectedRepositoryCommit {
+                print("既有 repository HEAD：\(expectedCommit)")
+            }
+            print("目標：\(handoff.targetProvider.rawValue) · \(handoff.targetProfileID.uuidString.lowercased())")
+            let accessDescription: String
+            switch handoff.accessMode {
+            case .readOnly: accessDescription = "唯讀"
+            case .interactiveManualApproval: accessDescription = "互動手動核准"
+            case .isolatedChanges: accessDescription = "隔離變更（計畫核准）"
+            }
+            print("工作階段權限：\(accessDescription)")
+            print("選取的共享內容：\(handoff.selectedTurns.count) 個回合")
+            for turn in handoff.selectedTurns {
+                print("\n[回合 \(turn.id.uuidString.lowercased()) · \(turn.provider.rawValue) · \(turn.timestamp)]")
+                print("來源設定檔：\(turn.sourceAccountProfileID.uuidString.lowercased())")
+                print("使用者（完整文字）：\(String(reflecting: turn.userText))")
+                print("助理（完整文字）：\(String(reflecting: turn.assistantText))")
+            }
+            print("檢視摘要：\(handoff.reviewedDigest)")
+            print("套用時只會把上列核准內容複製到目的工作階段的 AgentBridge 記憶；原始討論保持不變。")
+            print("預覽不會建立專案或工作階段。檢視上述全部內容後，才執行：")
+            print("agentbridge chat project apply \(handoff.id.uuidString.lowercased()) --digest \(handoff.reviewedDigest) --confirm")
+        case "apply":
+            guard arguments.count >= 2, let handoffID = UUID(uuidString: arguments[1]) else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge chat project apply HANDOFF-ID --digest REVIEW-DIGEST --confirm")
+            }
+            var reviewedDigest: String?
+            var confirmed = false
+            var index = 2
+            while index < arguments.count {
+                let option = arguments[index]
+                index += 1
+                switch option {
+                case "--digest":
+                    guard reviewedDigest == nil else { throw AgentBridgeError.invalidInput("--digest 不可重複。") }
+                    reviewedDigest = try nextOptionValue(option, arguments: arguments, index: &index)
+                case "--confirm":
+                    guard !confirmed else { throw AgentBridgeError.invalidInput("--confirm 不可重複。") }
+                    confirmed = true
+                default:
+                    throw AgentBridgeError.invalidInput("不認識的 chat project apply 選項 \(option)。")
+                }
+            }
+            guard let reviewedDigest, confirmed else {
+                throw AgentBridgeError.invalidInput("apply 需要 --digest REVIEW-DIGEST 與明確的 --confirm。")
+            }
+            let session = try await service.createOrAttachProjectFromDiscussion(
+                handoffID: handoffID,
+                reviewedDigest: reviewedDigest,
+                explicitConfirmation: true
+            )
+            print("已依已檢視的交接建立工作階段：\(session.id.uuidString.lowercased())")
+            print("工作目錄：\(session.workspacePath)")
+            print("固定提交：\(session.snapshotCommit)")
+            print("對話已保留於原討論；不會推送或遠端建立專案。")
+        default:
+            throw AgentBridgeError.invalidInput("不認識的 chat project 子命令 \(action)。使用 `agentbridge chat help` 查看用法。")
+        }
+    }
+
+    private static func printChatHelp() {
+        print("""
+        用法：agentbridge chat <子命令>
+
+          agentbridge chat new --provider codex|claude [--profile PROFILE-ID]
+          agentbridge chat list
+          agentbridge chat show CHAT-ID
+          agentbridge chat target CHAT-ID --provider codex|claude --profile PROFILE-ID
+          agentbridge chat send CHAT-ID [--share|--no-share] < prompt.txt
+          agentbridge chat cancel CHAT-ID
+          agentbridge chat project preview CHAT-ID --mode new|existing --path /absolute/path --provider codex|claude --profile PROFILE-ID [--access read-only|changes] [--turn TURN-ID ... | --no-context]
+          agentbridge chat project apply HANDOFF-ID --digest REVIEW-DIGEST --confirm
+
+        `chat new` 需要已選取的使用者資料根目錄，不需要 Git repository。`chat send` 只從標準輸入讀取 UTF-8 提示文字，最多 \(DiscussionStore.maximumTextBytes) 位元組；提示不會放在程序參數中。回合預設可供後續共享上下文與交接使用，`--share` 是明確別名；`--no-share` 仍保留回合於討論逐字稿，但排除於後續上下文與交接。來源或目標帳戶未允許共享記憶時，該同意設定會阻止回合進入共享上下文。專案預覽省略 `--turn` 與 `--no-context` 時會選取全部符合共享同意的完整回合；重複指定 `--turn` 會只選列出的回合，不符合資格的回合會讓預覽失敗；`--no-context` 明確不轉移任何回合，且不能和 `--turn` 並用。`--access` 預設唯讀。新專案先建立不含聊天內容的空 Git 初始提交；apply 只會把預覽列出的核准內容複製到目的工作階段的 AgentBridge 記憶，原始討論仍保留。預覽完成前不會建立或連結專案；apply 必須帶預覽摘要與 `--confirm`。不會呼叫遠端 Git 或 push。
+        `chat` 只使用綁定的官方 CLI 訂閱登入；不提供 API 金鑰/預算參數，也沒有 API credits 回退路徑。
+        `chat new --profile`、`chat target` 與 `project preview` 可使用已設定的相符供應商帳戶；省略新討論的 `--profile` 時會沿用該供應商目前選取的帳戶。
+        """)
     }
 
     private static func settingsCommand(_ arguments: [String], service: BridgeService) throws {
@@ -1475,6 +1788,7 @@ enum AgentBridgeCLI {
         命令：
           agentbridge workspace show
           agentbridge workspace set /absolute/path/to/root
+          agentbridge chat help
           agentbridge doctor
           agentbridge settings show
           agentbridge settings usage subscription|api
@@ -1544,6 +1858,7 @@ enum AgentBridgeCLI {
         Mac Control 僅使用 AgentBridge 內建型別化代理與固定安裝 helper。`mac-control-test` 需要 `--confirm-start`，只呼叫 `mac_status` 讀取權限狀態；不截圖、不送輸入，也不會自動要求 TCC。若缺少 macOS 權限，請在系統設定手動開啟。啟用時必須在檢視 digest 後明確提供 `--confirm-screen-capture`；Control mode 還需要獨立的 `--confirm-input-control`。完整主螢幕截圖可能包含其他視窗，會傳給選定 provider，且無法文字遮蔽；目標 app 限制只套用於輸入，不會裁切截圖。`mac-control-stop` 會撤銷該範圍 Control grant 並取消受影響的 provider 工作階段。
         新帳戶預設開啟共用記憶；`--share-memory` 可作為明確開啟標記。App 與 CLI 的唯讀聊天回合可在允許共用記憶的帳戶設定間共用；原生 Terminal 的使用者輸入與輸出不會被擷取。
         `memory show/notes/clear` 只管理 App 保存的同專案同提交記憶；clear 需要 `--confirm`。
+        `chat help` 顯示專案建立前的討論、明確共享內容預覽，以及以摘要確認的建立/連結命令。
         新工作階段位於所選資料根目錄的 workspaces/<session-id>；共享記憶位於 shared-memory。第一次使用前，請在 App 選擇資料根目錄，或執行 `agentbridge workspace set /absolute/path/to/root`。
         """)
     }

@@ -161,9 +161,17 @@ public final class AuditStore: @unchecked Sendable {
         guard let session = try session(id: sessionID), session.status == .running else {
             throw AgentBridgeError.sessionMismatch("這個工作階段目前沒有執行中的程序。")
         }
+        try requestCancellation(forRunID: sessionID)
+    }
+
+    /// Requests cancellation for any AgentBridge-managed run ID. Discussion
+    /// runs share the existing cancellation channel without pretending to be
+    /// Git-backed `SessionRecord`s.
+    public func requestCancellation(forRunID runID: UUID) throws {
         do {
-            try Data("cancel".utf8).write(to: cancellationRequestURL(for: sessionID), options: .atomic)
-            try Self.setPrivateFilePermissions(cancellationRequestURL(for: sessionID), fileManager: fileManager)
+            let requestURL = cancellationRequestURL(for: runID)
+            try Data("cancel".utf8).write(to: requestURL, options: .atomic)
+            try Self.setPrivateFilePermissions(requestURL, fileManager: fileManager)
         } catch {
             throw AgentBridgeError.persistence("無法建立取消請求。")
         }

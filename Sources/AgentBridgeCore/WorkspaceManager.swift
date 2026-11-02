@@ -109,6 +109,101 @@ public final class WorkspaceManager: @unchecked Sendable {
         }
     }
 
+    /// Validates a destination for an explicitly confirmed new project. The
+    /// path must be absolute, unused, free of symlink components, and outside
+    /// all existing Git repositories.
+    func validateNewProjectDestination(path: String) throws -> URL {
+        let destination = try validatedAbsolutePath(path)
+        var current = URL(fileURLWithPath: "/", isDirectory: true)
+        let components = destination.path.split(separator: "/")
+        guard !components.isEmpty else { throw AgentBridgeError.invalidInput("請選擇新的本機專案資料夾。") }
+        for component in components.dropLast() {
+            current.appendPathComponent(String(component), isDirectory: true)
+            var metadata = stat()
+            guard lstat(current.path, &metadata) == 0,
+                  (metadata.st_mode & S_IFMT) == S_IFDIR else {
+                throw AgentBridgeError.invalidInput("新專案路徑的父資料夾必須存在，且不得包含符號連結。")
+            }
+        }
+        var destinationMetadata = stat()
+        guard lstat(destination.path, &destinationMetadata) != 0, errno == ENOENT else {
+            throw AgentBridgeError.invalidInput("新專案目的地必須是尚不存在的資料夾；不會覆寫現有內容。")
+        }
+        var ancestor = destination.deletingLastPathComponent()
+        while ancestor.path != "/" {
+            let gitMetadata = ancestor.appendingPathComponent(".git")
+            var gitInfo = stat()
+            if lstat(gitMetadata.path, &gitInfo) == 0 {
+                throw AgentBridgeError.invalidInput("新專案不能建立在既有 Git 儲存庫內。")
+            }
+            var headInfo = stat()
+            var objectsInfo = stat()
+            var refsInfo = stat()
+            if lstat(ancestor.appendingPathComponent("HEAD").path, &headInfo) == 0,
+               lstat(ancestor.appendingPathComponent("objects").path, &objectsInfo) == 0,
+               (objectsInfo.st_mode & S_IFMT) == S_IFDIR,
+               lstat(ancestor.appendingPathComponent("refs").path, &refsInfo) == 0,
+               (refsInfo.st_mode & S_IFMT) == S_IFDIR {
+                throw AgentBridgeError.invalidInput("新專案不能建立在既有 Git 儲存庫內。")
+            }
+            ancestor.deleteLastPathComponent()
+        }
+        return destination
+    }
+
+    /// Creates an empty local repository with one empty scaffold commit. Git
+    /// global/system config, templates, hooks, remotes, and user content are
+    /// excluded from this operation.
+    func createEmptyProjectRepository(path: String) async throws -> WorkspaceSnapshot {
+        let destination = try validateNewProjectDestination(path: path)
+        guard mkdir(destination.path, mode_t(0o700)) == 0 else {
+            throw AgentBridgeError.git("無法建立新的專案資料夾；目的地可能已被建立。")
+        }
+        do {
+            _ = try await runGit(arguments: [
+                "-c", "init.defaultBranch=main", "init", "--quiet", "--", destination.path
+            ], workingDirectory: nil)
+            _ = try await runGit(arguments: [
+                "-c", "user.name=AgentBridge",
+                "-c", "user.email=agentbridge@localhost",
+                "-c", "commit.gpgsign=false",
+                "-C", destination.path,
+                "commit", "--allow-empty", "-m", "Initialize AgentBridge project"
+            ], workingDirectory: nil)
+            guard isDirectory(destination), !isSymbolicLink(destination),
+                  isDirectory(destination.appendingPathComponent(".git")),
+                  !isSymbolicLink(destination.appendingPathComponent(".git")) else {
+                throw AgentBridgeError.git("新專案的 Git 結構無法安全確認。")
+            }
+            let commit = try await gitText(["-C", destination.path, "rev-parse", "HEAD"])
+            guard commit.range(of: #"^[0-9a-fA-F]{40,64}$"#, options: .regularExpression) != nil else {
+                throw AgentBridgeError.git("無法確認新專案的初始提交。")
+            }
+            let tree = try await runGit(arguments: ["-C", destination.path, "ls-tree", "-r", "--name-only", "HEAD"], workingDirectory: nil)
+            guard !tree.outputWasTruncated, tree.standardOutput.isEmpty else {
+                throw AgentBridgeError.git("新專案初始提交包含非預期檔案。")
+            }
+            let status = try await runGit(arguments: [
+                "-C", destination.path, "status", "--porcelain=v1", "--untracked-files=normal"
+            ], workingDirectory: nil)
+            guard !status.outputWasTruncated, status.standardOutput.isEmpty else {
+                throw AgentBridgeError.git("新專案在初始化後出現非預期檔案。")
+            }
+            return WorkspaceSnapshot(repositoryRoot: destination, commit: commit.lowercased(), wasDirty: false)
+        } catch {
+            if Self.directoryContainsOnlyGitMetadata(destination) {
+                try? fileManager.removeItem(at: destination)
+            }
+            if let error = error as? AgentBridgeError { throw error }
+            throw AgentBridgeError.git("無法安全初始化新的本機 Git 專案。")
+        }
+    }
+
+    /// Read-only repository inspection for an attach-existing handoff.
+    func inspectProjectRepository(path: String) async throws -> WorkspaceSnapshot {
+        try await inspectSourceRepository(path: path)
+    }
+
     public func validateWorkspace(for session: SessionRecord, accessMode: AccessMode = .readOnly) async throws {
         guard session.policy.accessMode == accessMode,
               session.policy.workspaceReadOnly == (accessMode == .readOnly) else {
@@ -350,8 +445,7 @@ public final class WorkspaceManager: @unchecked Sendable {
     }
 
     private func inspectSourceRepository(path: String) async throws -> WorkspaceSnapshot {
-        let input = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
-        guard input.path.hasPrefix("/") else { throw AgentBridgeError.invalidInput("請選擇本機 Git 資料夾。") }
+        let input = try validatedAbsolutePath(path)
         guard isDirectory(input), !isSymbolicLink(input) else {
             throw AgentBridgeError.invalidInput("來源必須是一般資料夾；請選擇 Git 根目錄，而非符號連結。")
         }
@@ -371,6 +465,33 @@ public final class WorkspaceManager: @unchecked Sendable {
         let status = try await runGit(arguments: ["-C", root.path, "status", "--porcelain=v1", "--untracked-files=normal"], workingDirectory: nil)
         guard !status.outputWasTruncated else { throw AgentBridgeError.git("來源狀態輸出超過大小限制。") }
         return WorkspaceSnapshot(repositoryRoot: root, commit: commit.lowercased(), wasDirty: !status.standardOutput.isEmpty)
+    }
+
+    private func validatedAbsolutePath(_ path: String) throws -> URL {
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard path.hasPrefix("/"), !path.contains("\0"),
+              path.utf8.count <= 4_096,
+              !components.contains(where: { $0 == ".." }),
+              !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+            throw AgentBridgeError.invalidInput("請選擇有效的絕對本機資料夾路徑。")
+        }
+        return URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+    }
+
+    private static func directoryContainsOnlyGitMetadata(_ url: URL) -> Bool {
+        var directoryInfo = stat()
+        guard lstat(url.path, &directoryInfo) == 0,
+              (directoryInfo.st_mode & S_IFMT) == S_IFDIR else { return false }
+        do {
+            let children = try FileManager.default.contentsOfDirectory(atPath: url.path)
+            return children == [".git"] && {
+                var gitInfo = stat()
+                return lstat(url.appendingPathComponent(".git").path, &gitInfo) == 0
+                    && (gitInfo.st_mode & S_IFMT) == S_IFDIR
+            }()
+        } catch {
+            return false
+        }
     }
 
     private func resolveSnapshotCommit(_ requested: String, repositoryRoot: URL) async throws -> String {
