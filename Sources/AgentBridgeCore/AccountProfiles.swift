@@ -1,7 +1,8 @@
 import Darwin
 import Foundation
 
-/// A user-visible label for one provider login context.
+/// A user-visible label for one provider context. Local-model profiles are
+/// configuration identities only; they do not imply a provider login.
 ///
 /// This model intentionally contains no credentials or plan claims. Provider
 /// status and plan details must be obtained from that profile's own CLI login.
@@ -29,13 +30,15 @@ public struct AccountProfile: Codable, Identifiable, Equatable, Sendable {
         self.createdAt = createdAt
     }
 
-    /// Stable reserved IDs for the built-in profiles that use existing logins.
+    /// Stable reserved IDs for built-in provider profiles.
     public static func defaultID(for provider: AgentProvider) -> UUID {
         switch provider {
         case .codex:
             UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1))
         case .claude:
             UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2))
+        case .local:
+            UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3))
         }
     }
 }
@@ -136,7 +139,7 @@ public final class AccountProfileStore: @unchecked Sendable {
         }
     }
 
-    /// Returns the built-in local login first, followed by this provider's
+    /// Returns the built-in provider profile first, followed by its
     /// independent custom profiles.
     public func profiles(provider: AgentProvider) throws -> [AccountProfile] {
         try withStoreLock {
@@ -198,12 +201,12 @@ public final class AccountProfileStore: @unchecked Sendable {
                 allowsSharedMemory: allowsSharedMemory,
                 createdAt: Date()
             )
-            let directory = credentialDirectory(for: profile)
-            let profileDirectory = directory.deletingLastPathComponent()
+            let directory = provider == .local ? nil : credentialDirectory(for: profile)
+            let profileDirectory = directory?.deletingLastPathComponent()
             try Self.createPrivateDirectory(accountsURL, fileManager: fileManager)
-            try Self.createExclusivePrivateDirectory(profileDirectory)
+            if let profileDirectory { try Self.createExclusivePrivateDirectory(profileDirectory) }
             do {
-                try Self.createPrivateDirectory(directory, fileManager: fileManager)
+                if let directory { try Self.createPrivateDirectory(directory, fileManager: fileManager) }
                 document.profiles.append(profile)
                 try beforeProfileMetadataWrite?()
                 try writeDocument(document)
@@ -213,7 +216,7 @@ public final class AccountProfileStore: @unchecked Sendable {
                 // profile is already present, or if the metadata cannot be
                 // read to determine whether the rename committed.
                 let profileWasPersisted = (try? readDocument().profiles.contains(where: { $0.id == id })) ?? true
-                if !profileWasPersisted {
+                if !profileWasPersisted, let profileDirectory {
                     try? fileManager.removeItem(at: profileDirectory)
                 }
                 throw error
@@ -250,6 +253,8 @@ public final class AccountProfileStore: @unchecked Sendable {
                 document.defaultCodexSharedMemoryAllowed = allowed
             } else if id == Self.defaultID(for: .claude) {
                 document.defaultClaudeSharedMemoryAllowed = allowed
+            } else if id == Self.defaultID(for: .local) {
+                document.defaultLocalSharedMemoryAllowed = allowed
             } else if let index = document.profiles.firstIndex(where: { $0.id == id }) {
                 document.profiles[index].allowsSharedMemory = allowed
             } else {
@@ -271,6 +276,8 @@ public final class AccountProfileStore: @unchecked Sendable {
                     allowsSharing = document.defaultCodexSharedMemoryAllowed ?? true
                 } else if id == AccountProfile.defaultID(for: .claude) {
                     allowsSharing = document.defaultClaudeSharedMemoryAllowed ?? true
+                } else if id == AccountProfile.defaultID(for: .local) {
+                    allowsSharing = document.defaultLocalSharedMemoryAllowed ?? true
                 } else if let profile = document.profiles.first(where: { $0.id == id }) {
                     allowsSharing = profile.allowsSharedMemory
                 } else {
@@ -291,7 +298,7 @@ public final class AccountProfileStore: @unchecked Sendable {
         try withStoreLock {
             let document = try readDocument()
             let canonical = try canonicalProfile(profile, document: document)
-            guard !canonical.usesExistingLogin else { return [:] }
+            guard !canonical.usesExistingLogin, canonical.provider != .local else { return [:] }
             let directory = credentialDirectory(for: canonical)
             try Self.requirePrivateDirectory(directory)
             switch canonical.provider {
@@ -299,6 +306,8 @@ public final class AccountProfileStore: @unchecked Sendable {
                 return ["CODEX_HOME": directory.path]
             case .claude:
                 return ["CLAUDE_CONFIG_DIR": directory.path]
+            case .local:
+                return [:]
             }
         }
     }
@@ -322,11 +331,13 @@ public final class AccountProfileStore: @unchecked Sendable {
                     "--settings", "{\"forceLoginMethod\":\"claudeai\",\"disableAllHooks\":true,\"apiKeyHelper\":\"\"}",
                     "auth", "login"
                 ]
+            case .local:
+                throw AccountProfileError.existingLoginCannotBeReauthenticated
             }
         }
     }
 
-    private static var providers: [AgentProvider] { [.codex, .claude] }
+    private static var providers: [AgentProvider] { [.codex, .claude, .local] }
 
     private static func defaultID(for provider: AgentProvider) -> UUID {
         AccountProfile.defaultID(for: provider)
@@ -335,8 +346,10 @@ public final class AccountProfileStore: @unchecked Sendable {
     private func defaultProfile(provider: AgentProvider, document: ProfileStoreDocument) -> AccountProfile {
         AccountProfile(
             id: Self.defaultID(for: provider),
-            name: "目前本機登入",
+            name: provider == .local ? "本機模型" : "目前本機登入",
             provider: provider,
+            // Prevent login workflows from treating this built-in identity as
+            // a credential profile. Local has no authentication state.
             usesExistingLogin: true,
             allowsSharedMemory: document.defaultSharedMemoryAllowed(for: provider),
             createdAt: Date(timeIntervalSince1970: 0)
@@ -591,6 +604,8 @@ private struct ProfileStoreDocument: Codable {
     var selectedClaudeProfileID: UUID?
     var defaultCodexSharedMemoryAllowed: Bool?
     var defaultClaudeSharedMemoryAllowed: Bool?
+    var selectedLocalProfileID: UUID?
+    var defaultLocalSharedMemoryAllowed: Bool?
 
     init() {
         self.schemaVersion = AccountProfileStore.schemaVersion
@@ -599,12 +614,15 @@ private struct ProfileStoreDocument: Codable {
         self.selectedClaudeProfileID = nil
         self.defaultCodexSharedMemoryAllowed = nil
         self.defaultClaudeSharedMemoryAllowed = nil
+        self.selectedLocalProfileID = nil
+        self.defaultLocalSharedMemoryAllowed = nil
     }
 
     func selectedProfileID(for provider: AgentProvider) -> UUID? {
         switch provider {
         case .codex: selectedCodexProfileID
         case .claude: selectedClaudeProfileID
+        case .local: selectedLocalProfileID
         }
     }
 
@@ -612,6 +630,7 @@ private struct ProfileStoreDocument: Codable {
         switch provider {
         case .codex: selectedCodexProfileID = id
         case .claude: selectedClaudeProfileID = id
+        case .local: selectedLocalProfileID = id
         }
     }
 
@@ -619,6 +638,7 @@ private struct ProfileStoreDocument: Codable {
         switch provider {
         case .codex: defaultCodexSharedMemoryAllowed ?? true
         case .claude: defaultClaudeSharedMemoryAllowed ?? true
+        case .local: defaultLocalSharedMemoryAllowed ?? true
         }
     }
 }

@@ -62,7 +62,8 @@ final class DiscussionWorkflowTests: XCTestCase {
         XCTAssertFalse(reloaded.turns[0].isShareable)
         XCTAssertTrue(reloaded.turns[0].userText.contains("Keep this visible"))
         XCTAssertTrue(reloaded.turns[0].userText.contains("<redacted>"))
-        XCTAssertTrue(reloaded.turns[0].assistantText?.contains("…[truncated]…") == true)
+        XCTAssertEqual(reloaded.turns[0].assistantText, String(repeating: "🧭", count: 10_000))
+        XCTAssertFalse(reloaded.turns[0].assistantText?.contains("…[truncated]…") == true)
         XCTAssertFalse(persisted.contains(secret))
         XCTAssertLessThanOrEqual(persisted.utf8.count, DiscussionStore.maximumRecordBytes)
         let attributes = try FileManager.default.attributesOfItem(
@@ -243,16 +244,20 @@ final class DiscussionWorkflowTests: XCTestCase {
             contentsOf: fixture.root.appendingPathComponent("discussion-prompt-4"),
             encoding: .utf8
         )
-        let historyMarker = "Shared discussion history:\n"
+        let historyMarker = "HISTORICAL CONVERSATION (attributed quoted context; preserve chronology):\n"
         let historyStart = try XCTUnwrap(prompt.range(of: historyMarker)?.upperBound)
-        let requestMarker = try XCTUnwrap(prompt.range(of: "Current user request:", range: historyStart..<prompt.endIndex)?.lowerBound)
+        let requestMarker = try XCTUnwrap(prompt.range(of: "CURRENT USER REQUEST (complete and verbatim; follow this request):", range: historyStart..<prompt.endIndex)?.lowerBound)
         let historyText = prompt[historyStart..<requestMarker].trimmingCharacters(in: .whitespacesAndNewlines)
-        let historyData = Data(historyText.utf8)
-        let history = try XCTUnwrap(JSONSerialization.jsonObject(with: historyData) as? [String: Any])
-        let turns = try XCTUnwrap(history["turns"] as? [[String: Any]])
-
-        XCTAssertEqual(turns.compactMap { $0["userText"] as? String }, ["user-turn-1", "user-turn-2", "user-turn-3"])
-        XCTAssertEqual(turns.compactMap { $0["assistantText"] as? String }, ["answer-1", "answer-2", "answer-3"])
+        let chronologicalMarkers = try [
+            "user-turn-1", "answer-1",
+            "user-turn-2", "answer-2",
+            "user-turn-3", "answer-3"
+        ].map { marker in
+            try XCTUnwrap(historyText.range(of: marker), "Missing historical context marker: \(marker)").lowerBound
+        }
+        XCTAssertEqual(chronologicalMarkers, chronologicalMarkers.sorted())
+        XCTAssertFalse(historyText.contains("user-turn-4"))
+        XCTAssertTrue(prompt[requestMarker...].contains("user-turn-4"))
     }
 
     func testDiscussionCancellationUsesExistingRunMarkerAndKeepsTranscript() async throws {
@@ -444,6 +449,97 @@ final class DiscussionWorkflowTests: XCTestCase {
             .snapshot(scope: scope)
         XCTAssertTrue(memory.turns.isEmpty)
         XCTAssertEqual(try fixture.service.discussion(id: discussion.id).turns, stored.turns)
+    }
+
+    func testFullSharedMemoryRefusalHappensBeforeCreatingProjectRepository() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let destination = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+            .appendingPathComponent("AgentBridge-Discussion-FullMemory-\(UUID().uuidString.lowercased())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let profileID = AccountProfile.defaultID(for: .codex)
+        let discussionStore = try DiscussionStore(rootURL: fixture.dataRoot.appendingPathComponent("discussions", isDirectory: true))
+        let oversizedTurn = DiscussionTurn(
+            provider: .codex,
+            accountProfileID: profileID,
+            sourceSharedMemoryConsent: true,
+            isShareable: true,
+            userText: String(repeating: "u", count: DiscussionStore.maximumTextBytes),
+            assistantText: String(repeating: "a", count: DiscussionStore.maximumTextBytes)
+        )
+        let discussion = try discussionStore.create(DiscussionRecord(
+            dataRootPath: fixture.dataRoot.path,
+            provider: .codex,
+            accountProfileID: profileID,
+            turns: [oversizedTurn]
+        ))
+        let handoff = try await fixture.service.prepareDiscussionProjectHandoff(
+            discussionID: discussion.id,
+            destinationPath: destination.path,
+            mode: .createNew,
+            targetProvider: .codex,
+            targetProfileID: profileID
+        )
+
+        do {
+            _ = try await fixture.service.createOrAttachProjectFromDiscussion(
+                handoffID: handoff.id,
+                reviewedDigest: handoff.reviewedDigest,
+                explicitConfirmation: true
+            )
+            XCTFail("A handoff that cannot fit the bounded shared-memory document must stop before project creation.")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("共享記憶") || error.localizedDescription.contains("Shared memory"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertTrue(try fixture.service.sessions().isEmpty)
+        let preserved = try XCTUnwrap(try fixture.service.discussion(id: discussion.id).turns.first)
+        XCTAssertEqual(preserved.id, oversizedTurn.id)
+        XCTAssertEqual(preserved.userText, oversizedTurn.userText)
+        XCTAssertEqual(preserved.assistantText, oversizedTurn.assistantText)
+    }
+
+    func testLocalSessionIgnoresClaudeAPIModeAndRefusesUnsupportedCapabilitiesBeforeMutation() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let repository = fixture.root.appendingPathComponent("local-source", isDirectory: true)
+        try makeGitRepository(at: repository, fileName: "README.md", contents: "local fixture\n")
+
+        var settings = try fixture.service.settings()
+        settings.defaultProvider = .claude
+        settings.usageMode = .api
+        try fixture.service.saveSettings(settings)
+        let session = try await fixture.service.createSession(sourcePath: repository.path, provider: .local)
+
+        XCTAssertEqual(session.provider, .local)
+        XCTAssertEqual(session.accountProfileID, AccountProfile.defaultID(for: .local))
+        XCTAssertEqual(session.policy.accessMode, .readOnly)
+        XCTAssertEqual(try fixture.service.settings().usageMode, .api)
+
+        do {
+            _ = try await fixture.service.runReadOnly(sessionID: session.id, prompt: "blocked before HTTP", extensionIDs: ["skill"])
+            XCTFail("Local read-only calls must refuse unsupported project capabilities before starting.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch = error else { return XCTFail("Unexpected local capability error: \(error)") }
+        }
+        XCTAssertThrowsError(try fixture.service.createChangePlan(
+            sessionID: session.id,
+            title: "Change",
+            summary: "Should be rejected",
+            steps: ["Edit a file"]
+        ))
+        do {
+            _ = try await fixture.service.runInteractive(sessionID: session.id)
+            XCTFail("Local profiles cannot launch the provider terminal.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch = error else { return XCTFail("Unexpected local terminal error: \(error)") }
+        }
+
+        XCTAssertEqual(try fixture.store.session(id: session.id)?.status, .created)
+        XCTAssertFalse(try fixture.store.events(sessionID: session.id).contains(where: {
+            ["local.run.started", "run.started", "interactive.started"].contains($0.kind)
+        }))
     }
 
     func testNewDiscussionRevisionRetiresStaleHandoffsAndAllowsAnotherPreview() async throws {

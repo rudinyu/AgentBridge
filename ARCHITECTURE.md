@@ -9,6 +9,9 @@ flowchart LR
     Core --> Runner[SafeProcessRunner]
     Runner --> Codex[Codex CLI]
     Runner --> Claude[Claude Code CLI]
+    Core --> LocalHTTP[LocalModelClient loopback HTTP]
+    LocalHTTP --> LocalServer[Ollama or compatible local model server]
+    Core --> Compression[Readable context projection and preview]
     Core --> Git[WorkspaceManager isolated Git clone]
     Core --> PrivateData[(Private Application Support data)]
     PrivateData --> Sessions[Session and audit metadata]
@@ -23,11 +26,11 @@ flowchart LR
     Terminal --> Claude
 ```
 
-The provider CLIs, SwiftTerm, and AgentBridgeCore in this diagram run on the user’s Mac. The selected folder contains isolated workspaces and shared memory; private settings, account-profile data, session/audit metadata, usage controls, and API ledgers stay under Application Support. Model requests go to the selected provider through its official CLI.
+The provider CLIs, SwiftTerm, and AgentBridgeCore in this diagram run on the user’s Mac. The selected folder contains isolated workspaces and shared memory; private settings, account-profile data, session/audit metadata, usage controls, and API ledgers stay under Application Support. Cloud model requests use the selected provider's official CLI; explicit Local requests use a loopback HTTP service.
 
 ### Purpose and implementation
 
-AgentBridge 0.9.0 is a standalone SwiftPM repository with a shared `AgentBridgeCore`, the `agentbridge` CLI, and a native SwiftUI app. The app and CLI use the same saved workspace-data root and private settings, account profiles, session index, audit store, usage controls, and API ledgers. The app defaults to English and includes bundled English and Traditional Chinese localizations with an in-app language preference. Its setup wizard resumes incomplete first-use setup and can be reopened from the header; `SetupWizardFlow` keeps the required workspace gate and optional CLI/sign-in readiness summary testable in the core. The embedded terminal uses SwiftTerm 1.20.0. `scripts/package-app.sh` assembles the release bundle, so the project does not maintain a second Xcode project configuration.
+AgentBridge 0.10.0 is a standalone SwiftPM repository with a shared `AgentBridgeCore`, the `agentbridge` CLI, and a native SwiftUI app. The app and CLI use the same saved workspace-data root and private settings, account profiles, session index, audit store, usage controls, and API ledgers. The app defaults to English and includes bundled English and Traditional Chinese localizations with an in-app language preference. Its setup wizard resumes incomplete first-use setup and can be reopened from the header; `SetupWizardFlow` keeps the required workspace gate and optional CLI/sign-in readiness summary testable in the core. The embedded terminal uses SwiftTerm 1.20.0. `scripts/package-app.sh` assembles the release bundle, so the project does not maintain a second Xcode project configuration.
 
 Provider execution goes through the official CLIs installed locally: Codex uses `codex exec --json` or its native interactive CLI; Claude Code uses `claude -p --output-format stream-json` or its native interactive CLI. AgentBridge does not export or copy OAuth credentials and does not treat a provider session ID as cross-provider memory. It manages local processes in Swift and does not add a Codex or Claude SDK runtime.
 
@@ -74,6 +77,8 @@ The chosen folder is organized as `<root>/workspaces/<lowercase-session-uuid>/` 
 Changing the selected root copies existing workspaces and shared memory to the new location, then updates existing session records to point to the copies. The previous directories remain intact. If a destination contains different data for an existing workspace or memory file, migration stops without overwriting either copy. New sessions are created under the selected root. A root change is a storage-location change only; it does not rewrite a session's source repository path or pinned commit.
 
 ### Chat-first discussions
+
+Local model transport and readable context projection are described in [Local Models and Context](docs/LOCAL_MODELS_AND_CONTEXT.md). Managed read-only composition uses App-owned history; compressed history must not be combined with a resumed opaque vendor transcript that defeats the input budget. Original storage, approved context projection and model-reported usage are separate layers.
 
 Discussion records have UUID-based identity independent of Git. Their bounded transcript lives below the selected data root and uses per-turn source/destination sharing consent. Every send uses subscription authentication, existing local usage controls and a fresh no-tool execution context. A reviewed, digest-bound handoff creates a new local repository with an empty initial commit or links an existing repository without modifying it, then copies approved context into the normal project memory scope. Original discussions remain available. See [Chat-first Workflow](docs/CHAT_FIRST_WORKFLOW.md).
 

@@ -86,42 +86,55 @@ final class SharedMemoryStoreTests: XCTestCase {
         XCTAssertTrue(persisted.contains("redacted"))
     }
 
-    func testTurnCountRetentionKeepsLatestCompleteTurnsAndMarksTruncation() throws {
+    func testTurnCountLimitRefusesAppendAndPreservesEveryEarlierTurn() throws {
         let (root, store) = try makeStore()
         defer { try? FileManager.default.removeItem(at: root) }
         let scope = try makeScope()
         var ids: [UUID] = []
 
-        for index in 0..<45 {
+        for index in 0..<SharedMemoryStore.maximumStoredTurns {
             let id = UUID()
             ids.append(id)
             try store.appendTurn(scope: scope, id: id, provider: index.isMultiple(of: 2) ? .codex : .claude, userText: "user-\(index)", assistantText: "assistant-\(index)")
         }
+        XCTAssertThrowsError(try store.appendTurn(
+            scope: scope,
+            provider: .codex,
+            userText: "turn beyond bounded capacity",
+            assistantText: "must not evict prior history"
+        ))
 
         let snapshot = try store.snapshot(scope: scope)
         XCTAssertEqual(snapshot.turns.count, SharedMemoryStore.maximumStoredTurns)
-        XCTAssertEqual(snapshot.turns.first?.id, ids[5])
-        XCTAssertEqual(snapshot.turns.last?.id, ids[44])
-        XCTAssertTrue(snapshot.wasTruncated)
+        XCTAssertEqual(snapshot.turns.first?.id, ids[0])
+        XCTAssertEqual(snapshot.turns.last?.id, ids[SharedMemoryStore.maximumStoredTurns - 1])
+        XCTAssertFalse(snapshot.wasTruncated)
     }
 
-    func testByteRetentionDropsOnlyWholeOldTurnsAndKeepsDocumentBounded() throws {
+    func testByteLimitRefusesAppendAndKeepsEveryEarlierTurnAndDocumentBounded() throws {
         let (root, store) = try makeStore()
         defer { try? FileManager.default.removeItem(at: root) }
         let scope = try makeScope()
-        let userText = String(repeating: "u", count: 1_600)
-        let assistantText = String(repeating: "a", count: 1_600)
+        let userText = String(repeating: "u", count: 20_000)
+        let assistantText = String(repeating: "a", count: 20_000)
 
-        for _ in 0..<30 {
-            try store.appendTurn(scope: scope, provider: .codex, userText: userText, assistantText: assistantText)
+        var rejectedAppend = false
+        for _ in 0..<70 {
+            do {
+                try store.appendTurn(scope: scope, provider: .codex, userText: userText, assistantText: assistantText)
+            } catch {
+                rejectedAppend = true
+                break
+            }
         }
 
         let snapshot = try store.snapshot(scope: scope)
         let fileData = try Data(contentsOf: documentURL(root: root, scope: scope))
         XCTAssertLessThanOrEqual(fileData.count, SharedMemoryStore.maximumStoredBytes)
-        XCTAssertLessThan(snapshot.turns.count, 30)
+        XCTAssertTrue(rejectedAppend)
+        XCTAssertLessThan(snapshot.turns.count, 70)
         XCTAssertGreaterThan(snapshot.turns.count, 0)
-        XCTAssertTrue(snapshot.wasTruncated)
+        XCTAssertFalse(snapshot.wasTruncated)
         XCTAssertTrue(snapshot.turns.allSatisfy { $0.userText == userText && $0.assistantText == assistantText })
     }
 
@@ -161,7 +174,7 @@ final class SharedMemoryStoreTests: XCTestCase {
         XCTAssertFalse(context.prompt.contains("old answer"))
     }
 
-    func testOversizedEmojiTurnAndNotesAreRedactedClippedAndRemainAvailable() throws {
+    func testOversizedEmojiTurnAndNotesAreRedactedAndRefusedWithoutMutation() throws {
         let (root, store) = try makeStore()
         defer { try? FileManager.default.removeItem(at: root) }
         let scope = try makeScope()
@@ -170,38 +183,21 @@ final class SharedMemoryStoreTests: XCTestCase {
         let assistantText = String(repeating: "🪴", count: 262_144)
         let oversizedNotes = String(repeating: "📌", count: 65_536)
 
-        try store.appendTurn(
+        XCTAssertThrowsError(try store.appendTurn(
             scope: scope,
             id: UUID(uuidString: "12345678-1234-1234-1234-123456789abc")!,
             provider: .claude,
             userText: userText,
             assistantText: assistantText,
             knownSecrets: [secret]
-        )
-        try store.setNotes(scope: scope, notes: oversizedNotes)
+        ))
+        XCTAssertThrowsError(try store.setNotes(scope: scope, notes: oversizedNotes))
 
         let snapshot = try store.snapshot(scope: scope)
-        let fileData = try Data(contentsOf: documentURL(root: root, scope: scope))
-        let context = try store.context(scope: scope, currentPrompt: "continue", maximumBytes: 16_384)
-        let (jsonEnvelope, contextEnvelopeBytes) = try contextEnvelope(from: context.prompt)
-        let contextTurn = try XCTUnwrap((jsonEnvelope["turns"] as? [[String: Any]])?.first)
-        let persistedText = try String(contentsOf: documentURL(root: root, scope: scope), encoding: .utf8)
-
-        XCTAssertLessThanOrEqual(fileData.count, SharedMemoryStore.maximumStoredBytes)
-        XCTAssertTrue(snapshot.wasTruncated)
-        XCTAssertEqual(snapshot.turns.count, 1)
-        XCTAssertTrue(snapshot.turns[0].userText.contains("…[truncated]…"))
-        XCTAssertTrue(snapshot.turns[0].assistantText.contains("…[truncated]…"))
-        XCTAssertTrue(snapshot.notes.contains("…[truncated]…"))
-        XCTAssertFalse(persistedText.contains(secret))
-        XCTAssertTrue(persistedText.contains("redacted"))
-
-        XCTAssertLessThanOrEqual(contextEnvelopeBytes, 16_384)
-        XCTAssertTrue(context.wasTruncated)
-        XCTAssertEqual(context.includedTurnCount, 1)
-        XCTAssertTrue((contextTurn["userText"] as? String)?.contains("…[truncated]…") == true)
-        XCTAssertTrue((contextTurn["assistantText"] as? String)?.contains("…[truncated]…") == true)
-        XCTAssertTrue(context.prompt.hasSuffix("Current user request:\ncontinue"))
+        XCTAssertTrue(snapshot.turns.isEmpty)
+        XCTAssertEqual(snapshot.notes, "")
+        XCTAssertFalse(snapshot.wasTruncated)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: documentURL(root: root, scope: scope).path))
     }
 
     func testClearWritesEmptyDocumentAndAdvancesRevision() throws {

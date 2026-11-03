@@ -118,7 +118,7 @@ final class ProjectMemoryStoreTests: XCTestCase {
         XCTAssertThrowsError(try store.search(repositoryPath: repository.path, query: "  "))
     }
 
-    func testRedactionUnicodeBoundsAndStoredFileLimit() throws {
+    func testOversizedHandoffIsRefusedWithoutDroppingOrShorteningHistory() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let repository = root.appendingPathComponent("repo", isDirectory: true)
@@ -138,10 +138,46 @@ final class ProjectMemoryStoreTests: XCTestCase {
             notes: String(repeating: "🧭", count: 10_000) + " \(knownSecret)"
         )
 
-        let handoff = try store.carryForward(
+        XCTAssertThrowsError(try store.carryForward(
             source: source,
             targetCommit: commit("b"),
             selectedTurnIDs: [oversizedTurn.id],
+            includeNotes: true,
+            provider: .codex,
+            knownSecrets: [knownSecret]
+        ))
+        let oversizedNotes = try makeSnapshot(
+            repositoryPath: repository.path,
+            commit: commit("a"),
+            turns: [],
+            notes: String(repeating: "🧭", count: 10_000) + " \(knownSecret)"
+        )
+        XCTAssertThrowsError(try store.carryForward(
+            source: oversizedNotes,
+            targetCommit: commit("b"),
+            selectedTurnIDs: [],
+            includeNotes: true,
+            provider: .codex,
+            knownSecrets: [knownSecret]
+        ))
+        XCTAssertTrue(try store.list(repositoryPath: repository.path).isEmpty)
+
+        let smallTurn = SharedMemoryTurn(
+            id: UUID(),
+            provider: .codex,
+            userText: "selected \(knownSecret)",
+            assistantText: "api_key=generic-secret-value-1234567890"
+        )
+        let smallSource = try makeSnapshot(
+            repositoryPath: repository.path,
+            commit: commit("a"),
+            turns: [smallTurn],
+            notes: "Keep the selected format."
+        )
+        let handoff = try store.carryForward(
+            source: smallSource,
+            targetCommit: commit("b"),
+            selectedTurnIDs: [smallTurn.id],
             includeNotes: true,
             provider: .codex,
             knownSecrets: [knownSecret]
@@ -149,12 +185,11 @@ final class ProjectMemoryStoreTests: XCTestCase {
         let data = try Data(contentsOf: storageRoot.appendingPathComponent("handoffs.json"))
         let persisted = try String(contentsOf: storageRoot.appendingPathComponent("handoffs.json"), encoding: .utf8)
 
-        XCTAssertTrue(handoff.wasTruncated)
-        XCTAssertTrue(handoff.turns[0].wasTruncated)
-        XCTAssertLessThanOrEqual(handoff.turns[0].userText.utf8.count, 8 * 1_024)
+        XCTAssertFalse(handoff.wasTruncated)
+        XCTAssertFalse(handoff.turns[0].wasTruncated)
+        XCTAssertTrue(handoff.turns[0].userText.contains("redacted"))
+        XCTAssertTrue(handoff.turns[0].assistantText.contains("redacted"))
         XCTAssertLessThanOrEqual(try XCTUnwrap(handoff.notes).utf8.count, 12 * 1_024)
-        XCTAssertTrue(handoff.turns[0].userText.contains("…[truncated]…"))
-        XCTAssertTrue(try XCTUnwrap(handoff.notes).contains("…[truncated]…"))
         XCTAssertFalse(persisted.contains(knownSecret))
         XCTAssertFalse(persisted.contains("generic-secret-value-1234567890"))
         XCTAssertTrue(persisted.contains("redacted"))

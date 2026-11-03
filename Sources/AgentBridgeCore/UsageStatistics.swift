@@ -147,6 +147,8 @@ public struct UsageStatisticsSnapshot: Equatable, Sendable {
     public let subscriptionSessionRuns: Int
     public let apiDailyRuns: Int
     public let apiSessionRuns: Int
+    public let localDailyRuns: Int
+    public let localSessionRuns: Int
     public let sevenDayBuckets: [UsageActivityBucket]
 
     public init(
@@ -159,6 +161,8 @@ public struct UsageStatisticsSnapshot: Equatable, Sendable {
         subscriptionSessionRuns: Int,
         apiDailyRuns: Int,
         apiSessionRuns: Int,
+        localDailyRuns: Int = 0,
+        localSessionRuns: Int = 0,
         sevenDayBuckets: [UsageActivityBucket]
     ) {
         self.provider = provider
@@ -170,6 +174,8 @@ public struct UsageStatisticsSnapshot: Equatable, Sendable {
         self.subscriptionSessionRuns = subscriptionSessionRuns
         self.apiDailyRuns = apiDailyRuns
         self.apiSessionRuns = apiSessionRuns
+        self.localDailyRuns = localDailyRuns
+        self.localSessionRuns = localSessionRuns
         self.sevenDayBuckets = sevenDayBuckets
     }
 }
@@ -184,6 +190,7 @@ public enum UsageStatisticsAggregator {
     private static let subscriptionReservationKinds: Set<String> = ["usage.subscription.reserved"]
     private static let apiKinds: Set<String> = ["api.run.authorized"]
     private static let apiReservationKinds: Set<String> = ["usage.api.reserved"]
+    private static let localKinds: Set<String> = ["local.run.started"]
 
     public static func aggregate(
         provider: AgentProvider,
@@ -214,6 +221,7 @@ public enum UsageStatisticsAggregator {
         let apiReservations = uniqueEvents.values.filter {
             apiReservationKinds.contains($0.kind)
         }
+        let localEvents = uniqueEvents.values.filter { localKinds.contains($0.kind) }
         let subscriptionEvents = countedEvents(reservations: subscriptionReservations, starts: subscriptionStarts)
         let apiEvents = countedEvents(reservations: apiReservations, starts: apiStarts)
 
@@ -245,6 +253,8 @@ public enum UsageStatisticsAggregator {
             subscriptionSessionRuns: subscriptionEvents.filter(sessionMatches).count,
             apiDailyRuns: apiEvents.filter { $0.timestamp >= dayStart }.count,
             apiSessionRuns: apiEvents.filter(sessionMatches).count,
+            localDailyRuns: localEvents.filter { $0.timestamp >= dayStart }.count,
+            localSessionRuns: localEvents.filter(sessionMatches).count,
             sevenDayBuckets: buckets
         )
     }

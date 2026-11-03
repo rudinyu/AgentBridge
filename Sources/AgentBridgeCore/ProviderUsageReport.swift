@@ -70,6 +70,18 @@ public enum ProviderUsageReportParser {
         accountName: String,
         capturedAt: Date = Date()
     ) -> ProviderUsageReport {
+        guard provider != .local else {
+            return ProviderUsageReport(
+                provider: .local,
+                accountProfileID: accountProfileID,
+                accountName: accountName,
+                plan: nil,
+                usageWindows: [],
+                capturedAt: capturedAt,
+                source: "Local model endpoint (provider plan usage is unsupported)",
+                status: .noRecognizedFields
+            )
+        }
         let boundedText = bounded(screenText, maximumUTF8Bytes: maximumScreenBytes)
         let lines = boundedText
             .split(whereSeparator: \.isNewline)
@@ -196,6 +208,8 @@ public enum ProviderUsageReportParser {
                 }
                 return WindowLabel(id: "current-week", label: "Current week")
             }
+            return nil
+        case .local:
             return nil
         }
     }

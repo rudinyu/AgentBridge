@@ -1,7 +1,7 @@
 # AgentBridge 功能計畫
 
 - **狀態：** 提案
-- **依據：** AgentBridge 0.9.0 工作樹、0.6.0 競品研究基準、[產品差距研究](PRODUCT_GAP_STUDY.zh-TW.md)及官方 CLI 文件
+- **依據：** AgentBridge 0.10.0 工作樹、0.6.0 競品研究基準、[產品差距研究](PRODUCT_GAP_STUDY.zh-TW.md)及官方 CLI／API 文件
 - **最後檢視：** 2026-11-02
 
 [英文版](FEATURE_PLAN.md)
@@ -10,11 +10,15 @@
 
 把 AgentBridge 做成 Codex 與 Claude Code 共用的本機工作台：使用者能選擇實際登入的帳戶和方案、在隔離工作區完成工作、看懂 agent 做了什麼、審查每一項修改，並在明確授權下交付成果。產品沿用兩家的官方 CLI 和登入流程，不複製 provider 的憑證或重做其原生互動 TUI。
 
-### 本次新增 — AgentBridge 0.9.0
+### 本次新增 — AgentBridge 0.10.0
+
+新增明確連到本機回送位址的 Local 供應商，支援 Ollama 與相容服務，以及受管理對話共用的可讀上下文壓縮。首版聊天／唯讀範圍包含模型清單、上下文與輸出上限、取消、用量區分及上下文預覽。Local 的工具、隔離修改與自主角色尚未提供；受保護內容放不下時停止要求，不默默遺失。詳見[本機模型與上下文](LOCAL_MODELS_AND_CONTEXT.zh-TW.md)。
+
+### 前版新增 — AgentBridge 0.9.0
 
 先開始可保存的聊天，再選擇 Git 專案。討論綁定供應商與帳戶，使用官方訂閱登入，切換供應商時依共享同意延續內容。經過檢視的交接可建立新本機 Git 專案，或連結既有 Repository；只有選取的完整回合會帶入獨立的專案記憶，原討論仍保留。詳見[先聊天，再建立 Git 專案](CHAT_FIRST_WORKFLOW.zh-TW.md)。
 
-開發版仍需要使用者選擇資料資料夾；聊天不需要 Repository、不會初始化 Git，也不使用 API credits。0.9.0 的簽章與公證仍需另行完成。
+此版仍需要使用者選擇資料資料夾；聊天不需要 Repository、不會初始化 Git，也不使用 API credits。0.9.0 build 8 交付檔已通過簽章、Apple 公證、staple 與 Gatekeeper 檢查；0.10.0 須另行授權及驗證發佈。
 
 ### 前版新增 — AgentBridge 0.8.0
 

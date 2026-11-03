@@ -12,7 +12,7 @@ Creates the app bundle under this repository's build/ directory.
 The default output is build/AgentBridge.app.
 
 Example:
-  ./scripts/package-app.sh --app-name AgentBridge-0.9.0-dev.app
+  ./scripts/package-app.sh --app-name AgentBridge-0.10.0-dev.app
 USAGE
 }
 
@@ -56,6 +56,12 @@ if [[ ! "$APP_NAME" =~ ^[A-Za-z0-9._-]+\.app$ || "$APP_NAME" == *..* ]]; then
   exit 2
 fi
 
+APP_LICENSE_SOURCE="$ROOT/LICENSE"
+if [[ ! -f "$APP_LICENSE_SOURCE" || ! -r "$APP_LICENSE_SOURCE" ]]; then
+  printf 'Missing or unreadable AgentBridge license file: %s\n' "$APP_LICENSE_SOURCE" >&2
+  exit 1
+fi
+
 APP="$ROOT/build/$APP_NAME"
 DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 export DEVELOPER_DIR
@@ -90,6 +96,7 @@ if [[ -z "$RESOURCE_BUNDLE" ]]; then
 fi
 cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/SwiftTerm_SwiftTerm.bundle"
 cp "$ROOT/LICENSES/SwiftTerm-LICENSE.txt" "$APP/Contents/Resources/SwiftTerm-LICENSE.txt"
+cp "$APP_LICENSE_SOURCE" "$APP/Contents/Resources/AgentBridge-LICENSE.txt"
 APP_RESOURCE_BUNDLE="$(find "$ROOT/build/swiftpm" -type d -path '*/release/AgentBridge_AgentBridgeApp.bundle' -print | LC_ALL=C sort | sed -n '1p')"
 if [[ -z "$APP_RESOURCE_BUNDLE" ]]; then
   printf 'Missing AgentBridgeApp resource bundle in the SwiftPM build output.\n' >&2
@@ -138,11 +145,14 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key><string>org.agentbridge.app</string>
   <key>CFBundleName</key><string>AgentBridge</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.9.0</string>
-  <key>CFBundleVersion</key><string>8</string>
+  <key>NSHumanReadableCopyright</key><string>Copyright © 2026 rudin. Licensed under the MIT License.</string>
+  <key>CFBundleShortVersionString</key><string>0.10.0</string>
+  <key>CFBundleVersion</key><string>9</string>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hant</string></array>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>NSAppTransportSecurity</key>
+  <dict><key>NSAllowsLocalNetworking</key><true/></dict>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>

@@ -625,7 +625,7 @@ final class AgentBridgeCoreTests: XCTestCase {
         }
     }
 
-    func testBridgeServiceRoutesSubscriptionResumeAndExplicitAPIKeyThroughMockCLI() async throws {
+    func testBridgeServiceKeepsReadOnlyRunsStatelessAndRoutesExplicitAPIKeyThroughMockCLI() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("source", isDirectory: true)
@@ -705,9 +705,10 @@ esac
         let subscriptionSession = try await service.createSession(sourcePath: source.path, provider: .claude)
         let firstSubscription = try await service.runReadOnly(sessionID: subscriptionSession.id, prompt: "subscription-first-prompt")
         XCTAssertEqual(firstSubscription.text, "subscription-safe")
-        XCTAssertEqual(try store.session(id: subscriptionSession.id)?.providerSessionID, providerSessionID)
-        let resumedSubscription = try await service.runReadOnly(sessionID: subscriptionSession.id, prompt: "subscription-second-prompt")
-        XCTAssertEqual(resumedSubscription.text, "subscription-resumed")
+        XCTAssertNil(try store.session(id: subscriptionSession.id)?.providerSessionID)
+        let secondSubscription = try await service.runReadOnly(sessionID: subscriptionSession.id, prompt: "subscription-second-prompt")
+        XCTAssertEqual(secondSubscription.text, "subscription-safe", "Managed read-only runs rebuild context from AgentBridge memory and never resume opaque CLI history.")
+        XCTAssertNil(try store.session(id: subscriptionSession.id)?.providerSessionID)
 
         settings.usageMode = .api
         try service.saveSettings(settings)

@@ -4,13 +4,13 @@
 
 ## User journey
 
-Start with **New Chat**. Discuss the idea, requirements and tradeoffs with Codex or Claude before choosing a repository. When the direction is clear, choose **Create Git Project** or **Link Existing Project**, review the exact context and destination, then continue in the normal project conversation.
+Start with **New Chat**. Discuss the idea, requirements and tradeoffs with Codex, Claude or a configured Local model before choosing a repository. When the direction is clear, choose **Create Git Project** or **Link Existing Project**, review the exact context and destination, then continue in the normal project conversation.
 
 The first-use workspace-data folder remains required. It stores the user's discussion data and project memory; it is not a Git project and does not need to contain a repository. Creating or sending a discussion does not initialize Git or clone a repository.
 
 ## Discussion identity and accounts
 
-A discussion has its own UUID, revision, transcript and selected provider/account profile. It does not use a made-up repository path or commit hash. Each send uses the explicitly bound profile's official CLI subscription authentication, regardless of the saved Claude API setting for project sessions. It never changes that global setting or falls back to API credits.
+A discussion has its own UUID, revision, transcript and selected provider/account profile. It does not use a made-up repository path or commit hash. Cloud sends use the explicitly bound profile's official CLI subscription authentication; Local uses its configured loopback server. Neither path uses the saved Claude API mode for discussions or falls back to API credits.
 
 Provider/account changes are local to the discussion. They do not rewrite the provider's global profile selection. Native provider session IDs are not resumed across sends; eligible prior turns are supplied as bounded, redacted application-owned context.
 
@@ -20,7 +20,7 @@ Discussion sends use a fresh empty private temporary directory under the selecte
 
 The transcript is stored under the selected data root's discussions directory. A current prompt is always sent to the selected provider; successful responses become visible in the same discussion. Text is bounded and redacted before persistence.
 
-The initial limits are 64 discussions, 40 saved turns per discussion, 8 KiB per message and a 16 KiB shared-history envelope per send. Older turns or oversized text are shortened with a visible marker. At most four current handoff previews are retained per discussion revision; completing a handoff or continuing the discussion allows obsolete previews to be retired. This is bounded continuity rather than unlimited model memory.
+The storage limits are 64 discussions, 256 saved turns per discussion, 64 KiB per message and a 4 MiB encoded record. New over-cap writes are refused without silently shortening older originals. Legacy truncation markers remain visible. Up to 40 turns may be selected for a project handoff, and at most four current previews are retained per discussion revision; completing a handoff or continuing the discussion retires obsolete previews. Readable context compression has a separate model-input budget; see [Local Models and Context](LOCAL_MODELS_AND_CONTEXT.md).
 
 Sharing is on by default, subject to account consent. A turn enters later context or a project handoff only when it is complete, shareable, had source consent when saved, and both the source and destination accounts currently allow sharing. Turning sharing off keeps the local visible transcript while excluding that turn from later context and transfer. It does not prevent sending the current message.
 
@@ -58,7 +58,7 @@ Use mode existing to link a repository. The default target access is read-only; 
 
 ## Validation and status
 
-Deterministic tests use fake CLI responses and local fixture repositories. Real cloud model calls, GUI interaction, signing and notarization are separate validation layers. The previously signed 0.8.0 artifact is preserved; a 0.9.0 development build is not a notarized release.
+Deterministic tests use fake CLI/local HTTP responses and local fixture repositories. Real model calls, GUI interaction, signing and notarization are separate validation layers. The latest signed 0.9.0 release remains separate from the 0.10.0 development build.
 
 See the [0.9.0 validation record](CHAT_FIRST_VALIDATION.md) for exact results and GUI acceptance gaps.
 

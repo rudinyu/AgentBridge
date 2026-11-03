@@ -18,11 +18,11 @@ Run these commands from the AgentBridge repository:
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh --app-name AgentBridge-0.9.0-dev.app
-open build/AgentBridge-0.9.0-dev.app
+./scripts/package-app.sh --app-name AgentBridge-0.10.0-dev.app
+open build/AgentBridge-0.10.0-dev.app
 ```
 
-The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built this development version, open `build/AgentBridge-0.9.0-dev.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
+The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built this development version, open `build/AgentBridge-0.10.0-dev.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
 
 The first time the app opens, choose or create a folder for workspace data. AgentBridge requires this selection before it can create sessions; it does not silently choose a folder under Application Support. The app and CLI use the same saved location. The selected folder contains isolated session workspaces and shared memory:
 
@@ -39,6 +39,8 @@ Changing the selected folder copies existing workspace folders and shared memory
 The setup wizard opens automatically when the app has no usable workspace folder. It walks through language and provider selection, the required data folder, optional CLI discovery or path selection, optional sign-in checking, account memory consent, and local usage settings. The workspace folder is required to continue. Missing CLI installation or unconfirmed sign-in can be skipped; the final review reports both clearly. The wizard does not install software, run a provider task, send a model request, or configure an API key. Saving account or default settings can prepare a local session. Sign-in and status checks start the official CLI only after you click those controls. Subscription login is the setup default. If you quit before finishing, the wizard resumes on the next launch. Existing installations with a usable folder are not interrupted; click **Setup Wizard** in the header to reopen it. Reopening keeps saved provider settings and existing memory consent unchanged unless you explicitly save a change.
 
 ### 2. Choose a language and check CLI sign-in
+
+For Local models, use the local backend and model controls instead of CLI sign-in. Start your existing server, configure its loopback endpoint, refresh models and select a model. Context and output limits determine the conservative input budget; **Context preview** shows the exact prepared history and any refusal. See [Local Models and Context](LOCAL_MODELS_AND_CONTEXT.md) for the supported scope.
 
 Fresh installs use English. Choose **English** or **Traditional Chinese** in the setup wizard or from the app header; the selection is saved and takes effect immediately. For an explicit sign-in check, choose Codex or Claude under **Assistant**, then click **Check Sign-in and Plan** in the upper-right corner. The app displays only account and plan fields confirmed by the official CLI. If the Codex CLI does not report a plan name, AgentBridge does not guess one.
 

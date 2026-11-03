@@ -123,9 +123,8 @@ public final class ProjectMemoryStore: @unchecked Sendable {
     private static let schemaVersion = 1
     private static let lockFileName = ".lock"
     private static let documentFileName = "handoffs.json"
-    private static let maximumTextBytes = 8 * 1_024
+    private static let maximumTextBytes = 32 * 1_024
     private static let maximumNotesBytes = 12 * 1_024
-    private static let truncationMarker = "\n…[truncated]…\n"
 
     private let rootPath: String
     private let lock = NSLock()
@@ -204,28 +203,29 @@ public final class ProjectMemoryStore: @unchecked Sendable {
             throw AgentBridgeError.invalidInput("One or more selected memory turns do not exist in the source commit scope.")
         }
 
-        var wasTruncated = source.wasTruncated
-        let handoffTurns = selectedTurns.map { turn -> ProjectMemoryHandoffTurn in
+        let wasTruncated = source.wasTruncated
+        let handoffTurns = try selectedTurns.map { turn -> ProjectMemoryHandoffTurn in
             let userText = Self.redact(turn.userText, knownSecrets: knownSecrets)
             let assistantText = Self.redact(turn.assistantText, knownSecrets: knownSecrets)
-            let boundedUserText = Self.boundedText(userText, maximumBytes: Self.maximumTextBytes)
-            let boundedAssistantText = Self.boundedText(assistantText, maximumBytes: Self.maximumTextBytes)
-            let truncated = boundedUserText != userText || boundedAssistantText != assistantText
-            wasTruncated = wasTruncated || truncated
+            guard userText.utf8.count <= Self.maximumTextBytes,
+                  assistantText.utf8.count <= Self.maximumTextBytes else {
+                throw AgentBridgeError.invalidInput("Selected project-memory turns exceed the safe handoff size; the original turns were not shortened.")
+            }
             return ProjectMemoryHandoffTurn(
                 source: turn,
-                userText: boundedUserText,
-                assistantText: boundedAssistantText,
-                wasTruncated: truncated
+                userText: userText,
+                assistantText: assistantText,
+                wasTruncated: false
             )
         }
 
         var storedNotes: String?
         if includeNotes {
             let redactedNotes = Self.redact(source.notes, knownSecrets: knownSecrets)
-            let boundedNotes = Self.boundedText(redactedNotes, maximumBytes: Self.maximumNotesBytes)
-            wasTruncated = wasTruncated || boundedNotes != redactedNotes
-            storedNotes = boundedNotes
+            guard redactedNotes.utf8.count <= Self.maximumNotesBytes else {
+                throw AgentBridgeError.invalidInput("Selected project-memory notes exceed the safe handoff size; the original notes were not shortened.")
+            }
+            storedNotes = redactedNotes
         }
 
         let handoff = ProjectMemoryHandoff(
@@ -246,12 +246,7 @@ public final class ProjectMemoryStore: @unchecked Sendable {
                 document.repositories.append(StoredRepository(key: repository.key, handoffs: [handoff]))
             }
 
-            Self.enforceRetention(&document, keeping: handoff.id)
-            while try Self.encode(document).count > Self.maximumStoredBytes {
-                guard Self.removeOldestHandoff(from: &document, excluding: handoff.id) else {
-                    throw Self.persistenceError("The selected project-memory handoff exceeds the storage limit.")
-                }
-            }
+            try Self.enforceCapacity(document)
             try writeDocument(document, directoryDescriptor: directoryDescriptor)
         }
         return handoff
@@ -478,61 +473,13 @@ public final class ProjectMemoryStore: @unchecked Sendable {
         }
     }
 
-    private static func enforceRetention(_ document: inout StoreDocument, keeping handoffID: UUID) {
-        while let index = document.repositories.firstIndex(where: { $0.handoffs.count > maximumHandoffsPerRepository }) {
-            guard removeOldestHandoff(from: &document, inRepository: index, excluding: handoffID) else { break }
+    private static func enforceCapacity(_ document: StoreDocument) throws {
+        guard document.repositories.count <= maximumStoredRepositories,
+              document.repositories.allSatisfy({ $0.handoffs.count <= maximumHandoffsPerRepository }),
+              document.repositories.flatMap(\.handoffs).count <= maximumStoredHandoffs,
+              try Self.encode(document).count <= maximumStoredBytes else {
+            throw Self.persistenceError("Project-memory storage is full; the existing handoffs were preserved unchanged.")
         }
-        while document.repositories.count > maximumStoredRepositories {
-            let candidates = document.repositories.enumerated().filter {
-                !$0.element.handoffs.contains(where: { $0.id == handoffID })
-            }
-            guard let oldest = candidates.min(by: {
-                let leftDate = oldestDate(in: $0.element)
-                let rightDate = oldestDate(in: $1.element)
-                if leftDate != rightDate { return leftDate < rightDate }
-                return $0.element.key < $1.element.key
-            }) else { break }
-            document.repositories.remove(at: oldest.offset)
-        }
-        while document.repositories.flatMap(\.handoffs).count > maximumStoredHandoffs {
-            guard removeOldestHandoff(from: &document, excluding: handoffID) else { break }
-        }
-        document.repositories.removeAll(where: { $0.handoffs.isEmpty })
-    }
-
-    @discardableResult
-    private static func removeOldestHandoff(from document: inout StoreDocument, excluding excludedID: UUID) -> Bool {
-        let candidates: [(Int, Int, ProjectMemoryHandoff)] = document.repositories.enumerated().flatMap { repositoryIndex, repository in
-            repository.handoffs.enumerated().compactMap { handoffIndex, handoff -> (Int, Int, ProjectMemoryHandoff)? in
-                guard handoff.id != excludedID else { return nil }
-                return (repositoryIndex, handoffIndex, handoff)
-            }
-        }
-        guard let oldest = candidates.min(by: {
-            if $0.2.createdAt != $1.2.createdAt { return $0.2.createdAt < $1.2.createdAt }
-            return $0.2.id.uuidString < $1.2.id.uuidString
-        }) else { return false }
-        document.repositories[oldest.0].handoffs.remove(at: oldest.1)
-        document.repositories.removeAll(where: { $0.handoffs.isEmpty })
-        return true
-    }
-
-    @discardableResult
-    private static func removeOldestHandoff(from document: inout StoreDocument, inRepository repositoryIndex: Int, excluding excludedID: UUID) -> Bool {
-        guard let index = document.repositories[repositoryIndex].handoffs.indices
-            .filter({ document.repositories[repositoryIndex].handoffs[$0].id != excludedID })
-            .min(by: {
-                let lhs = document.repositories[repositoryIndex].handoffs[$0]
-                let rhs = document.repositories[repositoryIndex].handoffs[$1]
-                if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
-                return lhs.id.uuidString < rhs.id.uuidString
-            }) else { return false }
-        document.repositories[repositoryIndex].handoffs.remove(at: index)
-        return true
-    }
-
-    private static func oldestDate(in repository: StoredRepository) -> Date {
-        repository.handoffs.map(\.createdAt).min() ?? .distantFuture
     }
 
     private static func matches(_ handoff: ProjectMemoryHandoff, query: String) -> Bool {
@@ -559,21 +506,6 @@ public final class ProjectMemoryStore: @unchecked Sendable {
     private static func redact(_ text: String, knownSecrets: [String]) -> String {
         let genericRedactions = OutputRedactor.redact(text)
         return OutputRedactor.redact(genericRedactions, knownSecrets: knownSecrets)
-    }
-
-    private static func boundedText(_ text: String, maximumBytes: Int) -> String {
-        guard text.utf8.count > maximumBytes else { return text }
-        let markerBytes = truncationMarker.utf8.count
-        let prefixBudget = max(0, maximumBytes - markerBytes)
-        var prefix = ""
-        var usedBytes = 0
-        for character in text {
-            let characterBytes = String(character).utf8.count
-            guard usedBytes + characterBytes <= prefixBudget else { break }
-            prefix.append(character)
-            usedBytes += characterBytes
-        }
-        return prefix + truncationMarker
     }
 
     private static func isValidCommit(_ commit: String) -> Bool {

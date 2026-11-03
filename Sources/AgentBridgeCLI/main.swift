@@ -4,7 +4,7 @@ import AgentBridgeCore
 
 @main
 enum AgentBridgeCLI {
-    private static let version = "0.9.0"
+    private static let version = "0.10.0"
 
     static func main() async {
         do {
@@ -42,6 +42,8 @@ enum AgentBridgeCLI {
             try await doctor(service: service)
         case "settings":
             try settingsCommand(Array(arguments.dropFirst()), service: service)
+        case "local":
+            try await localModelCommand(Array(arguments.dropFirst()), service: service)
         case "profiles":
             try profilesCommand(Array(arguments.dropFirst()), service: service)
         case "profile-login":
@@ -94,8 +96,19 @@ enum AgentBridgeCLI {
     private static func doctor(service: BridgeService) async throws {
         print("AgentBridge \(version)")
         let settings = try service.settings()
-        print("登入模式：\(settings.usageMode == .subscription ? "官方 CLI 訂閱登入" : "Claude API（每次執行需單次預算與確認）")")
+        if settings.defaultProvider == .local {
+            print("目前預設：Local model（不使用 API 金鑰或訂閱用量）")
+        } else {
+            print("登入模式：\(settings.usageMode == .subscription ? "官方 CLI 訂閱登入" : "Claude API（每次執行需單次預算與確認）")")
+        }
         for provider in AgentProvider.allCases {
+            if provider == .local {
+                let profile = try service.selectedAccountProfile(provider: .local)
+                print("local（\(profile.name)）：\(settings.localModel.backend.rawValue) · \(settings.localModel.model.isEmpty ? "尚未選擇模型" : settings.localModel.model)")
+                print("  Endpoint：\(settings.localModel.endpoint)")
+                print("  本機模型狀態不會在 doctor 中連線檢查；請明確執行 `agentbridge local test`。")
+                continue
+            }
             do {
                 let executable = try RuntimeEnvironment.resolveExecutable(provider: provider, configuredPath: settings.binaryPath(for: provider))
                 let profile = try service.selectedAccountProfile(provider: provider)
@@ -109,11 +122,13 @@ enum AgentBridgeCLI {
                 else { print("\(provider.rawValue): \(error.localizedDescription)") }
             }
         }
-        do {
-            let snapshot = try service.budgetSnapshot()
-            print(String(format: "Claude API 月度帳本（UTC 月）：已用 US$%.2f，暫留 US$%.2f，可用 US$%.2f。", snapshot.usedUSD, snapshot.reservedUSD, snapshot.availableUSD))
-        } catch UsageControlError.apiMonthlyLimitRequired {
-            print("目前選取的 Claude 帳戶尚未設定本機 API 月上限；設定前不會啟用 API 執行。")
+        if settings.defaultProvider == .claude && settings.usageMode == .api {
+            do {
+                let snapshot = try service.budgetSnapshot()
+                print(String(format: "Claude API 月度帳本（UTC 月）：已用 US$%.2f，暫留 US$%.2f，可用 US$%.2f。", snapshot.usedUSD, snapshot.reservedUSD, snapshot.availableUSD))
+            } catch UsageControlError.apiMonthlyLimitRequired {
+                print("目前選取的 Claude 帳戶尚未設定本機 API 月上限；設定前不會啟用 API 執行。")
+            }
         }
     }
 
@@ -174,7 +189,7 @@ enum AgentBridgeCLI {
                     throw AgentBridgeError.invalidInput("不認識的 chat new 選項 \(option)。")
                 }
             }
-            guard let provider else { throw AgentBridgeError.invalidInput("用法：agentbridge chat new --provider codex|claude [--profile PROFILE-ID]") }
+            guard let provider else { throw AgentBridgeError.invalidInput("用法：agentbridge chat new --provider codex|claude|local [--profile PROFILE-ID]") }
             let resolvedProfileID: UUID
             if let profileID {
                 resolvedProfileID = profileID
@@ -219,7 +234,7 @@ enum AgentBridgeCLI {
             }
         case "target":
             guard arguments.count >= 2, let discussionID = UUID(uuidString: arguments[1]) else {
-                throw AgentBridgeError.invalidInput("用法：agentbridge chat target CHAT-ID --provider codex|claude --profile PROFILE-ID")
+                throw AgentBridgeError.invalidInput("用法：agentbridge chat target CHAT-ID --provider codex|claude|local --profile PROFILE-ID")
             }
             var provider: AgentProvider?
             var profileID: UUID?
@@ -241,7 +256,7 @@ enum AgentBridgeCLI {
                 }
             }
             guard let provider, let profileID else {
-                throw AgentBridgeError.invalidInput("用法：agentbridge chat target CHAT-ID --provider codex|claude --profile PROFILE-ID")
+                throw AgentBridgeError.invalidInput("用法：agentbridge chat target CHAT-ID --provider codex|claude|local --profile PROFILE-ID")
             }
             let discussion = try service.setDiscussionTarget(id: discussionID, provider: provider, accountProfileID: profileID)
             print("已更新討論目標：\(discussion.provider.rawValue) · \(discussion.accountProfileID.uuidString.lowercased())")
@@ -297,7 +312,7 @@ enum AgentBridgeCLI {
         switch action {
         case "preview":
             guard arguments.count >= 2, let discussionID = UUID(uuidString: arguments[1]) else {
-                throw AgentBridgeError.invalidInput("用法：agentbridge chat project preview CHAT-ID --mode new|existing --path /absolute/path --provider codex|claude --profile PROFILE-ID [--access read-only|changes] [--turn TURN-ID ... | --no-context]")
+                throw AgentBridgeError.invalidInput("用法：agentbridge chat project preview CHAT-ID --mode new|existing --path /absolute/path --provider codex|claude|local --profile PROFILE-ID [--access read-only|changes] [--turn TURN-ID ... | --no-context]")
             }
             var mode: DiscussionProjectMode?
             var destinationPath: String?
@@ -359,6 +374,9 @@ enum AgentBridgeCLI {
             }
             guard let mode, let destinationPath, let provider, let profileID else {
                 throw AgentBridgeError.invalidInput("請指定 --mode、--path、--provider 與 --profile。")
+            }
+            guard provider != .local || accessMode == .readOnly else {
+                throw AgentBridgeError.invalidInput("Local project chat only supports read-only sessions.")
             }
             let handoff = try await service.prepareDiscussionProjectHandoff(
                 discussionID: discussionID,
@@ -435,22 +453,189 @@ enum AgentBridgeCLI {
         }
     }
 
+    private static func localModelCommand(_ arguments: [String], service: BridgeService) async throws {
+        guard let action = arguments.first else {
+            throw AgentBridgeError.invalidInput("用法：agentbridge local settings|configure|models|test|preview discussion|project …")
+        }
+        switch action {
+        case "settings", "current":
+            guard arguments.count == 1 else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge local settings")
+            }
+            let bridgeSettings = try service.settings()
+            let profile = try service.selectedAccountProfile(provider: .local)
+            let local = bridgeSettings.localModel
+            print("模式：Local model（不使用 API 金鑰或訂閱用量）")
+            print("本機帳戶：\(profile.name) · \(profile.id.uuidString.lowercased())")
+            print("共享記憶：\(profile.allowsSharedMemory ? "已允許" : "未允許")")
+            print("Backend：\(localBackendName(local.backend))")
+            print("Endpoint：\(local.endpoint)")
+            print("Model：\(local.model.isEmpty ? "尚未設定" : local.model)")
+            print("Context window：\(local.contextWindowTokens) tokens")
+            print("Output reserve：\(local.maxOutputTokens) tokens")
+        case "configure":
+            guard arguments.count > 1 else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge local configure --backend ollama|openai-compatible --endpoint URL --model NAME [--context-window TOKENS] [--max-output TOKENS]")
+            }
+            var bridgeSettings = try service.settings()
+            var local = bridgeSettings.localModel
+            var seen = Set<String>()
+            var index = 1
+            while index < arguments.count {
+                let option = arguments[index]
+                guard seen.insert(option).inserted else {
+                    throw AgentBridgeError.invalidInput("\(option) 不可重複。")
+                }
+                index += 1
+                switch option {
+                case "--backend":
+                    let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                    switch value {
+                    case "ollama": local.backend = .ollama
+                    case "openai-compatible": local.backend = .openAICompatible
+                    default: throw AgentBridgeError.invalidInput("--backend 必須是 ollama 或 openai-compatible。")
+                    }
+                case "--endpoint":
+                    local.endpoint = try nextOptionValue(option, arguments: arguments, index: &index)
+                case "--model":
+                    local.model = try nextOptionValue(option, arguments: arguments, index: &index)
+                case "--context-window":
+                    let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                    guard let parsed = Int(value), parsed > 0 else {
+                        throw AgentBridgeError.invalidInput("--context-window 必須是正整數 token 數。")
+                    }
+                    local.contextWindowTokens = parsed
+                case "--max-output":
+                    let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                    guard let parsed = Int(value), parsed > 0 else {
+                        throw AgentBridgeError.invalidInput("--max-output 必須是正整數 token 數。")
+                    }
+                    local.maxOutputTokens = parsed
+                case "--api-key", "--api-key-env":
+                    throw AgentBridgeError.invalidInput("Local models do not use API keys. This option is unsupported.")
+                default:
+                    throw AgentBridgeError.invalidInput("不認識的 local configure 選項 \(option)。")
+                }
+            }
+            guard (1_024...131_072).contains(local.contextWindowTokens),
+                  (1...32_768).contains(local.maxOutputTokens),
+                  local.contextWindowTokens - local.maxOutputTokens > 512 else {
+                throw AgentBridgeError.invalidInput("上下文視窗須為 1,024–131,072 個 token，輸出保留量須為 1–32,768 個 token，且輸出保留量之外至少須剩下 513 個 token供輸入與安全餘裕使用。")
+            }
+            bridgeSettings.localModel = local
+            try service.saveSettings(bridgeSettings)
+            print("已儲存本機模型設定。AgentBridge 不會自動啟動服務、下載模型或改用雲端服務。")
+            print("使用 `agentbridge local test` 明確測試連線，或使用 `agentbridge local models` 更新模型清單。")
+        case "models":
+            guard arguments.count == 1 else { throw AgentBridgeError.invalidInput("用法：agentbridge local models") }
+            let settings = try service.settings().localModel
+            let models = try await service.localModels(settings: settings)
+            if models.isEmpty {
+                print("此 endpoint 沒有可用模型：\(settings.endpoint)")
+                print("請自行啟動 Ollama 或 LM Studio，並先在該應用程式中準備模型；AgentBridge 不會下載或啟動服務。")
+                return
+            }
+            for model in models {
+                let context = model.contextWindowTokens.map { " · context \($0)" } ?? ""
+                print("\(model.id) · \(model.name)\(context)")
+            }
+        case "test":
+            guard arguments.count == 1 else { throw AgentBridgeError.invalidInput("用法：agentbridge local test") }
+            let settings = try service.settings().localModel
+            let ready = try await service.testLocalModelConnection(settings: settings)
+            if ready {
+                print("本機模型連線成功：\(settings.model) · \(settings.endpoint)")
+            } else {
+                print("本機模型尚未就緒：\(settings.endpoint)。請確認本機服務已由你啟動，並選擇可用模型。")
+            }
+        case "preview":
+            guard arguments.count == 3 else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge local preview discussion CHAT-ID|project SESSION-ID < prompt.txt")
+            }
+            let target = arguments[1]
+            guard let id = UUID(uuidString: arguments[2]) else {
+                throw AgentBridgeError.invalidInput("預覽需要有效的聊天或工作階段 UUID。")
+            }
+            let promptLimit = target == "project" ? 256 * 1_024 : DiscussionStore.maximumTextBytes
+            let prompt = try readPromptFromStandardInput(maximumBytes: promptLimit)
+            guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw AgentBridgeError.invalidInput("提示文字不可為空。")
+            }
+            let settings = try service.settings().localModel
+            let preview: ContextCompressionPreview
+            switch target {
+            case "discussion":
+                preview = try service.previewDiscussionContext(id: id, currentPrompt: prompt, settings: settings)
+            case "project":
+                preview = try service.previewProjectContext(sessionID: id, currentPrompt: prompt, settings: settings)
+            default:
+                throw AgentBridgeError.invalidInput("預覽目標必須是 discussion 或 project。")
+            }
+            printContextCompressionPreview(preview, settings: settings)
+        default:
+            throw AgentBridgeError.invalidInput("不認識的 local 子命令 \(action)。用法：agentbridge local settings|configure|models|test|preview …")
+        }
+    }
+
+    private static func localBackendName(_ backend: LocalModelBackend) -> String {
+        switch backend {
+        case .ollama: "Ollama"
+        case .openAICompatible: "OpenAI-compatible"
+        }
+    }
+
+    private static func printContextCompressionPreview(_ preview: ContextCompressionPreview, settings: LocalModelSettings) {
+        let report = preview.report
+        let estimatedTokens = Int((Double(report.sentBytes) / 2.0).rounded(.up))
+        let estimatedBudget = max(0, settings.contextWindowTokens - settings.maxOutputTokens - 512)
+        print("本機上下文預覽")
+        print("位元組（原始／預計傳送）：\(report.originalInputBytes) / \(report.sentBytes)")
+        print("依 UTF-8 位元組估算的輸入：約 \(estimatedTokens) 個 token；不是精確 tokenizer 計數。")
+        print("估計輸入預算：約 \(estimatedBudget) 個 token（輸出保留 \(settings.maxOutputTokens)，另留 512 個 token 安全餘裕）；這是位元組代理估算，不是精確 tokenizer 計數。")
+        print("回合：來源 \(report.originalTurnCount) · 近期原文 \(report.recentVerbatimCount) · 省略 \(report.omittedTurnCount) · 歷史摘錄來源 \(report.excerptSourceIDs.count)")
+        if report.refusalReason != nil {
+            print("需要調整後才能傳送：完整目前提示、釘選筆記與受保護的歷史內容無法安全放入可用預算。請縮短提示或筆記，或提高本機模型上下文視窗；不會傳送請求。")
+        } else if preview.requiresReview {
+            print("上下文需要調整後才能傳送；請先修改提示或設定預算。")
+        } else {
+            print(report.compressionApplied
+                ? "已自動套用安全的易讀上下文壓縮。"
+                : "完整上下文已保留，不需要壓縮。")
+        }
+        print("預覽摘要（僅供判斷是否過期，不是核准權杖）：\(preview.previewDigest)")
+        if let compressedPrompt = preview.compressedPrompt {
+            print("\n--- 預計傳送的上下文 ---\n\(compressedPrompt)\n--- 上下文結束 ---")
+        } else {
+            print("\n未組成供應商提示內容；上下文無法安全表示前會阻止傳送。")
+            for section in preview.sections {
+                print("\n--- \(section.title) ---")
+                if !section.sourceIDs.isEmpty { print("來源：\(section.sourceIDs.joined(separator: ", "))") }
+                print(section.text)
+            }
+            if preview.sections.isEmpty, let refusalReason = report.refusalReason {
+                print("Protected context: \(refusalReason)")
+            }
+        }
+    }
+
     private static func printChatHelp() {
         print("""
         用法：agentbridge chat <子命令>
 
-          agentbridge chat new --provider codex|claude [--profile PROFILE-ID]
+          agentbridge chat new --provider codex|claude|local [--profile PROFILE-ID]
           agentbridge chat list
           agentbridge chat show CHAT-ID
-          agentbridge chat target CHAT-ID --provider codex|claude --profile PROFILE-ID
+          agentbridge chat target CHAT-ID --provider codex|claude|local --profile PROFILE-ID
           agentbridge chat send CHAT-ID [--share|--no-share] < prompt.txt
           agentbridge chat cancel CHAT-ID
-          agentbridge chat project preview CHAT-ID --mode new|existing --path /absolute/path --provider codex|claude --profile PROFILE-ID [--access read-only|changes] [--turn TURN-ID ... | --no-context]
+          agentbridge chat project preview CHAT-ID --mode new|existing --path /absolute/path --provider codex|claude|local --profile PROFILE-ID [--access read-only|changes] [--turn TURN-ID ... | --no-context]
           agentbridge chat project apply HANDOFF-ID --digest REVIEW-DIGEST --confirm
 
         `chat new` 需要已選取的使用者資料根目錄，不需要 Git repository。`chat send` 只從標準輸入讀取 UTF-8 提示文字，最多 \(DiscussionStore.maximumTextBytes) 位元組；提示不會放在程序參數中。回合預設可供後續共享上下文與交接使用，`--share` 是明確別名；`--no-share` 仍保留回合於討論逐字稿，但排除於後續上下文與交接。來源或目標帳戶未允許共享記憶時，該同意設定會阻止回合進入共享上下文。專案預覽省略 `--turn` 與 `--no-context` 時會選取全部符合共享同意的完整回合；重複指定 `--turn` 會只選列出的回合，不符合資格的回合會讓預覽失敗；`--no-context` 明確不轉移任何回合，且不能和 `--turn` 並用。`--access` 預設唯讀。新專案先建立不含聊天內容的空 Git 初始提交；apply 只會把預覽列出的核准內容複製到目的工作階段的 AgentBridge 記憶，原始討論仍保留。預覽完成前不會建立或連結專案；apply 必須帶預覽摘要與 `--confirm`。不會呼叫遠端 Git 或 push。
-        `chat` 只使用綁定的官方 CLI 訂閱登入；不提供 API 金鑰/預算參數，也沒有 API credits 回退路徑。
+        Codex 與 Claude 聊天只使用綁定的官方 CLI 訂閱登入；Local 聊天只連到明確設定的本機模型。Local 專案工作階段固定為唯讀。聊天不提供 API 金鑰/預算參數，也沒有 API credits 回退路徑。
         `chat new --profile`、`chat target` 與 `project preview` 可使用已設定的相符供應商帳戶；省略新討論的 `--profile` 時會沿用該供應商目前選取的帳戶。
+
+        本機模型設定、模型清單與連線測試：`agentbridge local settings|configure|models|test`。只有 `models` 與 `test` 會在你明確執行時連線到設定的本機 endpoint；AgentBridge 不會安裝、啟動服務或下載模型。`agentbridge local preview discussion CHAT-ID|project SESSION-ID < prompt.txt` 會顯示實際上下文、壓縮摘要與 byte/token 估算。
         """)
     }
 
@@ -472,7 +657,9 @@ enum AgentBridgeCLI {
             try service.saveSettings(settings)
             print("已設定使用模式：\(mode.rawValue)。執行 API 前仍須提供單次預算並明確確認。")
         case "binary":
-            guard arguments.count == 3, let provider = AgentProvider(rawValue: arguments[1]) else {
+            guard arguments.count == 3,
+                  let provider = AgentProvider(rawValue: arguments[1]),
+                  provider != .local else {
                 throw AgentBridgeError.invalidInput("用法：agentbridge settings binary codex|claude /absolute/path/to/cli|auto")
             }
             var settings = try service.settings()
@@ -501,7 +688,7 @@ enum AgentBridgeCLI {
     }
 
     private static func sessionCommand(_ arguments: [String], service: BridgeService) async throws {
-        guard arguments.first == "create" else { throw AgentBridgeError.invalidInput("用法：agentbridge session create --provider codex|claude --repo PATH [--interactive|--changes]") }
+        guard arguments.first == "create" else { throw AgentBridgeError.invalidInput("用法：agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes]") }
         var provider: AgentProvider?
         var repoPath: String?
         var interactive = false
@@ -528,7 +715,10 @@ enum AgentBridgeCLI {
         }
         guard let provider, let repoPath else { throw AgentBridgeError.invalidInput("請指定 --provider 與 --repo。") }
         guard !(interactive && isolatedChanges) else { throw AgentBridgeError.invalidInput("--interactive 與 --changes 互斥。") }
-        if isolatedChanges, try service.settings().usageMode != .subscription {
+        if provider == .local && (interactive || isolatedChanges) {
+            throw AgentBridgeError.invalidInput("Local project chat only supports read-only sessions.")
+        }
+        if provider != .local, isolatedChanges, try service.settings().usageMode != .subscription {
             throw AgentBridgeError.sessionMismatch("隔離變更只支援官方 CLI 訂閱登入；Claude API 僅支援唯讀工作階段。")
         }
         let access: AccessMode = isolatedChanges ? .isolatedChanges : (interactive ? .interactiveManualApproval : .readOnly)
@@ -629,6 +819,7 @@ enum AgentBridgeCLI {
         guard arguments.count == 4,
               arguments[0] == "--provider",
               let provider = AgentProvider(rawValue: arguments[1]),
+              provider != .local,
               arguments[2] == "--profile",
               let profileID = UUID(uuidString: arguments[3]) else {
             throw AgentBridgeError.invalidInput("用法：agentbridge usage-tui --provider codex|claude --profile PROFILE-ID")
@@ -645,13 +836,13 @@ enum AgentBridgeCLI {
         }
         switch action {
         case "list":
-            guard arguments.count <= 2 else { throw AgentBridgeError.invalidInput("用法：agentbridge profiles list [codex|claude]") }
+            guard arguments.count <= 2 else { throw AgentBridgeError.invalidInput("用法：agentbridge profiles list [codex|claude|local]") }
             let providers = arguments.count == 2 ? [try parseProvider(arguments[1])] : AgentProvider.allCases
             for provider in providers {
                 let selectedID = try service.selectedAccountProfile(provider: provider).id
                 for profile in try service.accountProfiles(provider: provider) {
                     let selectedMarker = profile.id == selectedID ? "*" : " "
-                    let loginKind = profile.usesExistingLogin ? "目前本機登入" : "獨立登入"
+                    let loginKind = provider == .local ? "本機模型帳戶" : (profile.usesExistingLogin ? "目前本機登入" : "獨立登入")
                     let memory = profile.allowsSharedMemory ? "共享記憶開啟" : "共享記憶關閉"
                     print("\(selectedMarker) \(profile.id.uuidString.lowercased())  \(provider.rawValue)  \(profile.name)  \(loginKind)  \(memory)")
                 }
@@ -665,7 +856,7 @@ enum AgentBridgeCLI {
                 switch arguments[index] {
                 case "--provider":
                     index += 1
-                    guard index < arguments.count else { throw AgentBridgeError.invalidInput("--provider 需要 codex 或 claude。") }
+                    guard index < arguments.count else { throw AgentBridgeError.invalidInput("--provider 需要 codex、claude 或 local。") }
                     provider = try parseProvider(arguments[index])
                 case "--name":
                     index += 1
@@ -681,12 +872,16 @@ enum AgentBridgeCLI {
             guard let provider, let name else { throw AgentBridgeError.invalidInput("請指定 --provider 與 --name。") }
             let profile = try service.createAccountProfile(name: name, provider: provider, allowsSharedMemory: allowsSharedMemory)
             print("已建立獨立帳戶設定：\(profile.id.uuidString.lowercased())（\(provider.rawValue)，共享記憶\(allowsSharedMemory ? "開啟" : "關閉")）。")
-            print("登入請在互動 Terminal 執行：agentbridge profile-login \(profile.id.uuidString.lowercased())")
+            if provider == .local {
+                print("Local 帳戶不使用 CLI 登入或憑證資料夾。")
+            } else {
+                print("登入請在互動 Terminal 執行：agentbridge profile-login \(profile.id.uuidString.lowercased())")
+            }
         case "select":
             guard arguments.count == 4, arguments[1] == "--provider",
                   let provider = AgentProvider(rawValue: arguments[2]),
                   let profileID = UUID(uuidString: arguments[3]) else {
-                throw AgentBridgeError.invalidInput("用法：agentbridge profiles select --provider codex|claude PROFILE-ID")
+                throw AgentBridgeError.invalidInput("用法：agentbridge profiles select --provider codex|claude|local PROFILE-ID")
             }
             try service.selectAccountProfile(id: profileID, provider: provider)
             print("已選取 \(provider.rawValue) 帳戶設定 \(profileID.uuidString.lowercased())。新工作階段將綁定這個帳戶。")
@@ -705,6 +900,10 @@ enum AgentBridgeCLI {
     private static func profileLoginCommand(_ arguments: [String], service: BridgeService) async throws {
         guard arguments.count == 1, let profileID = UUID(uuidString: arguments[0]) else {
             throw AgentBridgeError.invalidInput("用法：agentbridge profile-login PROFILE-ID")
+        }
+        let profile = try service.accountProfile(id: profileID)
+        guard profile.provider != .local else {
+            throw AgentBridgeError.invalidInput("Local model accounts do not use CLI sign-in.")
         }
         let cancellation = CancellationFlag()
         let signalSources = makeCancellationSignalSources(cancellation)
@@ -1718,7 +1917,7 @@ enum AgentBridgeCLI {
 
     private static func parseProvider(_ value: String) throws -> AgentProvider {
         guard let provider = AgentProvider(rawValue: value) else {
-            throw AgentBridgeError.invalidInput("供應商必須是 codex 或 claude。")
+            throw AgentBridgeError.invalidInput("供應商必須是 codex、claude 或 local。")
         }
         return provider
     }
@@ -1783,22 +1982,26 @@ enum AgentBridgeCLI {
 
     private static func printHelp() {
         print("""
-        AgentBridge \(version) — macOS Codex / Claude CLI 工作階段管理
+        AgentBridge \(version) — macOS Codex / Claude CLI 與 Local model 工作階段管理
 
         命令：
           agentbridge workspace show
           agentbridge workspace set /absolute/path/to/root
           agentbridge chat help
           agentbridge doctor
+          agentbridge local settings
+          agentbridge local configure --backend ollama|openai-compatible --endpoint URL --model NAME [--context-window TOKENS] [--max-output TOKENS]
+          agentbridge local models|test
+          agentbridge local preview discussion CHAT-ID|project SESSION-ID < prompt.txt
           agentbridge settings show
           agentbridge settings usage subscription|api
           agentbridge settings binary codex|claude /absolute/path/to/cli|auto
-          agentbridge profiles list [codex|claude]
-          agentbridge profiles create --provider codex|claude --name NAME [--share-memory]（共用記憶預設開啟）
-          agentbridge profiles select --provider codex|claude PROFILE-ID
+          agentbridge profiles list [codex|claude|local]
+          agentbridge profiles create --provider codex|claude|local --name NAME [--share-memory]（共用記憶預設開啟）
+          agentbridge profiles select --provider codex|claude|local PROFILE-ID
           agentbridge profiles memory PROFILE-ID on|off
           agentbridge profile-login PROFILE-ID
-          agentbridge session create --provider codex|claude --repo PATH [--interactive|--changes]
+          agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes]
           agentbridge sessions
           agentbridge run SESSION-ID [--api-budget USD --confirm-api-spend --api-key-env ANTHROPIC_API_KEY]
           agentbridge changes plan SESSION-ID --title TITLE --summary SUMMARY --step STEP [--step STEP ...]
@@ -1837,6 +2040,7 @@ enum AgentBridgeCLI {
           agentbridge budget reconcile SESSION-ID --profile PROFILE-ID --actual-usd USD --confirm
 
         `run` 從標準輸入讀取最多 256 KiB 的提示文字，不會把提示放在程序參數或稽核檔。
+        Local model 只支援討論與唯讀專案聊天；local session 不提供 autonomy、編輯工具、互動 Terminal、Skills 或 MCP。Local 不使用 API 金鑰、官方 CLI 登入或雲端回退。
         `autonomous plan` 會立即開始一次真實的官方 CLI 訂閱模型規劃請求；目標從標準輸入讀取，最多 8,000 位元組。每個角色與規劃者都要明確指定供應商及設定檔 UUID，例如 `--planner codex:00000000-0000-0000-0000-000000000001`。Claude API 模式不會用於自主流程。
         規劃命令會保存尚未核准的不可變計畫。先完整檢視角色、擴充功能、檔案範圍、限制與驗證設定，再以 `autonomous approve RUN-ID --digest PLAN-DIGEST --confirm` 核准；單次核准只涵蓋該計畫中的修正回合與驗證。執行時必須再次提供完全相同的 `--digest`。`status --json` 可供自動化讀取工作階段進度、審查結果與驗證狀態；中斷的執行不會自動重播。
         跨帳戶輸出分享需要來源與接收設定檔都允許共用記憶。預設不會把依賴任務的內容交給下一個角色；精確實作差異一律需明確使用 `--share-diff-with-reviewer`，且實作者與審查者設定檔都必須同意共用記憶。

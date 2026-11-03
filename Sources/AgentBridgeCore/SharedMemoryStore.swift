@@ -128,13 +128,13 @@ public struct SharedMemoryContext: Sendable {
 /// The only content captured is explicitly passed to `appendTurn` or `setNotes`.
 /// This type does not read terminal output or provider session formats.
 public final class SharedMemoryStore: @unchecked Sendable {
-    public static let maximumStoredTurns = 40
-    public static let maximumStoredBytes = 64 * 1024
+    public static let maximumStoredTurns = 256
+    public static let maximumStoredBytes = 2 * 1_024 * 1_024
 
     private static let schemaVersion = 1
     private static let lockFileName = ".lock"
-    private static let maximumStoredNotesBytes = 12 * 1024
-    private static let maximumStoredTurnTextBytes = 32 * 1024
+    private static let maximumStoredNotesBytes = 64 * 1_024
+    private static let maximumStoredTurnTextBytes = 128 * 1_024
     private static let truncationMarker = "\n…[truncated]…\n"
     private let rootPath: String
 
@@ -190,57 +190,106 @@ public final class SharedMemoryStore: @unchecked Sendable {
         assistantText: String,
         knownSecrets: [String] = []
     ) throws {
-        let redactedUserText = Self.redact(userText, knownSecrets: knownSecrets)
-        let redactedAssistantText = Self.redact(assistantText, knownSecrets: knownSecrets)
-        let storedTexts = try Self.boundedStoredTextPair(
-            redactedUserText,
-            redactedAssistantText,
-            maximumBytes: Self.maximumStoredTurnTextBytes
+        try appendTurns(
+            scope: scope,
+            turns: [SharedMemoryTurn(
+                id: id,
+                provider: provider,
+                userText: Self.redact(userText, knownSecrets: knownSecrets),
+                assistantText: Self.redact(assistantText, knownSecrets: knownSecrets)
+            )]
         )
-        let turnWasTruncated = storedTexts.userText != redactedUserText || storedTexts.assistantText != redactedAssistantText
+    }
+
+    /// Appends a batch atomically. It refuses at the bounded storage limit and
+    /// never removes or shortens earlier turns.
+    public func appendTurns(scope: SharedMemoryScope, turns: [SharedMemoryTurn]) throws {
+        guard !turns.isEmpty else { return }
+        let cleanedTurns = try Self.cleanedTurns(turns)
 
         try withLockedDirectory { directoryDescriptor in
             var document = try readDocument(scope: scope, directoryDescriptor: directoryDescriptor)
-            if let existing = document.turns.first(where: { $0.id == id }) {
-                guard existing.provider == provider,
-                      existing.userText == storedTexts.userText,
-                      existing.assistantText == storedTexts.assistantText else {
-                    throw Self.persistenceError("A shared-memory turn ID already exists with different content.")
+            var additions: [SharedMemoryTurn] = []
+            for turn in cleanedTurns {
+                if let existing = document.turns.first(where: { $0.id == turn.id }) {
+                    guard existing.provider == turn.provider,
+                          existing.userText == turn.userText,
+                          existing.assistantText == turn.assistantText else {
+                        throw Self.persistenceError("A shared-memory turn ID already exists with different content.")
+                    }
+                    continue
                 }
-                return
+                additions.append(turn)
             }
-
+            guard !additions.isEmpty else { return }
             guard document.revision < Int.max else {
                 throw Self.persistenceError("Shared-memory revision counter is exhausted.")
             }
-            document.turns.append(SharedMemoryTurn(
-                id: id,
-                provider: provider,
-                userText: storedTexts.userText,
-                assistantText: storedTexts.assistantText
-            ))
-            document.wasTruncated = document.wasTruncated || turnWasTruncated
+            document.turns.append(contentsOf: additions)
             document.revision += 1
-            try enforceRetention(&document)
+            try Self.enforceRetention(&document)
             try writeDocument(document, scope: scope, directoryDescriptor: directoryDescriptor)
         }
     }
 
-    public func setNotes(scope: SharedMemoryScope, notes: String, knownSecrets: [String] = []) throws {
-        let redactedNotes = Self.redact(notes, knownSecrets: knownSecrets)
-        let storedNotes = try Self.boundedStoredNotes(redactedNotes)
-
+    public func preflightAppend(scope: SharedMemoryScope, turns: [SharedMemoryTurn]) throws {
+        guard !turns.isEmpty else { return }
+        let cleanedTurns = try Self.cleanedTurns(turns)
         try withLockedDirectory { directoryDescriptor in
             var document = try readDocument(scope: scope, directoryDescriptor: directoryDescriptor)
-            let notesWereTruncated = storedNotes != redactedNotes
-            guard document.notes != storedNotes || (notesWereTruncated && !document.wasTruncated) else { return }
+            for turn in cleanedTurns {
+                if let existing = document.turns.first(where: { $0.id == turn.id }) {
+                    guard existing.provider == turn.provider,
+                          existing.userText == turn.userText,
+                          existing.assistantText == turn.assistantText else {
+                        throw Self.persistenceError("A shared-memory turn ID already exists with different content.")
+                    }
+                    continue
+                }
+                document.turns.append(turn)
+            }
             guard document.revision < Int.max else {
                 throw Self.persistenceError("Shared-memory revision counter is exhausted.")
             }
-            document.notes = storedNotes
-            document.wasTruncated = document.wasTruncated || notesWereTruncated
             document.revision += 1
-            try enforceRetention(&document)
+            try Self.enforceRetention(&document)
+        }
+    }
+
+    /// Pure preflight for a handoff into a newly created repository. It proves
+    /// the selected turns fit an empty bounded document before Git is changed.
+    public static func validateImportCapacity(
+        turns: [SharedMemoryTurn],
+        repositoryPath: String = "/tmp/agentbridge-memory-import-preflight"
+    ) throws {
+        guard turns.count <= maximumStoredTurns else {
+            throw AgentBridgeError.invalidInput("所選交接回合超過共享記憶的安全儲存上限；未建立專案。")
+        }
+        let normalizedTurns = try Self.cleanedTurns(turns)
+        let sampleScope = try SharedMemoryScope(
+            repositoryPath: repositoryPath,
+            snapshotCommit: String(repeating: "a", count: 40)
+        )
+        var document = StoredDocument(scope: sampleScope, revision: 1, wasTruncated: false, notes: "", turns: [])
+        document.turns = normalizedTurns
+        try Self.enforceRetention(&document)
+    }
+
+    public func setNotes(scope: SharedMemoryScope, notes: String, knownSecrets: [String] = []) throws {
+        let redactedNotes = Self.redact(notes, knownSecrets: knownSecrets)
+        guard try Self.encodedJSONString(redactedNotes).count <= Self.maximumStoredNotesBytes else {
+            throw AgentBridgeError.invalidInput("共享記憶備註超過安全儲存上限；原內容未被縮短。")
+        }
+
+        try withLockedDirectory { directoryDescriptor in
+            var document = try readDocument(scope: scope, directoryDescriptor: directoryDescriptor)
+            guard document.notes != redactedNotes else { return }
+            guard document.revision < Int.max else {
+                throw Self.persistenceError("Shared-memory revision counter is exhausted.")
+            }
+            document.notes = redactedNotes
+            document.revision += 1
+            try Self.enforceRetention(&document)
             try writeDocument(document, scope: scope, directoryDescriptor: directoryDescriptor)
         }
     }
@@ -325,7 +374,7 @@ public final class SharedMemoryStore: @unchecked Sendable {
                 throw Self.persistenceError("Shared-memory revision counter is exhausted.")
             }
             var empty = StoredDocument(scope: scope, revision: current.revision + 1, wasTruncated: false, notes: "", turns: [])
-            try enforceRetention(&empty)
+            try Self.enforceRetention(&empty)
             try writeDocument(empty, scope: scope, directoryDescriptor: directoryDescriptor)
         }
     }
@@ -471,59 +520,14 @@ public final class SharedMemoryStore: @unchecked Sendable {
         }
     }
 
-    private func enforceRetention(_ document: inout StoredDocument) throws {
-        let boundedNotes = try Self.boundedStoredNotes(document.notes)
-        if boundedNotes != document.notes {
-            document.notes = boundedNotes
-            document.wasTruncated = true
-        }
-
-        for index in document.turns.indices {
-            let turn = document.turns[index]
-            let boundedTexts = try Self.boundedStoredTextPair(
-                turn.userText,
-                turn.assistantText,
-                maximumBytes: Self.maximumStoredTurnTextBytes
-            )
-            if boundedTexts.userText != turn.userText || boundedTexts.assistantText != turn.assistantText {
-                document.turns[index] = SharedMemoryTurn(
-                    id: turn.id,
-                    provider: turn.provider,
-                    userText: boundedTexts.userText,
-                    assistantText: boundedTexts.assistantText,
-                    timestamp: turn.timestamp
-                )
-                document.wasTruncated = true
-            }
-        }
-
-        while document.turns.count > Self.maximumStoredTurns {
-            document.turns.removeFirst()
-            document.wasTruncated = true
-        }
-        while try Self.encode(document).count > Self.maximumStoredBytes, document.turns.count > 1 {
-            document.turns.removeFirst()
-            document.wasTruncated = true
-        }
-        if try Self.encode(document).count > Self.maximumStoredBytes, let lastIndex = document.turns.indices.last {
-            let turn = document.turns[lastIndex]
-            let fittedTexts = try Self.turnTextFittingDocumentBudget(
-                turn,
-                document: document,
-                turnIndex: lastIndex,
-                maximumBytes: Self.maximumStoredBytes
-            )
-            document.turns[lastIndex] = SharedMemoryTurn(
-                id: turn.id,
-                provider: turn.provider,
-                userText: fittedTexts.userText,
-                assistantText: fittedTexts.assistantText,
-                timestamp: turn.timestamp
-            )
-            document.wasTruncated = true
-        }
-        guard try Self.encode(document).count <= Self.maximumStoredBytes else {
-            throw Self.persistenceError("Shared-memory metadata exceeds the storage limit.")
+    private static func enforceRetention(_ document: inout StoredDocument) throws {
+        guard document.turns.count <= maximumStoredTurns,
+              try encodedJSONString(document.notes).count <= maximumStoredNotesBytes,
+              try document.turns.allSatisfy({
+                  try encodeTextPair($0.userText, $0.assistantText).count <= maximumStoredTurnTextBytes
+              }),
+              try encode(document).count <= maximumStoredBytes else {
+            throw Self.persistenceError("Shared memory is full; the existing notes and turns were preserved unchanged.")
         }
     }
 
@@ -631,6 +635,31 @@ public final class SharedMemoryStore: @unchecked Sendable {
 
     private static func encodedJSONString(_ text: String) throws -> Data {
         try makeEncoder().encode(text)
+    }
+
+    private static func encodeTextPair(_ userText: String, _ assistantText: String) throws -> Data {
+        try makeEncoder().encode([userText, assistantText])
+    }
+
+    private static func cleanedTurns(_ turns: [SharedMemoryTurn]) throws -> [SharedMemoryTurn] {
+        let cleaned = try turns.map { turn -> SharedMemoryTurn in
+            let userText = redact(turn.userText, knownSecrets: [])
+            let assistantText = redact(turn.assistantText, knownSecrets: [])
+            guard try encodeTextPair(userText, assistantText).count <= maximumStoredTurnTextBytes else {
+                throw AgentBridgeError.invalidInput("共享記憶單一回合超過安全儲存上限；原內容未被縮短。")
+            }
+            return SharedMemoryTurn(
+                id: turn.id,
+                provider: turn.provider,
+                userText: userText,
+                assistantText: assistantText,
+                timestamp: turn.timestamp
+            )
+        }
+        guard Set(cleaned.map { $0.id }).count == cleaned.count else {
+            throw AgentBridgeError.invalidInput("Shared-memory batch contains duplicate turn IDs.")
+        }
+        return cleaned
     }
 
     private static func boundedTextPair(_ userText: String, _ assistantText: String, maximumBytes: Int) -> (userText: String, assistantText: String) {

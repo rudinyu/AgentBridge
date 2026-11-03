@@ -57,6 +57,12 @@ final class AppModel: ObservableObject {
     @Published var newDiscussionProvider: AgentProvider = .codex
     @Published var newDiscussionProfileID: UUID?
     @Published var discussionProfilePreferences: [AgentProvider: UUID] = [:]
+    @Published var localModelModels: [LocalModelDescriptor] = []
+    @Published var localModelUsageStatistics: UsageStatisticsSnapshot?
+    @Published var localModelStatus = "Connection not checked."
+    @Published var localModelError: String?
+    @Published var isRefreshingLocalModels = false
+    @Published var isTestingLocalModel = false
     @Published var requestedAccessMode: AccessMode = .readOnly
     @Published var repositoryPath = ""
     @Published var workspaceRootPath = ""
@@ -148,10 +154,13 @@ final class AppModel: ObservableObject {
     private var activeTerminalProfileID: UUID?
     private var activeTerminalSessionID: UUID?
     private var activeUsageProvider: AgentProvider?
+    private var savedLocalModelSettings: LocalModelSettings?
     private var setupWizardAuthRequestID: UUID?
     private var loadedUsageControlsScopeKey: String?
     private var refreshedUsageStatisticsScopeKey: String?
     private var lastUsageStatisticsRefresh: Date?
+    private var refreshedLocalModelUsageScopeKey: String?
+    private var lastLocalModelUsageRefresh: Date?
     private var refreshedAPIReconciliationScopeKey: String?
     private var lastAPIReconciliationRefresh: Date?
 
@@ -191,7 +200,7 @@ final class AppModel: ObservableObject {
     }
 
     var canStartAutonomousWorkflow: Bool {
-        !hasActiveAutonomousWorkflow && activeRunFlags.isEmpty && !isVerifying
+        !isLocalProviderContext && !hasActiveAutonomousWorkflow && activeRunFlags.isEmpty && !isVerifying
             && !isTestingMCPRuntime && !terminalRunning && terminalLaunch == nil && !isSwitchingTarget
             && !isChangingWorkspaceRoot
     }
@@ -202,11 +211,13 @@ final class AppModel: ObservableObject {
     }
 
     var setupWizardAuthentication: AuthAssessment? {
+        guard setupWizardProvider != .local else { return nil }
         guard let profile = setupWizardSelectedProfile else { return nil }
         return authStatus[profile.id]
     }
 
     var setupWizardResolvedCLIPath: String? {
+        guard setupWizardProvider != .local else { return nil }
         let configuredPath = setupWizardCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
         return try? RuntimeEnvironment.resolveExecutable(
             provider: setupWizardProvider,
@@ -215,13 +226,15 @@ final class AppModel: ObservableObject {
     }
 
     var setupWizardSavedCLIPath: String? {
-        try? RuntimeEnvironment.resolveExecutable(
+        guard setupWizardProvider != .local else { return nil }
+        return try? RuntimeEnvironment.resolveExecutable(
             provider: setupWizardProvider,
             configuredPath: settings.binaryPath(for: setupWizardProvider)
         ).path
     }
 
     var setupWizardCLISettingIsDirty: Bool {
+        guard setupWizardProvider != .local else { return false }
         let draft = setupWizardCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
         let saved = settings.binaryPath(for: setupWizardProvider)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return draft != saved
@@ -230,9 +243,9 @@ final class AppModel: ObservableObject {
     var setupWizardReadiness: SetupWizardReadiness {
         SetupWizardReadiness(
             workspaceConfigured: workspaceRootIsConfigured,
-            commandLineAvailable: setupWizardSavedCLIPath != nil,
-            commandLineSettingSaved: !setupWizardCLISettingIsDirty,
-            subscriptionLoginConfirmed: setupWizardAuthentication?.confirmedSubscription == true
+            commandLineAvailable: setupWizardProvider == .local || setupWizardSavedCLIPath != nil,
+            commandLineSettingSaved: setupWizardProvider == .local || !setupWizardCLISettingIsDirty,
+            subscriptionLoginConfirmed: setupWizardProvider == .local || setupWizardAuthentication?.confirmedSubscription == true
         )
     }
 
@@ -294,9 +307,9 @@ final class AppModel: ObservableObject {
         } else {
             setupWizardProvider = settings.defaultProvider
         }
-        setupWizardCLIPath = defaults.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
+        setupWizardCLIPath = setupWizardProvider == .local ? "" : (defaults.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
             ?? settings.binaryPath(for: setupWizardProvider)
-            ?? ""
+            ?? "")
         let savedStep = defaults.string(forKey: Self.setupWizardStepPreferenceKey)
             .flatMap(SetupWizardStep.init(rawValue:))
         setupWizardProfileName = defaults.string(forKey: Self.setupWizardProfileNamePreferenceKey) ?? ""
@@ -369,10 +382,15 @@ final class AppModel: ObservableObject {
         setupWizardStep = step
         setupWizardError = nil
         if step == .commandLine {
-            setupWizardCLIPath = UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
-                ?? settings.binaryPath(for: setupWizardProvider)
-                ?? ""
-            checkSetupWizardCLIAvailability()
+            if setupWizardProvider == .local {
+                setupWizardCLIPath = ""
+                setupWizardCLIStatus = ""
+            } else {
+                setupWizardCLIPath = UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
+                    ?? settings.binaryPath(for: setupWizardProvider)
+                    ?? ""
+                checkSetupWizardCLIAvailability()
+            }
         } else if step == .usage {
             loadSetupWizardUsageControls()
         }
@@ -381,15 +399,16 @@ final class AppModel: ObservableObject {
     func selectSetupWizardProvider(_ provider: AgentProvider) {
         guard setupWizardProvider != provider else { return }
         setupWizardProvider = provider
-        setupWizardCLIPath = UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: provider))
+        setupWizardCLIPath = provider == .local ? "" : (UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: provider))
             ?? settings.binaryPath(for: provider)
-            ?? ""
+            ?? "")
         setupWizardCLIStatus = ""
         setupWizardUsageStatus = ""
         if setupWizardStep == .usage { loadSetupWizardUsageControls() }
     }
 
     func chooseSetupWizardCLIPath() {
+        guard setupWizardProvider != .local else { return }
         let panel = NSOpenPanel()
         panel.title = localized("Choose the official CLI executable")
         panel.message = localized("Select the installed codex or claude executable. AgentBridge will only save this path.")
@@ -402,6 +421,10 @@ final class AppModel: ObservableObject {
     }
 
     func checkSetupWizardCLIAvailability() {
+        guard setupWizardProvider != .local else {
+            setupWizardCLIStatus = localized("Local models do not require a command-line app.")
+            return
+        }
         let path = setupWizardCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             let executable = try RuntimeEnvironment.resolveExecutable(
@@ -417,6 +440,10 @@ final class AppModel: ObservableObject {
     }
 
     func saveSetupWizardCLIPath() {
+        guard setupWizardProvider != .local else {
+            setupWizardCLIStatus = localized("Local models do not require a command-line app.")
+            return
+        }
         guard let service else {
             setupWizardError = localized("Choose a workspace folder before saving CLI settings.")
             return
@@ -458,6 +485,7 @@ final class AppModel: ObservableObject {
         let previous = settings
         settings.defaultProvider = setupWizardProvider
         if setupWizardProvider == .codex { settings.usageMode = .subscription }
+        if setupWizardProvider == .local { requestedAccessMode = .readOnly }
         do {
             try service.saveSettings(settings)
             if previous.defaultProvider != settings.defaultProvider || previous.usageMode != settings.usageMode {
@@ -467,9 +495,11 @@ final class AppModel: ObservableObject {
             loadedUsageControlsScopeKey = nil
             refresh(forceUsageStatistics: true)
             if let anchor = selectedSession { selectOrCreateSession(for: setupWizardProvider, anchoredTo: anchor) }
-            setupWizardStatus = settings.usageMode == .subscription
-                ? localized("Default provider and subscription sign-in saved.")
-                : localized("Default provider saved; the existing Claude API mode was preserved.")
+            setupWizardStatus = setupWizardProvider == .local
+                ? localized("Local model is now the default. Cloud provider settings remain saved separately.")
+                : settings.usageMode == .subscription
+                    ? localized("Default provider and subscription sign-in saved.")
+                    : localized("Default provider saved; the existing Claude API mode was preserved.")
             setupWizardError = nil
         } catch {
             settings = previous
@@ -492,7 +522,9 @@ final class AppModel: ObservableObject {
             loadedUsageControlsScopeKey = nil
             providerUsageReport = nil
             authStatus.removeValue(forKey: profileID)
-            setupWizardStatus = localized("Account selected. Sign-in remains managed by the provider CLI.")
+            setupWizardStatus = setupWizardProvider == .local
+                ? localized("Local memory account selected. No sign-in is needed.")
+                : localized("Account selected. Sign-in remains managed by the provider CLI.")
             setupWizardError = nil
             if settings.defaultProvider == setupWizardProvider, let anchor = selectedSession {
                 selectOrCreateSession(for: setupWizardProvider, anchoredTo: anchor)
@@ -521,7 +553,9 @@ final class AppModel: ObservableObject {
             loadedUsageControlsScopeKey = nil
             authStatus.removeValue(forKey: profile.id)
             setupWizardProfileName = ""
-            setupWizardStatus = localized("Isolated account created. Sign in when you are ready.")
+            setupWizardStatus = setupWizardProvider == .local
+                ? localized("Separate local memory account created. No sign-in is needed.")
+                : localized("Isolated account created. Sign in when you are ready.")
             setupWizardError = nil
             if settings.defaultProvider == setupWizardProvider, let anchor = selectedSession {
                 selectOrCreateSession(for: setupWizardProvider, anchoredTo: anchor)
@@ -552,6 +586,10 @@ final class AppModel: ObservableObject {
     }
 
     func checkSetupWizardAuthentication() {
+        guard setupWizardProvider != .local else {
+            setupWizardStatus = localized("Local models do not use CLI sign-in.")
+            return
+        }
         guard let profile = setupWizardSelectedProfile else {
             setupWizardError = localized("No account profile is available for this provider.")
             return
@@ -576,6 +614,10 @@ final class AppModel: ObservableObject {
     }
 
     func openSetupWizardProfileLogin() {
+        guard setupWizardProvider != .local else {
+            setupWizardError = localized("Local models do not use CLI sign-in.")
+            return
+        }
         guard let profile = setupWizardSelectedProfile else {
             setupWizardError = localized("No account profile is available for this provider.")
             return
@@ -585,6 +627,10 @@ final class AppModel: ObservableObject {
 
     func loadSetupWizardUsageControls() {
         setupWizardUsageControls = UsageControlSettings()
+        if setupWizardProvider == .local {
+            setupWizardUsageStatus = localized("Local models do not use subscription quota or API billing controls.")
+            return
+        }
         guard let service, let profile = setupWizardSelectedProfile else { return }
         do {
             setupWizardUsageControls = try service.usageControlSettings(provider: profile.provider, profileID: profile.id)
@@ -599,6 +645,10 @@ final class AppModel: ObservableObject {
     }
 
     func saveSetupWizardUsageControls() {
+        guard setupWizardProvider != .local else {
+            setupWizardUsageStatus = localized("Local models do not use subscription quota or API billing controls.")
+            return
+        }
         guard let service, let profile = setupWizardSelectedProfile else {
             setupWizardUsageStatus = localized("Choose a workspace folder before saving usage settings.")
             return
@@ -673,6 +723,35 @@ final class AppModel: ObservableObject {
 
     var selectedSession: SessionRecord? {
         sessions.first(where: { $0.id == selectedSessionID })
+    }
+
+    var isLocalProviderContext: Bool {
+        selectedDiscussion?.provider == .local
+            || selectedSession?.provider == .local
+            || (selectedDiscussion == nil && selectedSession == nil
+                && (settings.defaultProvider == .local || newDiscussionProvider == .local))
+    }
+
+    var localModelSettingsAreDirty: Bool {
+        guard let savedLocalModelSettings else { return false }
+        return settings.localModel != savedLocalModelSettings
+    }
+
+    var hasSelectedLocalRunScope: Bool {
+        selectedDiscussion?.provider == .local || selectedSession?.provider == .local
+    }
+
+    private var localUsageProfileID: UUID? {
+        if let discussion = selectedDiscussion, discussion.provider == .local {
+            return discussion.accountProfileID
+        }
+        if let session = selectedSession, session.provider == .local {
+            return session.accountProfileID ?? AccountProfile.defaultID(for: .local)
+        }
+        if newDiscussionProvider == .local, let newDiscussionProfileID {
+            return newDiscussionProfileID
+        }
+        return selectedProfileIDs[.local]
     }
 
     var selectedDiscussion: DiscussionRecord? {
@@ -762,6 +841,7 @@ final class AppModel: ObservableObject {
 
     var selectedSessionAuthentication: AuthAssessment? {
         guard let session = selectedSession else { return nil }
+        guard session.provider != .local else { return nil }
         let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
         return authStatus[profileID]
     }
@@ -773,7 +853,13 @@ final class AppModel: ObservableObject {
 
     func profileName(for session: SessionRecord) -> String {
         let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
-        return accountProfiles[session.provider]?.first(where: { $0.id == profileID })?.name ?? localized("目前本機登入")
+        return accountProfiles[session.provider]?.first(where: { $0.id == profileID })?.name
+            ?? (session.provider == .local ? localized("Local account") : localized("目前本機登入"))
+    }
+
+    func boundProfile(for session: SessionRecord) -> AccountProfile? {
+        let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
+        return accountProfiles[session.provider]?.first(where: { $0.id == profileID })
     }
 
     func refresh(forceUsageStatistics: Bool = false) {
@@ -787,7 +873,17 @@ final class AppModel: ObservableObject {
                 status = "Codex 使用官方 CLI 訂閱登入；已修正舊的不相容設定。"
                 clearAPIAuthorization()
             }
+            let localModelDraft = settings.localModel
+            let previouslySavedLocalModel = savedLocalModelSettings
+            let hasUnsavedLocalModelDraft = previouslySavedLocalModel.map { localModelDraft != $0 } ?? false
+            let persistedLocalModel = loadedSettings.localModel
+            let persistedLocalModelChanged = previouslySavedLocalModel.map { persistedLocalModel != $0 } ?? false
+            if hasUnsavedLocalModelDraft {
+                loadedSettings.localModel = localModelDraft
+            }
             settings = loadedSettings
+            savedLocalModelSettings = persistedLocalModel
+            if persistedLocalModelChanged { invalidateLocalModelConnectionState() }
             codexPath = settings.codexBinaryPath ?? ""
             claudePath = settings.claudeBinaryPath ?? ""
             for provider in AgentProvider.allCases {
@@ -848,6 +944,7 @@ final class AppModel: ObservableObject {
                 apiReconciliationSessionID = nil
             }
             try refreshUsageStatisticsIfNeeded(service: service, force: forceUsageStatistics)
+            try refreshLocalModelUsageStatisticsIfNeeded(service: service, force: forceUsageStatistics)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -920,7 +1017,39 @@ final class AppModel: ObservableObject {
         usageStatistics = snapshot
         refreshedUsageStatisticsScopeKey = scopeKey
         lastUsageStatisticsRefresh = now
-        evaluateSubscriptionThresholds(snapshot: snapshot)
+        if provider != .local { evaluateSubscriptionThresholds(snapshot: snapshot) }
+    }
+
+    private func refreshLocalModelUsageStatisticsIfNeeded(service: BridgeService, force: Bool) throws {
+        guard let profileID = localUsageProfileID else {
+            localModelUsageStatistics = nil
+            return
+        }
+        let currentLocalRunID: UUID?
+        if let discussion = selectedDiscussion, discussion.provider == .local,
+           discussion.accountProfileID == profileID {
+            currentLocalRunID = discussion.id
+        } else if let session = selectedSession, session.provider == .local,
+                  (session.accountProfileID ?? AccountProfile.defaultID(for: .local)) == profileID {
+            currentLocalRunID = session.id
+        } else {
+            currentLocalRunID = nil
+        }
+        let scopeKey = "local:\(profileID.uuidString.lowercased()):\(currentLocalRunID?.uuidString.lowercased() ?? "none")"
+        let now = Date()
+        if !force, refreshedLocalModelUsageScopeKey == scopeKey,
+           let lastLocalModelUsageRefresh,
+           now.timeIntervalSince(lastLocalModelUsageRefresh) < 30 {
+            return
+        }
+        localModelUsageStatistics = try service.usageStatistics(
+            provider: .local,
+            profileID: profileID,
+            selectedSessionID: currentLocalRunID,
+            now: now
+        )
+        refreshedLocalModelUsageScopeKey = scopeKey
+        lastLocalModelUsageRefresh = now
     }
 
     private func refreshAPIReconciliationCandidatesIfNeeded(
@@ -994,6 +1123,7 @@ final class AppModel: ObservableObject {
         if let service {
             do {
                 try refreshUsageStatisticsIfNeeded(service: service, force: true)
+                try refreshLocalModelUsageStatisticsIfNeeded(service: service, force: true)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -1024,6 +1154,7 @@ final class AppModel: ObservableObject {
         if provider == .codex, settings.usageMode == .api {
             settings.usageMode = .subscription
         }
+        if provider == .local { requestedAccessMode = .readOnly }
         if provider == .codex && settings.usageMode == .api { requestedAccessMode = .readOnly }
         clearAPIAuthorization()
         do {
@@ -1065,6 +1196,113 @@ final class AppModel: ObservableObject {
             settings = previous
             errorMessage = error.localizedDescription
         }
+    }
+
+    func saveLocalModelSettings() {
+        guard let service else { return }
+        guard (1_024...131_072).contains(settings.localModel.contextWindowTokens),
+              (1...32_768).contains(settings.localModel.maxOutputTokens),
+              settings.localModel.contextWindowTokens - settings.localModel.maxOutputTokens > 512 else {
+            localModelError = localized("Context window must be 1,024–131,072 tokens and leave at least 513 tokens after the output reserve. Output reserve must be 1–32,768 tokens.")
+            return
+        }
+        do {
+            let previousSavedLocalModel = savedLocalModelSettings
+            try service.saveSettings(settings)
+            let savedLocalModel = try service.settings().localModel
+            savedLocalModelSettings = savedLocalModel
+            if previousSavedLocalModel.map({ $0 != savedLocalModel }) ?? true {
+                invalidateLocalModelConnectionState()
+                localModelStatus = localized("Settings saved. Connection not checked.")
+            }
+            status = localized("Local model settings saved.")
+            refresh()
+        } catch {
+            localModelError = error.localizedDescription
+        }
+    }
+
+    func localModelSettingsDidChange() {
+        invalidateLocalModelConnectionState()
+    }
+
+    private func invalidateLocalModelConnectionState() {
+        localModelModels = []
+        localModelStatus = localized("Connection not checked.")
+        localModelError = nil
+    }
+
+    func refreshLocalModels() {
+        guard let service, !isRefreshingLocalModels else { return }
+        let requestedSettings = settings.localModel
+        isRefreshingLocalModels = true
+        localModelError = nil
+        localModelStatus = localized("Checking the configured local endpoint…")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isRefreshingLocalModels = false }
+            do {
+                let models = try await service.localModels(settings: requestedSettings)
+                guard self.settings.localModel == requestedSettings else { return }
+                self.localModelModels = models
+                self.localModelStatus = models.isEmpty
+                    ? self.localized("No models are available at this endpoint. Start your local service and prepare a model in its own app.")
+                    : String(format: self.localized("Found %d local models."), models.count)
+                self.localModelError = nil
+            } catch {
+                guard self.settings.localModel == requestedSettings else { return }
+                self.localModelStatus = self.localized("Could not list local models.")
+                self.localModelError = error.localizedDescription
+            }
+        }
+    }
+
+    func testLocalModelConnectionFromUI() {
+        guard let service, !isTestingLocalModel else { return }
+        let requestedSettings = settings.localModel
+        isTestingLocalModel = true
+        localModelError = nil
+        localModelStatus = localized("Testing the local model connection…")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isTestingLocalModel = false }
+            do {
+                let isReady = try await service.testLocalModelConnection(settings: requestedSettings)
+                guard self.settings.localModel == requestedSettings else { return }
+                self.localModelStatus = isReady
+                    ? self.localized("Local model connection is ready.")
+                    : self.localized("The local service responded, but the selected model is not ready.")
+                self.localModelError = nil
+            } catch {
+                guard self.settings.localModel == requestedSettings else { return }
+                self.localModelStatus = self.localized("Local model connection failed.")
+                self.localModelError = error.localizedDescription
+            }
+        }
+    }
+
+    func previewDiscussionContext(id: UUID, currentPrompt: String) async throws -> ContextCompressionPreview {
+        guard let service else {
+            throw AgentBridgeError.invalidInput(localized("Choose a workspace folder before previewing context."))
+        }
+        let localSettings = discussions.first(where: { $0.id == id })?.provider == .local ? settings.localModel : nil
+        return try service.previewDiscussionContext(
+            id: id,
+            currentPrompt: currentPrompt,
+            settings: localSettings
+        )
+    }
+
+    func previewProjectContext(sessionID: UUID, currentPrompt: String) async throws -> ContextCompressionPreview {
+        guard let service else {
+            throw AgentBridgeError.invalidInput(localized("Choose a workspace folder before previewing context."))
+        }
+        let localSettings = sessions.first(where: { $0.id == sessionID })?.provider == .local ? settings.localModel : nil
+        return try service.previewProjectContext(
+            sessionID: sessionID,
+            currentPrompt: currentPrompt,
+            settings: localSettings
+        )
     }
 
     private func updateBinaryPathsInSettings() {
@@ -1499,11 +1737,15 @@ final class AppModel: ObservableObject {
         guard let service else { return }
         let provider = settings.defaultProvider
         guard !repositoryPath.isEmpty else { errorMessage = "請先選擇 Git 儲存庫。"; return }
-        guard requestedAccessMode != .interactiveManualApproval || settings.usageMode == .subscription else {
+        guard provider != .local || requestedAccessMode == .readOnly else {
+            errorMessage = localized("Local project chat only supports read-only sessions.")
+            return
+        }
+        guard provider == .local || requestedAccessMode != .interactiveManualApproval || settings.usageMode == .subscription else {
             errorMessage = "互動模式目前只支援訂閱登入。"
             return
         }
-        guard requestedAccessMode != .isolatedChanges || settings.usageMode == .subscription else {
+        guard provider == .local || requestedAccessMode != .isolatedChanges || settings.usageMode == .subscription else {
             errorMessage = "隔離變更模式只支援訂閱登入；Claude API 只能建立唯讀工作階段。"
             return
         }
@@ -1533,11 +1775,13 @@ final class AppModel: ObservableObject {
     func createDiscussion(provider: AgentProvider? = nil, profileID: UUID? = nil) {
         guard let service else { return }
         let targetProvider = provider ?? newDiscussionProvider
-        guard let targetProfileID = profileID
+        let preferredProfileID = profileID
             ?? (targetProvider == newDiscussionProvider ? newDiscussionProfileID : nil)
             ?? discussionProfilePreferences[targetProvider]
             ?? selectedProfileIDs[targetProvider]
-            ?? accountProfiles[targetProvider]?.first?.id else {
+            ?? accountProfiles[targetProvider]?.first?.id
+        guard let targetProfileID = preferredProfileID
+            ?? (targetProvider == .local ? try? service.selectedAccountProfile(provider: .local).id : nil) else {
             errorMessage = localized("No account profile is available for this provider.")
             return
         }
@@ -1609,18 +1853,34 @@ final class AppModel: ObservableObject {
         persistDiscussionProfilePreferences()
     }
 
-    func sendDiscussionMessage(id: UUID, prompt: String, isShareable: Bool) {
+    func sendDiscussionMessage(
+        id: UUID,
+        prompt: String,
+        isShareable: Bool,
+        onCompletion: @escaping @MainActor (Bool) -> Void
+    ) {
         guard let service,
-              let discussion = discussions.first(where: { $0.id == id }) else { return }
+              let discussion = discussions.first(where: { $0.id == id }) else {
+            onCompletion(false)
+            return
+        }
         let message = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty else { return }
+        guard !message.isEmpty else {
+            onCompletion(false)
+            return
+        }
         guard !hasActiveDiscussionOperation, !discussion.status.isInFlight,
-              discussionCancellationFlags[id] == nil else { return }
+              discussionCancellationFlags[id] == nil else {
+            onCompletion(false)
+            return
+        }
 
         let hasConsent = profileAllowsSharedMemory(provider: discussion.provider, profileID: discussion.accountProfileID)
         let cancellation = CancellationFlag()
         discussionCancellationFlags[id] = cancellation
-        discussionProgress[id] = localized("Sending with the official CLI subscription sign-in…")
+        discussionProgress[id] = localized(discussion.provider == .local
+            ? "Sending to the configured local model…"
+            : "Sending with the official CLI subscription sign-in…")
         errorMessage = nil
 
         Task { @MainActor [weak self] in
@@ -1644,6 +1904,9 @@ final class AppModel: ObservableObject {
                 refreshTask.cancel()
                 self.discussionCancellationFlags.removeValue(forKey: id)
                 self.refreshDiscussions()
+                if discussion.provider == .local {
+                    try? self.refreshLocalModelUsageStatisticsIfNeeded(service: service, force: true)
+                }
             }
             do {
                 _ = try await service.sendDiscussionMessage(
@@ -1659,19 +1922,18 @@ final class AppModel: ObservableObject {
                         self.discussionProgress[id] = progress
                     }
                 }
-                let persistedDiscussion = self.refreshDiscussion(id: id)
-                if persistedDiscussion?.status == .completed || !cancellation.isCancelled {
-                    self.discussionProgress[id] = self.localized("Response complete.")
-                } else {
-                    self.discussionProgress[id] = self.localized("Cancellation requested…")
-                }
+                _ = self.refreshDiscussion(id: id)
+                self.discussionProgress[id] = self.localized("Response complete.")
+                onCompletion(true)
             } catch {
                 let persistedDiscussion = self.refreshDiscussion(id: id)
                 if cancellation.isCancelled || persistedDiscussion?.status == .cancelled {
                     self.discussionProgress[id] = self.localized("Cancellation requested…")
                 } else {
                     self.discussionProgress[id] = error.localizedDescription
+                    self.errorMessage = error.localizedDescription
                 }
+                onCompletion(false)
             }
         }
     }
@@ -1809,7 +2071,7 @@ final class AppModel: ObservableObject {
             return
         }
         var apiRequest: APIUsageRequest?
-        if settings.usageMode == .api {
+        if settings.usageMode == .api && session.provider != .local {
             guard isClaudeAPIRunContext else {
                 errorMessage = "Claude API 只能用於 Claude 預設助理與 Claude 工作階段。"
                 return
@@ -1827,7 +2089,9 @@ final class AppModel: ObservableObject {
         isRunning = !activeRunFlags.isEmpty
         errorMessage = nil
         outputText = ""
-        status = settings.usageMode == .api ? "正在檢查並保留預算…" : "正在執行…"
+        status = session.provider == .local
+            ? localized("Sending to the configured local model…")
+            : (settings.usageMode == .api ? "正在檢查並保留預算…" : "正在執行…")
         apiKey = ""
         confirmAPIRun = false
         Task { @MainActor [self] in
@@ -2509,6 +2773,10 @@ final class AppModel: ObservableObject {
             return
         }
         let provider = settings.defaultProvider
+        guard provider != .local else {
+            errorMessage = localized("Local models do not have a provider subscription usage screen.")
+            return
+        }
         guard let profileID = selectedProfileIDs[provider],
               let profile = accountProfiles[provider]?.first(where: { $0.id == profileID }) else {
             errorMessage = "找不到目前選取的帳戶設定。"
@@ -2572,6 +2840,10 @@ final class AppModel: ObservableObject {
     }
 
     func openProfileLoginTerminal(for profile: AccountProfile) {
+        guard profile.provider != .local else {
+            reportOperationError(localized("Local models do not use CLI sign-in."))
+            return
+        }
         guard !hasActiveAutonomousWorkflow else {
             reportOperationError(localized("The terminal is locked while an autonomous workflow is active."))
             return
@@ -2711,7 +2983,9 @@ final class AppModel: ObservableObject {
         guard isProjectConversationActive else { return }
         guard let profileID = selectedProfileIDs[provider], let service else { return }
         let access: AccessMode
-        if settings.usageMode == .subscription,
+        if provider == .local {
+            access = .readOnly
+        } else if settings.usageMode == .subscription,
            (anchor.policy.accessMode == .interactiveManualApproval || anchor.policy.accessMode == .isolatedChanges) {
             access = anchor.policy.accessMode
         } else {
@@ -2773,7 +3047,7 @@ final class AppModel: ObservableObject {
             loadedUsageControlsScopeKey = nil
             refresh(forceUsageStatistics: true)
             if let anchor { selectOrCreateSession(for: provider, anchoredTo: anchor) }
-            else { status = "已切換官方 CLI 帳戶。" }
+            else { status = provider == .local ? localized("Local memory account selected.") : localized("Official CLI account selected.") }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -2801,7 +3075,9 @@ final class AppModel: ObservableObject {
             refresh(forceUsageStatistics: true)
             authStatus.removeValue(forKey: profile.id)
             if let anchor { selectOrCreateSession(for: provider, anchoredTo: anchor) }
-            else { status = "已建立隔離的 \(provider.rawValue.capitalized) 帳戶；請在 App 終端機登入。" }
+            else { status = provider == .local
+                ? localized("Separate local memory account created. No sign-in is needed.")
+                : String(format: localized("Separate %@ account created. Sign in from the app terminal when ready."), provider.rawValue.capitalized) }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -2852,6 +3128,10 @@ struct ContentView: View {
     @StateObject private var model = AppModel()
     @State private var mainArea: MainArea = .chats
     @State private var isProjectConfigurationExpanded = false
+    @State private var contextPreview: ContextCompressionPreview?
+    @State private var contextPreviewSettings: LocalModelSettings?
+    @State private var isShowingContextPreview = false
+    @State private var isLoadingContextPreview = false
 
     private enum MainArea: String, CaseIterable, Identifiable {
         case chats
@@ -2911,6 +3191,9 @@ struct ContentView: View {
             onCompletion: model.importExtensionDescriptor
         )
         .onChange(of: model.selectedSessionID) { _, _ in model.selectedSessionDidChange() }
+        .onChange(of: model.isLocalProviderContext) { _, isLocal in
+            if isLocal && (mainArea == .autonomous || mainArea == .extensions) { mainArea = .chats }
+        }
         .onChange(of: model.selectedExtensionID) { _, _ in model.selectedExtensionDidChange() }
         .onChange(of: model.isSetupWizardPresented) { _, isPresented in
             if !isPresented { model.errorMessage = nil }
@@ -2969,7 +3252,7 @@ struct ContentView: View {
                         .background(.quaternary, in: Capsule())
                 }
             }
-            if model.selectedDiscussionID == nil {
+            if model.selectedDiscussionID == nil && !model.isLocalProviderContext {
                 Button("檢查登入與方案") { model.checkAuthentication() }
                     .disabled(model.hasActiveAutonomousWorkflow || model.hasActiveDiscussionOperation)
             }
@@ -2982,8 +3265,10 @@ struct ContentView: View {
         HStack(spacing: 8) {
             mainAreaButton(.chats, title: "Chats", symbol: "bubble.left.and.bubble.right")
             mainAreaButton(.conversation, title: "Project Conversations", symbol: "text.bubble")
-            mainAreaButton(.autonomous, title: "Autonomous Workflow", symbol: "point.3.connected.trianglepath.dotted")
-            mainAreaButton(.extensions, title: "Skills & MCP", symbol: "puzzlepiece.extension")
+            if !model.isLocalProviderContext {
+                mainAreaButton(.autonomous, title: "Autonomous Workflow", symbol: "point.3.connected.trianglepath.dotted")
+                mainAreaButton(.extensions, title: "Skills & MCP", symbol: "puzzlepiece.extension")
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
@@ -3026,18 +3311,28 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(14)
         case .autonomous:
-            AutonomousWorkflowView(model: model) { sessionID in
-                model.openProjectSession(sessionID)
-                mainArea = .conversation
+            if model.isLocalProviderContext {
+                ContentUnavailableView("Not available for local models", systemImage: "desktopcomputer", description: Text("Local mode supports read-only project chat and discussion. Autonomy, write access, terminal, Skills, and MCP are unavailable for this local session."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                AutonomousWorkflowView(model: model) { sessionID in
+                    model.openProjectSession(sessionID)
+                    mainArea = .conversation
+                }
             }
         case .extensions:
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    ActiveExtensionsView(model: model)
-                    extensionPolicyPanel
+            if model.isLocalProviderContext {
+                ContentUnavailableView("Not available for local models", systemImage: "desktopcomputer", description: Text("Skills and MCP are unavailable for local sessions."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ActiveExtensionsView(model: model)
+                        extensionPolicyPanel
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -3053,11 +3348,12 @@ struct ContentView: View {
                         )) {
                             Text("Codex").tag(AgentProvider.codex)
                             Text("Claude").tag(AgentProvider.claude)
+                            Text("Local").tag(AgentProvider.local)
                         }
                         if let profile = model.accountProfiles[model.newDiscussionProvider]?.first(where: {
                             $0.id == model.newDiscussionProfileID
                         }) {
-                            Picker("Account", selection: Binding(
+                            Picker(model.newDiscussionProvider == .local ? "Memory account" : "Account", selection: Binding(
                                 get: { model.newDiscussionProfileID ?? profile.id },
                                 set: { model.selectNewDiscussionProfile($0) }
                             )) {
@@ -3069,9 +3365,16 @@ struct ContentView: View {
                             Text("No account profile is available for this provider.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Text("Chats always use the provider’s official CLI subscription sign-in. Claude API usage is not available here.")
+                        Text(model.newDiscussionProvider == .local
+                            ? "Local chats use the configured model and separate local memory account. No API key or cloud fallback is used."
+                            : "Chats use the provider’s official CLI subscription sign-in. Claude API usage is not available here.")
                             .font(.caption2).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        if model.newDiscussionProvider == .local
+                            || model.selectedDiscussion?.provider == .local
+                            || model.settings.defaultProvider == .local {
+                            LocalModelSettingsSection(model: model)
+                        }
                         Button {
                             model.createDiscussion()
                         } label: {
@@ -3134,14 +3437,17 @@ struct ContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 settingsPanel
-                usagePanel
+                if model.isLocalProviderContext && model.settings.defaultProvider != .local {
+                    LocalModelSettingsSection(model: model)
+                }
+                if model.settings.defaultProvider != .local { usagePanel }
                 accountPanel
                 DisclosureGroup("Project configuration", isExpanded: $isProjectConfigurationExpanded) {
                     workspacePanel
                         .padding(.top, 8)
                 }
                 sessionList
-                taskBoardPanel
+                if !model.isLocalProviderContext { taskBoardPanel }
             }
             .padding(12)
         }
@@ -3155,7 +3461,7 @@ struct ContentView: View {
             ?? model.localized("New conversation")
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: discussion.provider == .codex ? "sparkle" : "message")
+                Image(systemName: discussion.provider == .codex ? "sparkle" : (discussion.provider == .local ? "desktopcomputer" : "message"))
                 Text(titleText)
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
@@ -3183,7 +3489,7 @@ struct ContentView: View {
         let isSelected = model.isProjectConversationActive && model.selectedSessionID == session.id
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: session.provider == .codex ? "sparkle" : "message")
+                Image(systemName: session.provider == .codex ? "sparkle" : (session.provider == .local ? "desktopcomputer" : "message"))
             Text(model.localizedFormat(
                 "%@ · %@",
                 session.provider.rawValue.capitalized,
@@ -3241,6 +3547,7 @@ struct ContentView: View {
                     )) {
                         Text("Codex").tag(AgentProvider.codex)
                         Text("Claude").tag(AgentProvider.claude)
+                        Text("Local").tag(AgentProvider.local)
                 }
                 if model.settings.defaultProvider == .claude {
                     Picker("Claude 使用模式", selection: Binding(
@@ -3250,6 +3557,9 @@ struct ContentView: View {
                             Text("官方 CLI 訂閱登入").tag(UsageMode.subscription)
                             Text("Claude API（每次確認）").tag(UsageMode.api)
                     }
+                } else if model.settings.defaultProvider == .local {
+                    Label("Local mode uses a configured loopback model. No subscription quota, API key, or cloud fallback applies.", systemImage: "desktopcomputer")
+                        .font(.caption).foregroundStyle(.secondary)
                 } else {
                     Label("Codex 使用官方 CLI 訂閱登入", systemImage: "checkmark.shield")
                         .font(.caption).foregroundStyle(.secondary)
@@ -3258,11 +3568,15 @@ struct ContentView: View {
                     Label("Claude API 會產生費用；每次執行都要確認。", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(.orange)
                 }
-                DisclosureGroup("CLI 執行檔") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        TextField("Codex CLI 自動尋找", text: $model.codexPath)
-                        TextField("Claude CLI 自動尋找", text: $model.claudePath)
-                        Button("儲存 CLI 路徑") { model.saveSettings() }
+                if model.settings.defaultProvider == .local {
+                    LocalModelSettingsSection(model: model)
+                } else {
+                    DisclosureGroup("CLI 執行檔") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            TextField("Codex CLI 自動尋找", text: $model.codexPath)
+                            TextField("Claude CLI 自動尋找", text: $model.claudePath)
+                            Button("儲存 CLI 路徑") { model.saveSettings() }
+                        }
                     }
                 }
             }
@@ -3661,7 +3975,7 @@ struct ContentView: View {
     }
 
     private var accountPanel: some View {
-        GroupBox("官方 CLI 帳戶") {
+        GroupBox(model.settings.defaultProvider == .local ? "Local memory account" : "官方 CLI 帳戶") {
             VStack(alignment: .leading, spacing: 8) {
                 if let profile = model.selectedAccountProfile {
                     Picker("帳戶", selection: Binding(
@@ -3672,7 +3986,10 @@ struct ContentView: View {
                             Text(account.name).tag(account.id)
                         }
                     }
-                    if let assessment = model.selectedProfileAuthentication {
+                    if model.settings.defaultProvider == .local {
+                        Text("This account scopes local chat memory consent. It does not have a CLI login or provider plan.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if let assessment = model.selectedProfileAuthentication {
                         Label(model.localized(assessment.message), systemImage: assessment.confirmedSubscription ? "checkmark.seal" : "exclamationmark.shield")
                             .font(.caption).foregroundStyle(assessment.confirmedSubscription ? Color.secondary : Color.orange)
                     } else {
@@ -3684,7 +4001,10 @@ struct ContentView: View {
                         set: { model.setSelectedAccountMemorySharing($0) }
                     ))
                     .font(.caption)
-                    if !profile.usesExistingLogin {
+                    if model.settings.defaultProvider == .local {
+                        Text("Local models do not use sign-in or credential folders.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    } else if !profile.usesExistingLogin {
                         Button("在 App 內登入此帳戶") { model.openProfileLoginTerminal() }
                             .disabled(model.terminalRunning)
                     } else {
@@ -3695,7 +4015,7 @@ struct ContentView: View {
                     Text("正在載入帳戶設定…").font(.caption).foregroundStyle(.secondary)
                 }
                 Divider()
-                TextField("新帳戶顯示名稱", text: $model.newProfileName)
+                TextField(model.settings.defaultProvider == .local ? "New local account name" : "新帳戶顯示名稱", text: $model.newProfileName)
                 Toggle("建立後允許共用專案記憶（預設開啟）", isOn: $model.newProfileAllowsSharedMemory)
                     .font(.caption)
                 Button("新增並切換帳戶") { model.createAccountProfile() }
@@ -3726,21 +4046,28 @@ struct ContentView: View {
                 TextField("Git 儲存庫路徑", text: $model.repositoryPath)
                 Button("選擇儲存庫…") { model.chooseRepository() }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Picker("新工作階段存取模式", selection: $model.requestedAccessMode) {
-                    Text("唯讀（預設）").tag(AccessMode.readOnly)
-                    Text("隔離變更（需先核准計畫）").tag(AccessMode.isolatedChanges)
-                        .disabled(model.settings.usageMode == .api)
-                    Text("原生互動終端").tag(AccessMode.interactiveManualApproval)
-                        .disabled(model.settings.usageMode == .api)
+                if model.settings.defaultProvider == .local {
+                    Label("Local project chat is read-only. Editing, terminal, autonomy, Skills, and MCP are unavailable.", systemImage: "lock.fill")
+                        .font(.caption2).foregroundStyle(.secondary)
+                } else {
+                    Picker("新工作階段存取模式", selection: $model.requestedAccessMode) {
+                        Text("唯讀（預設）").tag(AccessMode.readOnly)
+                        Text("隔離變更（需先核准計畫）").tag(AccessMode.isolatedChanges)
+                            .disabled(model.settings.usageMode == .api)
+                        Text("原生互動終端").tag(AccessMode.interactiveManualApproval)
+                            .disabled(model.settings.usageMode == .api)
+                    }
+                    .font(.caption)
                 }
-                .font(.caption)
-                if model.settings.usageMode == .api {
+                if model.settings.usageMode == .api && model.settings.defaultProvider != .local {
                     Text("Claude API 只提供唯讀工作階段；隔離變更與互動終端僅支援官方 CLI 訂閱登入。")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Button("建立同一專案的新工作階段") { model.createSession() }
                     .disabled(model.repositoryPath.isEmpty || model.isSwitchingTarget)
-                Text("AgentBridge 固定提交版本並在自己的隔離工作區執行。相同來源與提交版本在 Codex、Claude 間共用聊天記憶。")
+                Text(model.settings.defaultProvider == .local
+                    ? "AgentBridge 固定提交版本並在自己的隔離工作區執行。Local 專案聊天只讀，並依綁定本機帳戶的同意設定共用記憶。"
+                    : "AgentBridge 固定提交版本並在自己的隔離工作區執行。相同來源與提交版本在 Codex、Claude 間共用聊天記憶。")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             .padding(.vertical, 2)
@@ -3760,7 +4087,7 @@ struct ContentView: View {
                 )) { session in
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
-                            Image(systemName: session.provider == .codex ? "sparkle" : "message")
+                            Image(systemName: session.provider == .codex ? "sparkle" : (session.provider == .local ? "desktopcomputer" : "message"))
                             Text(session.provider.rawValue.capitalized)
                                 .font(.headline)
                             if session.policy.accessMode == .interactiveManualApproval {
@@ -3787,7 +4114,11 @@ struct ContentView: View {
             if let session = model.selectedSession {
                 conversationHeader(session)
                 memoryPanel(session)
-                if session.policy.accessMode == .readOnly {
+                if session.provider == .local {
+                    chatTimeline
+                    composer(session)
+                    activityTimeline
+                } else if session.policy.accessMode == .readOnly {
                     chatTimeline
                     composer(session)
                     activityTimeline
@@ -3811,7 +4142,7 @@ struct ContentView: View {
 
     private func conversationHeader(_ session: SessionRecord) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: session.provider == .codex ? "sparkle" : "message")
+            Image(systemName: session.provider == .codex ? "sparkle" : (session.provider == .local ? "desktopcomputer" : "message"))
                 .font(.title3).foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(session.provider.rawValue.capitalized) · \(model.profileName(for: session))")
@@ -3824,9 +4155,20 @@ struct ContentView: View {
                 Label(model.localized(assessment.message), systemImage: assessment.confirmedSubscription ? "checkmark.seal" : "exclamationmark.shield")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            Button("本機終端機") { model.openLocalShell() }
-                .disabled(model.terminalLaunch != nil)
-            if session.policy.accessMode == .interactiveManualApproval {
+            if session.provider == .local {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.settings.localModel.model.isEmpty ? model.localized("No model selected") : model.settings.localModel.model)
+                        .font(.caption.weight(.medium))
+                    Text(model.settings.localModel.endpoint)
+                        .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                    Text(model.localized(model.localModelStatus))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            } else {
+                Button("本機終端機") { model.openLocalShell() }
+                    .disabled(model.terminalLaunch != nil)
+            }
+            if session.provider != .local && session.policy.accessMode == .interactiveManualApproval {
                 Button("開啟內嵌終端機") { model.openEmbeddedInteractiveTerminal() }
                     .disabled(model.terminalRunning)
                 if session.status == .running { Button("取消工作階段") { model.cancelSession(session.id) } }
@@ -3857,7 +4199,7 @@ struct ContentView: View {
                                 String(memory.scope.snapshotCommit.prefix(12))))
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
-                if let profile = model.selectedAccountProfile, !profile.allowsSharedMemory {
+                if let profile = model.boundProfile(for: session), !profile.allowsSharedMemory {
                     Label("此帳戶未同意把記憶傳給助理。開啟左側「允許此帳戶載入與保存」後才會共用。", systemImage: "lock.fill")
                         .font(.caption).foregroundStyle(.orange)
                 }
@@ -4295,15 +4637,31 @@ struct ContentView: View {
                     .padding(5)
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
                     .overlay(RoundedRectangle(cornerRadius: 9).stroke(.quaternary))
+                    .disabled(isLoadingContextPreview || model.selectedSessionIsRunning)
                 VStack(spacing: 7) {
-                    Button(model.localized(model.isClaudeAPIRunContext ? "執行 Claude API" : "傳送")) { model.runPrompt() }
+                    Button {
+                        loadProjectContextPreview(session, showEvenWhenSafe: true)
+                    } label: {
+                        if isLoadingContextPreview { ProgressView().controlSize(.small) }
+                        else { Label(model.localized("Preview context"), systemImage: "text.magnifyingglass") }
+                    }
+                    .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (session.provider == .local && model.localModelSettingsAreDirty) || isLoadingContextPreview)
+                    Button(model.localized(model.isClaudeAPIRunContext ? "執行 Claude API" : (session.provider == .local ? "Send to local model" : "傳送"))) {
+                        submitProjectPrompt(session)
+                    }
                         .buttonStyle(.borderedProminent)
-                        .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.settings.usageMode == .api && (!model.isClaudeAPIRunContext || model.budgetSnapshot == nil)) || (model.isClaudeAPIRunContext && model.usageControls.disableFutureAPI))
+                        .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || isLoadingContextPreview || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.settings.usageMode == .api && session.provider != .local && (!model.isClaudeAPIRunContext || model.budgetSnapshot == nil)) || (model.isClaudeAPIRunContext && model.usageControls.disableFutureAPI) || (session.provider == .local && model.localModelSettingsAreDirty))
                     if model.selectedSessionIsRunning { Button("取消") { model.cancelRun() } }
                 }
             }
-            Text("提示和回應只在成功完成後進入共用記憶；金鑰不會保存。")
+            Text(model.localized(session.provider == .local
+                ? "Prompts and responses are stored in shared memory only after a successful turn. Context compression preserves recent turns and the exact current request."
+                : "提示和回應只在成功完成後進入共用記憶；金鑰不會保存。"))
                 .font(.caption2).foregroundStyle(.secondary)
+            if session.provider == .local && model.localModelSettingsAreDirty {
+                Label(model.localized("Save local model settings before sending."), systemImage: "exclamationmark.triangle")
+                    .font(.caption2).foregroundStyle(.orange)
+            }
             if session.sourceWasDirty {
                 Text("來源有未提交變更；此對話固定的工作區不包含那些變更。")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -4311,6 +4669,54 @@ struct ContentView: View {
         }
         .padding(12)
         .background(.quaternary.opacity(0.42), in: RoundedRectangle(cornerRadius: 12))
+        .sheet(isPresented: $isShowingContextPreview) {
+            if let contextPreview {
+                ContextPreviewSheet(model: model, preview: contextPreview, settings: contextPreviewSettings)
+                    .frame(minWidth: 760, minHeight: 620)
+            }
+        }
+    }
+
+    private func loadProjectContextPreview(_ session: SessionRecord, showEvenWhenSafe: Bool) {
+        let currentPrompt = model.prompt
+        guard !currentPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isLoadingContextPreview = true
+        Task { @MainActor in
+            defer { isLoadingContextPreview = false }
+            do {
+                let preview = try await model.previewProjectContext(sessionID: session.id, currentPrompt: currentPrompt)
+                contextPreview = preview
+                contextPreviewSettings = session.provider == .local ? model.settings.localModel : nil
+                if showEvenWhenSafe || preview.requiresReview { isShowingContextPreview = true }
+            } catch {
+                model.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func submitProjectPrompt(_ session: SessionRecord) {
+        guard !model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard session.provider != .local || !model.localModelSettingsAreDirty else {
+            model.errorMessage = model.localized("Save local model settings before sending.")
+            return
+        }
+        let currentPrompt = model.prompt
+        isLoadingContextPreview = true
+        Task { @MainActor in
+            defer { isLoadingContextPreview = false }
+            do {
+                let preview = try await model.previewProjectContext(sessionID: session.id, currentPrompt: currentPrompt)
+                if preview.requiresReview {
+                    contextPreview = preview
+                    contextPreviewSettings = session.provider == .local ? model.settings.localModel : nil
+                    isShowingContextPreview = true
+                    return
+                }
+                model.runPrompt()
+            } catch {
+                model.errorMessage = error.localizedDescription
+            }
+        }
     }
 
     private func interactivePanel(_ session: SessionRecord) -> some View {

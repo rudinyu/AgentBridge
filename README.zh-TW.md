@@ -4,7 +4,7 @@
 
 ![AgentBridge macOS app icon](Assets/AppIcon-1024.png)
 
-AgentBridge 0.9.0 是一個 macOS 14+ Swift 專案，提供共用核心、命令列工具 `agentbridge`，以及原生 SwiftUI App。它透過本機官方 Codex CLI 與 Claude Code CLI 工作；App 與 CLI 的唯讀聊天可依專案與固定提交版本共用記憶，也可由使用者明確選取記憶延續到另一個提交版本。首次使用時，設定精靈會引導語言、供應商、工作區資料夾、CLI 路徑、訂閱登入、共用記憶與本機用量設定；日後可從 App 標題列的「設定精靈」重新開啟。CLI 會使用相同的已保存工作區根目錄。App 預設使用英文，也支援繁體中文。
+AgentBridge 0.10.0 是一個 macOS 14+ Swift 專案，提供共用核心、命令列工具 `agentbridge`，以及原生 SwiftUI App。它透過本機官方 Codex CLI 與 Claude Code CLI 工作；App 與 CLI 的唯讀聊天可依專案與固定提交版本共用記憶，也可由使用者明確選取記憶延續到另一個提交版本。首次使用時，設定精靈會引導語言、供應商、工作區資料夾、CLI 路徑、訂閱登入、共用記憶與本機用量設定；日後可從 App 標題列的「設定精靈」重新開啟。CLI 會使用相同的已保存工作區根目錄。App 預設使用英文，也支援繁體中文。
 
 AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登入；Claude API 是可選的付費模式，必須逐次輸入 API key、單次預算並明確確認。每月 US$140 是 AgentBridge 本機帳本上限，不是 Anthropic 帳單的硬性限制。
 
@@ -12,6 +12,7 @@ AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登
 
 ## 文件
 
+- [本機模型與可讀上下文壓縮](docs/LOCAL_MODELS_AND_CONTEXT.zh-TW.md) · [English](docs/LOCAL_MODELS_AND_CONTEXT.md)
 - [架構與設計](ARCHITECTURE.zh-TW.md)
 - [先聊天流程](docs/CHAT_FIRST_WORKFLOW.zh-TW.md) · [English](docs/CHAT_FIRST_WORKFLOW.md)
 - [使用指南](docs/HOW_TO_USE.zh-TW.md)
@@ -21,16 +22,18 @@ AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登
 
 ## 快速開始
 
+選 **Local** 可連到已啟動的 Ollama 或 OpenAI 相容本機回送服務，不需要雲端 API key。Local 支援討論與唯讀專案對話，本機模型的修改／工具執行尚未提供。上下文壓縮保留可讀且有來源的段落與完整當前要求，可預覽；受保護內容放不下時會停止送出。詳見[本機模型指南](docs/LOCAL_MODELS_AND_CONTEXT.zh-TW.md)。
+
 需求：macOS 14 或更新版本、Swift 6 與 Xcode toolchain。請先安裝並登入想使用的官方 provider CLI；登入由各 CLI 管理。SwiftTerm 1.20.0 以固定版本作為 App 內嵌終端的依賴，授權見 [LICENSES/SwiftTerm-LICENSE.txt](LICENSES/SwiftTerm-LICENSE.txt)。
 
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh --app-name AgentBridge-0.9.0-dev.app
-open build/AgentBridge-0.9.0-dev.app
+./scripts/package-app.sh --app-name AgentBridge-0.10.0-dev.app
+open build/AgentBridge-0.10.0-dev.app
 ```
 
-`.codex/ci.sh` 建置 CLI/App 並執行核心測試；上列封裝命令會將 icon 打入未簽署的本機 `build/AgentBridge-0.9.0-dev.app`，保留既有公證版。省略 `--app-name` 時，預設輸出仍為 `build/AgentBridge.app`。發行時需使用 Developer ID 簽署、送交 Apple 公證、staple ticket 並驗證；步驟見[使用指南](docs/HOW_TO_USE.zh-TW.md)。建置與檢查不需要登入 provider、不會呼叫模型，也不會產生 Claude API 費用。CLI 位於 `build/swiftpm/debug/agentbridge`。
+`.codex/ci.sh` 建置 CLI/App 並執行核心測試；上列封裝命令會將 icon 打入未簽署的本機 `build/AgentBridge-0.10.0-dev.app`，保留既有公證版。省略 `--app-name` 時，預設輸出仍為 `build/AgentBridge.app`。發行時需使用 Developer ID 簽署、送交 Apple 公證、staple ticket 並驗證；步驟見[使用指南](docs/HOW_TO_USE.zh-TW.md)。建置與檢查不需要登入 provider、不會呼叫模型，也不會產生 Claude API 費用。CLI 位於 `build/swiftpm/debug/agentbridge`。
 
 ### 預設安全邊界
 
@@ -49,6 +52,12 @@ open build/AgentBridge-0.9.0-dev.app
 在訂閱活動面板開啟目前所選 Codex 或 Claude 帳戶的官方 CLI 用量終端。請等待該帳戶的 CLI 就緒並完成登入，再按終端中的固定「送出 /usage」按鈕。按鈕只會送出 /usage 和 Enter，不接受自行輸入的命令。Claude API 模式不提供此操作。
 
 AgentBridge 會在全新且私有的空白暫存資料夾中啟動官方互動 TUI，套用唯讀限制，並使用所選帳戶既有或專屬的 CLI 設定資料夾。按下固定的 /usage 按鈕後，App 只會將有限長度的可見畫面文字暫存在記憶體，以 provider 專用的盡力辨識器填入統一資料卡；辨識到用量值或 15 秒後即停止取樣，再按固定按鈕可重新啟動。未知欄位會顯示「Not provided / 未提供」。原始 TUI 仍會留在畫面供核對。此辨識依賴 provider 畫面文字，並非穩定 API；AgentBridge 不會保存或記錄擷取文字，也不會傳給模型。CLI 結束後會刪除暫存資料夾；Claude 此用量專用啟動也會停用 prompt 歷史與 session transcript 寫入。
+
+## 授權
+
+Copyright (c) 2026 rudin。AgentBridge 採用 [MIT 授權](LICENSE)。
+
+封裝的 App 包含 `AgentBridge-LICENSE.txt`，並另行保留 [SwiftTerm 授權](LICENSES/SwiftTerm-LICENSE.txt)。第三方元件保留各自的版權與授權宣告；Codex、Claude Code 與本機模型服務是獨立產品，適用各自的使用條款。
 
 ## 官方 CLI 參考
 

@@ -833,6 +833,9 @@ extension BridgeService {
         var profiles: [AutonomousRole: AccountProfile] = [:]
         for binding in bindings {
             let profile = try accountProfile(id: binding.accountProfileID)
+            guard profile.provider != .local else {
+                throw AutonomousOrchestrationError.invalidRequest("Local models do not support autonomous workflows; no project workspace or tools were started.")
+            }
             guard profile.id == binding.accountProfileID,
                   profile.provider == binding.provider else {
                 throw AutonomousOrchestrationError.invalidRequest("Role \(binding.role.rawValue) must use its explicitly bound provider profile. Subscription authentication is checked for each provider invocation.")

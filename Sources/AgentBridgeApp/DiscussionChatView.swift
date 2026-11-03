@@ -11,6 +11,10 @@ struct DiscussionChatView: View {
     @State private var prompt = ""
     @State private var isShareable = true
     @State private var isShowingHandoffReview = false
+    @State private var isShowingContextPreview = false
+    @State private var isLoadingContextPreview = false
+    @State private var contextPreview: ContextCompressionPreview?
+    @State private var contextPreviewSettings: LocalModelSettings?
     @State private var handoffMode: DiscussionProjectMode = .createNew
 
     private var discussion: DiscussionRecord? {
@@ -66,6 +70,12 @@ struct DiscussionChatView: View {
             )
             .frame(minWidth: 760, minHeight: 640)
         }
+        .sheet(isPresented: $isShowingContextPreview) {
+            if let contextPreview {
+                ContextPreviewSheet(model: model, preview: contextPreview, settings: contextPreviewSettings)
+                    .frame(minWidth: 760, minHeight: 620)
+            }
+        }
         .onChange(of: discussion?.accountProfileID) { _, _ in
             isShareable = currentProfileAllowsSharing
         }
@@ -77,7 +87,7 @@ struct DiscussionChatView: View {
     private func header(_ discussion: DiscussionRecord) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Image(systemName: discussion.provider == .codex ? "sparkle" : "message")
+                Image(systemName: discussion.provider == .codex ? "sparkle" : (discussion.provider == .local ? "desktopcomputer" : "message"))
                     .font(.title3).foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Chat")
@@ -112,12 +122,13 @@ struct DiscussionChatView: View {
                 )) {
                     Text("Codex").tag(AgentProvider.codex)
                     Text("Claude").tag(AgentProvider.claude)
+                    Text("Local").tag(AgentProvider.local)
                 }
                 .pickerStyle(.menu)
                 .frame(width: 150)
                 .disabled(isBusy || model.hasActiveDiscussionOperation)
 
-                Picker("Account", selection: Binding(
+                Picker(discussion.provider == .local ? "Memory account" : "Account", selection: Binding(
                     get: { discussion.accountProfileID },
                     set: { profileID in
                         model.setDiscussionTarget(id: discussion.id, provider: discussion.provider, profileID: profileID)
@@ -132,8 +143,21 @@ struct DiscussionChatView: View {
                 .frame(maxWidth: 240)
                 .disabled(isBusy || model.hasActiveDiscussionOperation)
 
-                Label("Official CLI subscription", systemImage: "checkmark.shield")
-                    .font(.caption).foregroundStyle(.secondary)
+                if discussion.provider == .local {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(model.localizedFormat("Local model · %@", model.settings.localModel.model.isEmpty
+                            ? model.localized("No model selected")
+                            : model.settings.localModel.model), systemImage: "desktopcomputer")
+                            .font(.caption)
+                        Text(model.settings.localModel.endpoint)
+                            .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                        Text(model.localized(model.localModelStatus))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Label("Official CLI subscription", systemImage: "checkmark.shield")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer(minLength: 4)
                 Button("Create Git Project…") { presentHandoffReview(.createNew) }
                     .disabled(isBusy || model.hasActiveDiscussionOperation)
@@ -141,7 +165,9 @@ struct DiscussionChatView: View {
                     .disabled(isBusy || model.hasActiveDiscussionOperation)
             }
 
-            Text("Changing provider or account updates this chat only. Discussions use official CLI subscription sign-in and never use Claude API billing.")
+            Text(discussion.provider == .local
+                ? "Changing provider or account updates this chat only. Local mode uses the configured loopback model and does not use API keys, provider subscriptions, or cloud fallback."
+                : "Changing provider or account updates this chat only. Discussions use official CLI subscription sign-in and never use Claude API billing.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(12)
@@ -298,7 +324,7 @@ struct DiscussionChatView: View {
                 .frame(minHeight: 78, maxHeight: 150)
                 .padding(4)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-                .disabled(isBusy || model.hasActiveDiscussionOperation)
+                .disabled(isBusy || model.hasActiveDiscussionOperation || isLoadingContextPreview)
                 .accessibilityLabel("Message")
 
             HStack(alignment: .center, spacing: 10) {
@@ -310,20 +336,74 @@ struct DiscussionChatView: View {
                         .font(.caption2).foregroundStyle(.orange)
                 }
                 Spacer()
+                Button {
+                    loadContextPreview(for: prompt, discussion: discussion, showEvenWhenSafe: true)
+                } label: {
+                    if isLoadingContextPreview { ProgressView().controlSize(.small) }
+                    else { Label("Preview context", systemImage: "text.magnifyingglass") }
+                }
+                .disabled(isBusy || model.hasActiveDiscussionOperation || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoadingContextPreview || (discussion.provider == .local && model.localModelSettingsAreDirty))
                 if let progress = model.discussionProgress[discussion.id], !progress.isEmpty, !isBusy {
                     Text(model.localized(progress))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Button {
-                    let message = prompt
-                    prompt = ""
-                    model.sendDiscussionMessage(id: discussion.id, prompt: message, isShareable: isShareable)
+                    submitMessage(discussion)
                 } label: {
                     Label("Send", systemImage: "arrow.up.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return, modifiers: [.command])
-                .disabled(isBusy || model.hasActiveDiscussionOperation || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(isBusy || model.hasActiveDiscussionOperation || isLoadingContextPreview || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (discussion.provider == .local && model.localModelSettingsAreDirty))
+            }
+        }
+    }
+
+    private func loadContextPreview(for prompt: String, discussion: DiscussionRecord, showEvenWhenSafe: Bool) {
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isLoadingContextPreview = true
+        Task { @MainActor in
+            defer { isLoadingContextPreview = false }
+            do {
+                let preview = try await model.previewDiscussionContext(id: discussionID, currentPrompt: prompt)
+                contextPreview = preview
+                contextPreviewSettings = discussion.provider == .local ? model.settings.localModel : nil
+                if showEvenWhenSafe || preview.requiresReview {
+                    isShowingContextPreview = true
+                }
+            } catch {
+                model.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func submitMessage(_ discussion: DiscussionRecord) {
+        guard !isLoadingContextPreview else { return }
+        guard discussion.provider != .local || !model.localModelSettingsAreDirty else {
+            model.errorMessage = model.localized("Save local model settings before sending.")
+            return
+        }
+        let message = prompt
+        guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isLoadingContextPreview = true
+        Task { @MainActor in
+            defer { isLoadingContextPreview = false }
+            do {
+                let preview = try await model.previewDiscussionContext(id: discussion.id, currentPrompt: message)
+                if preview.requiresReview {
+                    contextPreview = preview
+                    contextPreviewSettings = discussion.provider == .local ? model.settings.localModel : nil
+                    isShowingContextPreview = true
+                    return
+                }
+                model.sendDiscussionMessage(id: discussion.id, prompt: message, isShareable: isShareable) { succeeded in
+                    guard succeeded,
+                          model.selectedDiscussionID == discussion.id,
+                          prompt == message else { return }
+                    prompt = ""
+                }
+            } catch {
+                model.errorMessage = error.localizedDescription
             }
         }
     }
@@ -372,6 +452,10 @@ private struct DiscussionHandoffReviewView: View {
         model.accountProfiles[targetProvider] ?? []
     }
 
+    private var latestEligibleTurnIDs: Set<UUID> {
+        Set(eligibleTurns.suffix(DiscussionStore.maximumTurnsPerHandoff).map(\.id))
+    }
+
     private func isSourceProfileCurrentlyConsented(_ turn: DiscussionTurn) -> Bool {
         turn.sourceSharedMemoryConsent && turn.isShareable
             && model.profileAllowsSharedMemory(provider: turn.provider, profileID: turn.accountProfileID)
@@ -409,14 +493,14 @@ private struct DiscussionHandoffReviewView: View {
         let canShareToTarget = targetProfileID.map {
             model.profileAllowsSharedMemory(provider: targetProvider, profileID: $0)
         } ?? false
-        let eligibleIDs = canShareToTarget ? (record?.turns.filter {
+        let eligibleIDs = canShareToTarget ? Set((record?.turns.filter {
             $0.assistantText != nil && $0.sourceSharedMemoryConsent && $0.isShareable
                 && model.profileAllowsSharedMemory(provider: $0.provider, profileID: $0.accountProfileID)
-        }.map(\.id) ?? []) : []
+        }.suffix(DiscussionStore.maximumTurnsPerHandoff).map(\.id) ?? [])) : []
         _mode = State(initialValue: initialMode)
         _targetProvider = State(initialValue: targetProvider)
         _targetProfileID = State(initialValue: targetProfileID)
-        _selectedTurnIDs = State(initialValue: Set(eligibleIDs))
+        _selectedTurnIDs = State(initialValue: eligibleIDs)
     }
 
     var body: some View {
@@ -500,7 +584,7 @@ private struct DiscussionHandoffReviewView: View {
         .interactiveDismissDisabled(isPreparing || isCreating)
         .onChange(of: discussion?.revision) { _, _ in clearPreview() }
         .onChange(of: model.accountProfiles) { _, _ in
-            selectedTurnIDs = Set(eligibleTurns.map(\.id))
+            selectedTurnIDs = latestEligibleTurnIDs
             clearPreview()
         }
     }
@@ -511,9 +595,11 @@ private struct DiscussionHandoffReviewView: View {
                 Picker("Provider", selection: $targetProvider) {
                     Text("Codex").tag(AgentProvider.codex)
                     Text("Claude").tag(AgentProvider.claude)
+                    Text("Local").tag(AgentProvider.local)
                 }
                 .onChange(of: targetProvider) { _, provider in
                     targetProfileID = model.preferredDiscussionProfileID(for: provider)
+                    if provider == .local { accessMode = .readOnly }
                     selectedTurnIDs = eligibleTurnIDs(for: provider, profileID: targetProfileID)
                     clearPreview()
                 }
@@ -530,12 +616,17 @@ private struct DiscussionHandoffReviewView: View {
                     }
                 }
                 .disabled(targetProfiles.isEmpty)
-                Picker("Session access", selection: $accessMode) {
-                    Text("Read-only").tag(AccessMode.readOnly)
-                    Text("Isolated changes · review and explicit approval required").tag(AccessMode.isolatedChanges)
-                        .disabled(model.settings.usageMode == .api)
+                if targetProvider == .local {
+                    Label("Local project chat is read-only.", systemImage: "lock.fill")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Picker("Session access", selection: $accessMode) {
+                        Text("Read-only").tag(AccessMode.readOnly)
+                        Text("Isolated changes · review and explicit approval required").tag(AccessMode.isolatedChanges)
+                            .disabled(model.settings.usageMode == .api)
+                    }
+                    .onChange(of: accessMode) { _, _ in clearPreview() }
                 }
-                .onChange(of: accessMode) { _, _ in clearPreview() }
                 sessionAccessNotice
                 sessionAvailabilityNotices
             }
@@ -545,7 +636,10 @@ private struct DiscussionHandoffReviewView: View {
 
     @ViewBuilder
     private var sessionAccessNotice: some View {
-        if accessMode == .readOnly && targetProvider == .claude && model.settings.usageMode == .api {
+        if targetProvider == .local {
+            Label("Read-only session · local model", systemImage: "desktopcomputer")
+                .font(.caption).foregroundStyle(.secondary)
+        } else if accessMode == .readOnly && targetProvider == .claude && model.settings.usageMode == .api {
             Label("Claude API runs stay behind the existing budget and explicit confirmation controls. This handoff does not call the provider.", systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(.orange)
         } else if accessMode == .readOnly {
@@ -563,7 +657,7 @@ private struct DiscussionHandoffReviewView: View {
             Text("Codex project sessions are unavailable while Claude API mode is selected. Switch project usage mode to subscription before handing off to Codex.")
                 .font(.caption2).foregroundStyle(.orange)
         }
-        if model.settings.usageMode == .api {
+        if model.settings.usageMode == .api && targetProvider != .local {
             Text("Isolated changes are unavailable while Claude API mode is selected.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
@@ -576,8 +670,27 @@ private struct DiscussionHandoffReviewView: View {
     private var completedTurnsSection: some View {
         GroupBox("Completed turns to include") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Eligible turns are checked by default. Only completed turns from profiles that allowed shared memory, and that were marked shareable, can be selected.")
+                Text(model.localizedFormat(
+                    "Up to %d completed turns can be included. The latest eligible turns are preselected; the original chat is retained. Review the exact selection before continuing.",
+                    DiscussionStore.maximumTurnsPerHandoff
+                ))
                     .font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button("Select none") {
+                        selectedTurnIDs.removeAll()
+                        clearPreview()
+                    }
+                    Button(model.localizedFormat("Select latest %d", DiscussionStore.maximumTurnsPerHandoff)) {
+                        selectedTurnIDs = latestEligibleTurnIDs
+                        clearPreview()
+                    }
+                    Text(model.localizedFormat(
+                        "%d of %d selected",
+                        selectedTurnIDs.count,
+                        DiscussionStore.maximumTurnsPerHandoff
+                    ))
+                    .font(.caption2).foregroundStyle(.secondary)
+                }
                 if let discussion {
                     if discussion.turns.isEmpty {
                         Text("This chat has no turns yet. You can still create or link a project with no discussion context.")
@@ -603,7 +716,16 @@ private struct DiscussionHandoffReviewView: View {
         return Toggle(isOn: Binding(
             get: { selectedTurnIDs.contains(turn.id) },
             set: { selected in
-                if selected { selectedTurnIDs.insert(turn.id) }
+                if selected {
+                    guard selectedTurnIDs.count < DiscussionStore.maximumTurnsPerHandoff else {
+                        errorMessage = model.localizedFormat(
+                            "A handoff can include at most %d turns.",
+                            DiscussionStore.maximumTurnsPerHandoff
+                        )
+                        return
+                    }
+                    selectedTurnIDs.insert(turn.id)
+                }
                 else { selectedTurnIDs.remove(turn.id) }
                 clearPreview()
             }
@@ -618,7 +740,8 @@ private struct DiscussionHandoffReviewView: View {
                 }
             }
         }
-        .disabled(!eligible || isPreparing || isCreating)
+        .disabled(!eligible || isPreparing || isCreating
+            || (!selectedTurnIDs.contains(turn.id) && selectedTurnIDs.count >= DiscussionStore.maximumTurnsPerHandoff))
     }
 
     @ViewBuilder
@@ -717,9 +840,9 @@ private struct DiscussionHandoffReviewView: View {
     private func eligibleTurnIDs(for provider: AgentProvider, profileID: UUID?) -> Set<UUID> {
         guard let profileID,
               model.profileAllowsSharedMemory(provider: provider, profileID: profileID) else { return [] }
-        return Set(discussion?.turns.filter {
+        return Set((discussion?.turns.filter {
             $0.assistantText != nil && isSourceProfileCurrentlyConsented($0)
-        }.map(\.id) ?? [])
+        }.suffix(DiscussionStore.maximumTurnsPerHandoff).map(\.id) ?? []))
     }
 
     private func chooseDestination() {

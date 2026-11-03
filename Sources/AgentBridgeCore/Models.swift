@@ -4,6 +4,83 @@ import Foundation
 public enum AgentProvider: String, Codable, CaseIterable, Sendable {
     case codex
     case claude
+    case local
+}
+
+public enum LocalModelBackend: String, Codable, CaseIterable, Sendable {
+    case ollama
+    case openAICompatible
+}
+
+/// Connection settings for a model server running on this Mac. The endpoint is
+/// validated again at every use and is never sent to a cloud provider.
+public struct LocalModelSettings: Codable, Equatable, Sendable {
+    public var backend: LocalModelBackend
+    public var endpoint: String
+    public var model: String
+    public var contextWindowTokens: Int
+    public var maxOutputTokens: Int
+
+    public init(
+        backend: LocalModelBackend = .ollama,
+        endpoint: String = "http://127.0.0.1:11434",
+        model: String = "",
+        contextWindowTokens: Int = 8_192,
+        maxOutputTokens: Int = 1_024
+    ) {
+        self.backend = backend
+        self.endpoint = endpoint
+        self.model = model
+        self.contextWindowTokens = contextWindowTokens
+        self.maxOutputTokens = maxOutputTokens
+    }
+
+    public func validate() throws {
+        guard endpoint.utf8.count <= 2_048, !endpoint.contains("\0"),
+              model.utf8.count <= 256, !model.contains("\0"),
+              (1_024...131_072).contains(contextWindowTokens),
+              (1...32_768).contains(maxOutputTokens),
+              contextWindowTokens - maxOutputTokens > 512 else {
+            throw AgentBridgeError.invalidInput("本機模型設定無效；請檢查端點、模型名稱、上下文視窗與輸出上限。")
+        }
+    }
+}
+
+public struct LocalModelDescriptor: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let contextWindowTokens: Int?
+
+    public init(id: String, name: String, contextWindowTokens: Int? = nil) {
+        self.id = id
+        self.name = name
+        self.contextWindowTokens = contextWindowTokens
+    }
+}
+
+/// A deterministic view of the exact historical context prepared for one
+/// request. A nil prompt means the compressor refused to send it safely.
+public struct ContextCompressionPreview: Equatable, Sendable {
+    public let compressedPrompt: String?
+    public let report: ContextCompressionReport
+    public let sections: [ContextCompressionSection]
+    /// This digest is informational so callers can detect a stale preview; it
+    /// is not an authorization token and never bypasses a compression refusal.
+    public let previewDigest: String
+
+    public var requiresReview: Bool { report.refusalReason != nil }
+
+    public init(compressedContext: CompressedContext, stalenessToken: String = "") {
+        self.compressedPrompt = compressedContext.prompt
+        self.report = compressedContext.report
+        self.sections = compressedContext.sections
+        let payload = [stalenessToken, compressedContext.prompt ?? "<refused>", compressedContext.report.readableLabel]
+            .map { "\($0.utf8.count):\($0)" }
+            .joined()
+        self.previewDigest = SHA256.hash(data: Data(payload.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
 }
 
 public enum UsageMode: String, Codable, CaseIterable, Sendable {
@@ -30,23 +107,27 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
     public var usageMode: UsageMode
     public var codexBinaryPath: String?
     public var claudeBinaryPath: String?
+    public var localModel: LocalModelSettings
 
     public init(
         defaultProvider: AgentProvider = .codex,
         usageMode: UsageMode = .subscription,
         codexBinaryPath: String? = nil,
-        claudeBinaryPath: String? = nil
+        claudeBinaryPath: String? = nil,
+        localModel: LocalModelSettings = LocalModelSettings()
     ) {
         self.defaultProvider = defaultProvider
         self.usageMode = usageMode
         self.codexBinaryPath = codexBinaryPath
         self.claudeBinaryPath = claudeBinaryPath
+        self.localModel = localModel
     }
 
     public func binaryPath(for provider: AgentProvider) -> String? {
         switch provider {
         case .codex: codexBinaryPath
         case .claude: claudeBinaryPath
+        case .local: nil
         }
     }
 
@@ -54,7 +135,34 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
         switch provider {
         case .codex: codexBinaryPath = path
         case .claude: claudeBinaryPath = path
+        case .local: break
         }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case defaultProvider
+        case usageMode
+        case codexBinaryPath
+        case claudeBinaryPath
+        case localModel
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        defaultProvider = try values.decodeIfPresent(AgentProvider.self, forKey: .defaultProvider) ?? .codex
+        usageMode = try values.decodeIfPresent(UsageMode.self, forKey: .usageMode) ?? .subscription
+        codexBinaryPath = try values.decodeIfPresent(String.self, forKey: .codexBinaryPath)
+        claudeBinaryPath = try values.decodeIfPresent(String.self, forKey: .claudeBinaryPath)
+        localModel = try values.decodeIfPresent(LocalModelSettings.self, forKey: .localModel) ?? LocalModelSettings()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(defaultProvider, forKey: .defaultProvider)
+        try values.encode(usageMode, forKey: .usageMode)
+        try values.encodeIfPresent(codexBinaryPath, forKey: .codexBinaryPath)
+        try values.encodeIfPresent(claudeBinaryPath, forKey: .claudeBinaryPath)
+        try values.encode(localModel, forKey: .localModel)
     }
 }
 

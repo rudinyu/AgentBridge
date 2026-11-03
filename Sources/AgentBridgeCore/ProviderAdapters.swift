@@ -8,19 +8,22 @@ public struct AuthAssessment: Equatable, Sendable {
     public let message: String
     public let accountLabel: String?
     public let planName: String?
+    public let localEndpointReachable: Bool?
 
     public init(
         provider: AgentProvider,
         confirmedSubscription: Bool,
         message: String,
         accountLabel: String? = nil,
-        planName: String? = nil
+        planName: String? = nil,
+        localEndpointReachable: Bool? = nil
     ) {
         self.provider = provider
         self.confirmedSubscription = confirmedSubscription
         self.message = message
         self.accountLabel = accountLabel
         self.planName = planName
+        self.localEndpointReachable = localEndpointReachable
     }
 }
 
@@ -69,6 +72,8 @@ public enum RuntimeEnvironment {
             if let configDirectory = base["CLAUDE_CONFIG_DIR"], configDirectory.hasPrefix("/"), !configDirectory.contains("\0") {
                 result["CLAUDE_CONFIG_DIR"] = configDirectory
             }
+        case .local:
+            break
         }
         result = result.filter { allowedKeys.contains($0.key) }
         if provider == .claude, let apiKey, !apiKey.isEmpty, !apiKey.contains("\0") {
@@ -82,6 +87,9 @@ public enum RuntimeEnvironment {
         configuredPath: String?,
         searchPath: String = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     ) throws -> URL {
+        guard provider != .local else {
+            throw AgentBridgeError.sessionMismatch("本機模型使用直接本機 HTTP 連線，不會啟動 CLI。")
+        }
         let expected = provider.rawValue
         if let configuredPath, !configuredPath.isEmpty {
             let url = URL(fileURLWithPath: configuredPath).standardizedFileURL
@@ -139,6 +147,7 @@ public enum ProviderCommandBuilder {
     public static func codexRunArguments(
         workspacePath: String,
         resumeID: String? = nil,
+        ephemeral: Bool = false,
         activeMCPServers: [MCPServerCommandConfiguration] = [],
         mcpWorkingDirectory: String? = nil,
         mcpEnvironment: [String: String] = [:]
@@ -149,6 +158,7 @@ public enum ProviderCommandBuilder {
             "--disable", "skill_mcp_dependency_install", "--disable", "in_app_browser",
             "--sandbox", "read-only", "--cd", workspacePath, "exec"
         ]
+        if ephemeral { arguments.append("--ephemeral") }
         if let resumeID {
             try validateResumeID(resumeID)
             arguments += ["resume", resumeID]
@@ -207,6 +217,7 @@ public enum ProviderCommandBuilder {
         workspacePath: String,
         sessionID: UUID,
         resumeID: String? = nil,
+        stateless: Bool = false,
         activeMCPServers: [MCPServerCommandConfiguration] = [],
         mcpWorkingDirectory: String? = nil,
         mcpEnvironment: [String: String] = [:]
@@ -232,8 +243,12 @@ public enum ProviderCommandBuilder {
             "--tools", builtInTools.joined(separator: ","), "--add-dir", workspacePath,
             "--input-format", "text"
         ]
+        if stateless { arguments.append("--no-session-persistence") }
         if !mcpToolNames.isEmpty { arguments += ["--allowedTools"] + mcpToolNames }
-        if let resumeID {
+        if stateless {
+            // The application-owned compressed transcript is the complete
+            // context for this invocation. Do not create or resume vendor history.
+        } else if let resumeID {
             try validateResumeID(resumeID)
             arguments += ["--resume", resumeID]
         } else {
@@ -621,6 +636,8 @@ public enum ProviderOutputParser {
             case "error": return "Claude 回報執行錯誤。"
             default: return nil
             }
+        case .local:
+            return nil
         }
     }
 
@@ -631,6 +648,7 @@ public enum ProviderOutputParser {
         switch provider {
         case .codex: return try parseCodex(text)
         case .claude: return try parseClaude(text)
+        case .local: throw AgentBridgeError.unsupportedProviderOutput(.local)
         }
     }
 
@@ -781,6 +799,13 @@ public final class ProviderAdapter: Sendable {
         environment: [String: String],
         temporaryDirectory: URL
     ) async throws -> AuthAssessment {
+        guard provider != .local else {
+            return AuthAssessment(
+                provider: .local,
+                confirmedSubscription: false,
+                message: "本機模型沒有訂閱登入狀態；請測試本機伺服器連線。"
+            )
+        }
         let arguments: [String]
         switch provider {
         case .codex:
@@ -791,6 +816,8 @@ public final class ProviderAdapter: Sendable {
                 "--settings", "{\"disableAllHooks\":true,\"apiKeyHelper\":\"\",\"forceLoginMethod\":\"claudeai\"}",
                 "auth", "status", "--json"
             ]
+        case .local:
+            return AuthAssessment(provider: .local, confirmedSubscription: false, message: "本機模型不會讀取 CLI 登入狀態。")
         }
         let spec = ProcessSpec(executableURL: executableURL, arguments: arguments, environment: environment, workingDirectoryURL: URL(fileURLWithPath: temporaryDirectory.path, isDirectory: true), standardInput: Data(), timeout: 12, outputLimit: 64_000)
         let result = try await runner.run(spec)
@@ -802,6 +829,8 @@ public final class ProviderAdapter: Sendable {
             return AuthStatusClassifier.codex(stdout: result.standardOutput, stderr: result.standardError, exitCode: result.exitCode)
         case .claude:
             return AuthStatusClassifier.claude(stdout: result.standardOutput, stderr: result.standardError, exitCode: result.exitCode)
+        case .local:
+            return AuthAssessment(provider: .local, confirmedSubscription: false, message: "本機模型不使用訂閱登入。")
         }
     }
 
@@ -813,11 +842,12 @@ public final class ProviderAdapter: Sendable {
         environment: [String: String],
         cancellationRequestURL: URL?,
         apiBudgetUSD: Double? = nil,
+        stateless: Bool = false,
         mcpServerCommands: [MCPServerCommandConfiguration] = [],
         onProgress: (@Sendable (String) -> Void)? = nil,
         cancellation: CancellationFlag = CancellationFlag()
     ) async throws -> (ProcessResult, ProviderOutput) {
-        let resumeID = session.providerSessionID
+        let resumeID = stateless ? nil : session.providerSessionID
         let activeMCPServers = mcpServerCommands
         let mcpEnvironment = activeMCPServers.isEmpty ? [:] : MCPRuntimeEnvironment.nativeServerEnvironment(
             provider: provider,
@@ -841,6 +871,7 @@ public final class ProviderAdapter: Sendable {
                 arguments = try ProviderCommandBuilder.codexRunArguments(
                     workspacePath: session.workspacePath,
                     resumeID: resumeID,
+                    ephemeral: stateless,
                     activeMCPServers: activeMCPServers,
                     mcpWorkingDirectory: session.workspacePath,
                     mcpEnvironment: mcpEnvironment
@@ -850,10 +881,13 @@ public final class ProviderAdapter: Sendable {
                     workspacePath: session.workspacePath,
                     sessionID: session.id,
                     resumeID: resumeID,
+                    stateless: stateless,
                     activeMCPServers: activeMCPServers,
                     mcpWorkingDirectory: session.workspacePath,
                     mcpEnvironment: mcpEnvironment
                 )
+            case .local:
+                throw AgentBridgeError.sessionMismatch("本機模型不會透過 CLI、MCP 或專案工具執行。")
             }
         }
         let lineHandler: (@Sendable (String) -> Void)?
@@ -879,7 +913,11 @@ public final class ProviderAdapter: Sendable {
         if result.timedOut { throw AgentBridgeError.processTimedOut }
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
         guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "CLI 結束代碼 \(result.exitCode)。") }
-        return (result, try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated))
+        let parsed = try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated)
+        let output = stateless
+            ? ProviderOutput(text: parsed.text, providerSessionID: nil, actualCostUSD: parsed.actualCostUSD)
+            : parsed
+        return (result, output)
     }
 
     public func runDiscussion(
@@ -898,6 +936,8 @@ public final class ProviderAdapter: Sendable {
             arguments = ProviderCommandBuilder.codexDiscussionArguments(workspacePath: discussionWorkspaceURL.path)
         case .claude:
             arguments = ProviderCommandBuilder.claudeDiscussionArguments()
+        case .local:
+            throw AgentBridgeError.sessionMismatch("本機模型使用直接本機 HTTP 連線，不會啟動 CLI。")
         }
         let lineHandler: (@Sendable (String) -> Void)?
         if let onProgress {
@@ -962,6 +1002,8 @@ public final class ProviderAdapter: Sendable {
                 mcpWorkingDirectory: session.workspacePath,
                 mcpEnvironment: mcpEnvironment
             )
+        case .local:
+            throw AgentBridgeError.sessionMismatch("本機模型不支援隔離變更。")
         }
         let lineHandler: (@Sendable (String) -> Void)?
         if let onProgress {
@@ -1046,6 +1088,8 @@ public final class ProviderAdapter: Sendable {
                 resumeID: session.providerSessionID,
                 contextFilePath: contextFilePath
             )
+        case .local:
+            throw AgentBridgeError.sessionMismatch("本機模型不支援原生互動終端。")
         }
         let result = try await runner.runInteractive(
             executableURL: executableURL,
@@ -1074,6 +1118,8 @@ public final class ProviderAdapter: Sendable {
             arguments = try ProviderCommandBuilder.codexUsageArguments(workingDirectory: workingDirectoryURL.path)
         case .claude:
             arguments = ProviderCommandBuilder.claudeUsageArguments()
+        case .local:
+            throw AgentBridgeError.sessionMismatch("本機模型沒有訂閱用量終端。")
         }
         let result = try await runner.runInteractive(
             executableURL: executableURL,

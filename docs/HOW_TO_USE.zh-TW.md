@@ -20,11 +20,11 @@
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh --app-name AgentBridge-0.9.0-dev.app
-open build/AgentBridge-0.9.0-dev.app
+./scripts/package-app.sh --app-name AgentBridge-0.10.0-dev.app
+open build/AgentBridge-0.10.0-dev.app
 ```
 
-CI 腳本會建置 CLI、App 並執行核心測試；封裝腳本會建立未簽署的本機 App。上述步驟不登入 provider、不呼叫模型，也不產生 Claude API 費用。若已建置此開發版，只要重新開啟 `build/AgentBridge-0.9.0-dev.app` 即可。若要交付給其他 Mac，請完成本文最後的 Developer ID 簽署與 Apple 公證流程。
+CI 腳本會建置 CLI、App 並執行核心測試；封裝腳本會建立未簽署的本機 App。上述步驟不登入 provider、不呼叫模型，也不產生 Claude API 費用。若已建置此開發版，只要重新開啟 `build/AgentBridge-0.10.0-dev.app` 即可。若要交付給其他 Mac，請完成本文最後的 Developer ID 簽署與 Apple 公證流程。
 
 第一次開啟 App 時，請選擇或建立存放工作區資料的資料夾。AgentBridge 必須先有這項設定才會建立工作階段，不會暗中把資料夾放在 Application Support。App 和 CLI 共用已保存的位置。自選資料夾會包含隔離的工作階段工作區與共用記憶：
 
@@ -41,6 +41,8 @@ CI 腳本會建置 CLI、App 並執行核心測試；封裝腳本會建立未簽
 App 沒有可用的工作區資料夾時會自動開啟設定精靈。精靈會依序引導語言和供應商、必要的資料資料夾、選用的 CLI 尋找或路徑選擇、登入檢查、帳戶記憶同意設定，以及本機用量設定。只有工作區資料夾是必填項目；CLI 尚未安裝或登入尚未確認時仍可略過，最後的檢查頁會清楚列出未完成項目。精靈不會安裝軟體、執行 provider 工作、傳送模型請求或設定 API 金鑰。儲存帳戶或預設設定時可能會準備本機工作階段。只有你明確按下登入或狀態檢查按鈕時，才會啟動官方 CLI。設定預設使用訂閱登入；若尚未完成就結束 App，下次啟動會接續設定。有可用資料夾的既有安裝不會自動跳出精靈；按標題列的「設定精靈」即可重新開啟。除非你明確儲存變更，重新開啟不會改動已儲存的供應商設定或既有記憶同意設定。
 
 ### 2. 檢查 CLI 登入與方案
+
+本機模型使用 Local 後端及模型設定，不需要 CLI 登入。先啟動既有服務、設定本機回送位址，再更新模型清單並選取模型。上下文與輸出上限會決定保守輸入預算；「上下文預覽」可查看確切歷史內容與拒絕原因。支援範圍見[本機模型與上下文](LOCAL_MODELS_AND_CONTEXT.zh-TW.md)。
 
 全新安裝預設使用英文。可在設定精靈或 App 標題列選擇「English」或「繁體中文」；選擇會立即套用並保存。若要主動檢查登入，請從左側「助理」選 Codex 或 Claude，再按右上方「檢查登入與方案」。App 只顯示官方 CLI 確認的帳戶與方案欄位；如果 Codex CLI 沒有回報方案名稱，AgentBridge 不會猜測。
 

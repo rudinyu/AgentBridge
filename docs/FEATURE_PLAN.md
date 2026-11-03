@@ -3,18 +3,22 @@
 [繁體中文](FEATURE_PLAN.zh-TW.md)
 
 - **Status:** Proposed
-- **Basis:** AgentBridge 0.9.0 working tree, the 0.6.0 competitive-scan baseline, [Product Gap Study](PRODUCT_GAP_STUDY.md), and first-party CLI documentation
+- **Basis:** AgentBridge 0.10.0 working tree, the 0.6.0 competitive-scan baseline, [Product Gap Study](PRODUCT_GAP_STUDY.md), and first-party CLI/API documentation
 - **Last reviewed:** 2026-11-02
 
 ### Product goal
 
 Make AgentBridge the local-first workspace shared by Codex and Claude Code. Users should be able to choose a real signed-in account and plan, work in an isolated workspace, understand the agent's actions, review each change, and explicitly accept the result. Keep using the providers' official CLIs and sign-in flows; do not copy provider credentials or rebuild their native interactive TUIs.
 
-### Current additions — AgentBridge 0.9.0
+### Current additions — AgentBridge 0.10.0
+
+Add an explicit loopback Local model provider for Ollama and compatible servers, and readable context compression shared by managed conversations. Local model discovery, context/output limits, cancellation, usage separation and a context preview belong to the initial chat/read-only scope. Local tools, isolated edits and autonomous roles remain unavailable. Protected context that cannot fit stops the request rather than silently losing it. See [Local Models and Context](LOCAL_MODELS_AND_CONTEXT.md).
+
+### Previous additions — AgentBridge 0.9.0
 
 Start with a saved chat before selecting a Git project. Discussions bind a provider/account, use official subscription sign-in, and keep consent-aware context across provider switches. A reviewed handoff can create a new local Git project or link an existing repository, carrying only selected completed turns into separate project memory. The original discussion remains available. See [Chat first, then a Git project](CHAT_FIRST_WORKFLOW.md).
 
-This development version still requires the user-selected data folder. It does not require a repository for discussion, initialize Git during chat, or use API credits for discussion calls. Signing and notarization of 0.9.0 remain separate release work.
+This version still requires the user-selected data folder. It does not require a repository for discussion, initialize Git during chat, or use API credits for discussion calls. The 0.9.0 build 8 delivery passed signing, Apple notarization, stapling and Gatekeeper checks; 0.10.0 needs its own release authorization and verification.
 
 ### Previous additions — AgentBridge 0.8.0
 

@@ -5,11 +5,11 @@ import Foundation
 /// and provider-native conversation files.
 public final class DiscussionStore: @unchecked Sendable {
     public static let maximumDiscussions = 64
-    public static let maximumTurnsPerDiscussion = 40
+    public static let maximumTurnsPerDiscussion = 256
+    public static let maximumTurnsPerHandoff = 40
     public static let maximumHandoffsPerDiscussion = 4
-    public static let maximumTextBytes = 8 * 1_024
+    public static let maximumTextBytes = 64 * 1_024
     public static let maximumRecordBytes = 4 * 1_024 * 1_024
-    private static let truncationMarker = "\n…[truncated]…\n"
 
     public let rootURL: URL
     private let fileManager: FileManager
@@ -128,6 +128,19 @@ public final class DiscussionStore: @unchecked Sendable {
             try writeRecord(normalized, directoryDescriptor: directoryDescriptor)
         }
         return normalized
+    }
+
+    /// Leaves room for the bounded assistant response before provider I/O, so
+    /// a successful response cannot force old transcript text out of storage.
+    func ensureRunCompletionFits(_ record: DiscussionRecord) throws {
+        let normalized = try Self.normalized(record)
+        let data: Data
+        do { data = try encoder.encode(normalized) }
+        catch { throw AgentBridgeError.persistence("Could not estimate discussion completion storage.") }
+        let worstCaseAssistantReserve = Self.maximumTextBytes * 6 + 2_048
+        guard data.count <= Self.maximumRecordBytes - worstCaseAssistantReserve else {
+            throw AgentBridgeError.persistence("討論保存空間不足；已保留原逐字稿，請另開討論後再送出。")
+        }
     }
 
     private func readRecord(id: UUID, directoryDescriptor: Int32) throws -> DiscussionRecord? {
@@ -260,11 +273,12 @@ public final class DiscussionStore: @unchecked Sendable {
                     && $0.discussionRevision <= input.revision
                     && $0.destinationPath.hasPrefix("/")
                     && $0.hasValidDigest()
+                    && $0.selectedTurns.count <= maximumTurnsPerHandoff
               }) else {
             throw AgentBridgeError.invalidInput("Discussion record exceeds its bounds or contains invalid identity data.")
         }
         var record = input
-        record.turns = record.turns.map { turn in
+        record.turns = try record.turns.map { turn in
             DiscussionTurn(
                 id: turn.id,
                 timestamp: turn.timestamp,
@@ -272,11 +286,11 @@ public final class DiscussionStore: @unchecked Sendable {
                 accountProfileID: turn.accountProfileID,
                 sourceSharedMemoryConsent: turn.sourceSharedMemoryConsent,
                 isShareable: turn.isShareable,
-                userText: boundedRedacted(turn.userText),
-                assistantText: turn.assistantText.map(boundedRedacted)
+                userText: try redactedWithoutTruncation(turn.userText),
+                assistantText: try turn.assistantText.map(redactedWithoutTruncation)
             )
         }
-        record.handoffs = record.handoffs.map { handoff in
+        record.handoffs = try record.handoffs.map { handoff in
             DiscussionProjectHandoff(
                 id: handoff.id,
                 discussionID: handoff.discussionID,
@@ -287,14 +301,14 @@ public final class DiscussionStore: @unchecked Sendable {
                 targetProfileID: handoff.targetProfileID,
                 accessMode: handoff.accessMode,
                 expectedRepositoryCommit: handoff.expectedRepositoryCommit,
-                selectedTurns: handoff.selectedTurns.map { turn in
+                selectedTurns: try handoff.selectedTurns.map { turn in
                     DiscussionHandoffTurn(
                         id: turn.id,
                         timestamp: turn.timestamp,
                         provider: turn.provider,
                         sourceAccountProfileID: turn.sourceAccountProfileID,
-                        userText: boundedRedacted(turn.userText),
-                        assistantText: boundedRedacted(turn.assistantText)
+                        userText: try redactedWithoutTruncation(turn.userText),
+                        assistantText: try redactedWithoutTruncation(turn.assistantText)
                     )
                 },
                 consumedSessionID: handoff.consumedSessionID
@@ -321,6 +335,7 @@ public final class DiscussionStore: @unchecked Sendable {
                     && $0.discussionRevision <= record.revision
                     && $0.destinationPath.hasPrefix("/")
                     && $0.hasValidDigest()
+                    && $0.selectedTurns.count <= maximumTurnsPerHandoff
               }),
               record.turns.allSatisfy({
                   $0.userText.utf8.count <= maximumTextBytes
@@ -330,7 +345,7 @@ public final class DiscussionStore: @unchecked Sendable {
               }),
               record.handoffs.allSatisfy({
                   $0.hasValidDigest()
-                    && $0.selectedTurns.count <= maximumTurnsPerDiscussion
+                    && $0.selectedTurns.count <= maximumTurnsPerHandoff
                     && $0.selectedTurns.allSatisfy {
                         $0.userText.utf8.count <= maximumTextBytes
                             && $0.assistantText.utf8.count <= maximumTextBytes
@@ -342,21 +357,12 @@ public final class DiscussionStore: @unchecked Sendable {
         }
     }
 
-    private static func boundedRedacted(_ text: String) -> String {
+    private static func redactedWithoutTruncation(_ text: String) throws -> String {
         let redacted = OutputRedactor.redact(text)
-        guard redacted.utf8.count > maximumTextBytes else { return redacted }
-        let markerBytes = truncationMarker.utf8.count
-        let budget = max(0, maximumTextBytes - markerBytes)
-        var prefix = ""
-        var used = 0
-        for scalar in redacted.unicodeScalars {
-            let scalarText = String(scalar)
-            let byteCount = scalarText.utf8.count
-            guard used + byteCount <= budget else { break }
-            prefix.unicodeScalars.append(scalar)
-            used += byteCount
+        guard redacted.utf8.count <= maximumTextBytes else {
+            throw AgentBridgeError.invalidInput("Discussion text exceeds the \(maximumTextBytes)-byte per-message storage limit; the original text was not shortened.")
         }
-        return prefix + truncationMarker
+        return redacted
     }
 
     private static func recordCount(fileManager: FileManager, rootPath: String) throws -> Int {

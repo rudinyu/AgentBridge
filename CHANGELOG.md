@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0 — 2026-11-03
+
+- Added the MIT License and project copyright notice, included in packaged Apps alongside the existing third-party notices.
+
+- Added an explicit Local provider for Ollama and OpenAI-compatible loopback model servers, with model discovery, streaming, cancellation and separate local usage.
+- Added readable context compression and previews, preserving the complete current request, attributed protected passages and recent verbatim history, with safe refusal when protected content cannot fit.
+- Kept local model requests independent of cloud API credentials, subscriptions and paid fallback; unsupported local tool/edit workflows remain unavailable.
+- Added separate English and Traditional Chinese local-model setup and context design documentation.
+
 ## 0.9.0 — 2026-11-02
 
 - Added project-independent discussion chats before Git selection, with persistent redacted transcripts, account-bound subscription calls and consent-aware context sharing.

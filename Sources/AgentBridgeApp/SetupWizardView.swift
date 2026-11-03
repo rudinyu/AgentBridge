@@ -31,7 +31,7 @@ struct SetupWizardView: View {
                 .interactiveDismissDisabled(model.terminalRunning)
         }
         .onAppear {
-            if model.setupWizardStep == .commandLine { model.checkSetupWizardCLIAvailability() }
+            if model.setupWizardStep == .commandLine && model.setupWizardProvider != .local { model.checkSetupWizardCLIAvailability() }
             if model.setupWizardStep == .usage { model.loadSetupWizardUsageControls() }
         }
     }
@@ -69,7 +69,7 @@ struct SetupWizardView: View {
         switch model.setupWizardStep {
         case .welcome: "Welcome"
         case .workspace: "Workspace folder"
-        case .commandLine: "CLI"
+        case .commandLine: model.setupWizardProvider == .local ? "Local model" : "CLI"
         case .account: "Account and memory"
         case .usage: "Usage settings"
         case .review: "Review"
@@ -104,6 +104,7 @@ struct SetupWizardView: View {
                     )) {
                         Text("Codex").tag(AgentProvider.codex)
                         Text("Claude").tag(AgentProvider.claude)
+                        Text("Local").tag(AgentProvider.local)
                     }
                     .pickerStyle(.segmented)
                     Text(model.localized("This choice is a draft. The app's default provider changes only after you explicitly save it in Usage settings."))
@@ -167,7 +168,23 @@ struct SetupWizardView: View {
         }
     }
 
+    @ViewBuilder
     private var commandLineStep: some View {
+        if model.setupWizardProvider == .local {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(model.localized("Configure a local model"))
+                    .font(.largeTitle.weight(.semibold))
+                Text(model.localized("Choose Ollama or an OpenAI-compatible local server. AgentBridge will not install software, start a service, download a model, or contact the endpoint until you select a test or model-list action."))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                LocalModelSettingsSection(model: model)
+            }
+        } else {
+            cloudCommandLineStep
+        }
+    }
+
+    private var cloudCommandLineStep: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(String(format: model.localized("Set up the %@ CLI"), model.setupWizardProvider.rawValue.capitalized))
                 .font(.largeTitle.weight(.semibold))
@@ -212,13 +229,17 @@ struct SetupWizardView: View {
 
     private var accountStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(model.localized("Choose an account and review memory consent"))
+            Text(model.localized(model.setupWizardProvider == .local
+                ? "Choose a local account and review memory consent"
+                : "Choose an account and review memory consent"))
                 .font(.largeTitle.weight(.semibold))
-            Text(model.localized("Provider credentials remain in the official CLI's existing login or a separate account profile. Built-in login details are never copied or replaced."))
+            Text(model.localized(model.setupWizardProvider == .local
+                ? "This local account only scopes memory consent. It has no provider login, credential folder, subscription, or API billing."
+                : "Provider credentials remain in the official CLI's existing login or a separate account profile. Built-in login details are never copied or replaced."))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            GroupBox(model.localized("Official CLI account")) {
+            GroupBox(model.localized(model.setupWizardProvider == .local ? "Local memory account" : "Official CLI account")) {
                 VStack(alignment: .leading, spacing: 12) {
                     let profiles = model.accountProfiles[model.setupWizardProvider] ?? []
                     if profiles.isEmpty {
@@ -235,26 +256,31 @@ struct SetupWizardView: View {
                         }
 
                         if let profile = model.setupWizardSelectedProfile {
-                            if let assessment = model.setupWizardAuthentication {
-                                Label(model.localized(assessment.message), systemImage: assessment.confirmedSubscription ? "checkmark.seal" : "exclamationmark.shield")
-                                    .foregroundStyle(assessment.confirmedSubscription ? Color.secondary : Color.orange)
-                                    .fixedSize(horizontal: false, vertical: true)
+                            if model.setupWizardProvider == .local {
+                                Label(model.localized("Local account selected. No sign-in check is needed."), systemImage: "checkmark.circle")
+                                    .foregroundStyle(.secondary)
                             } else {
-                                Label(model.localized("Sign-in has not been checked yet."), systemImage: "questionmark.circle")
-                                    .foregroundStyle(.secondary)
-                            }
-                            HStack(spacing: 10) {
-                                Button(model.localized("Check subscription sign-in")) { model.checkSetupWizardAuthentication() }
-                                    .disabled(model.setupWizardAuthCheckInProgress || model.setupWizardSavedCLIPath == nil || model.setupWizardCLISettingIsDirty)
-                                if !profile.usesExistingLogin {
-                                    Button(model.localized("Open sign-in in AgentBridge")) { model.openSetupWizardProfileLogin() }
-                                        .disabled(model.terminalRunning || model.setupWizardSavedCLIPath == nil || model.setupWizardCLISettingIsDirty)
+                                if let assessment = model.setupWizardAuthentication {
+                                    Label(model.localized(assessment.message), systemImage: assessment.confirmedSubscription ? "checkmark.seal" : "exclamationmark.shield")
+                                        .foregroundStyle(assessment.confirmedSubscription ? Color.secondary : Color.orange)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                } else {
+                                    Label(model.localized("Sign-in has not been checked yet."), systemImage: "questionmark.circle")
+                                        .foregroundStyle(.secondary)
                                 }
-                            }
-                            if profile.usesExistingLogin {
-                                Text(model.localized("This account keeps its current CLI login. To sign in as a different account, add an isolated profile below."))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 10) {
+                                    Button(model.localized("Check subscription sign-in")) { model.checkSetupWizardAuthentication() }
+                                        .disabled(model.setupWizardAuthCheckInProgress || model.setupWizardSavedCLIPath == nil || model.setupWizardCLISettingIsDirty)
+                                    if !profile.usesExistingLogin {
+                                        Button(model.localized("Open sign-in in AgentBridge")) { model.openSetupWizardProfileLogin() }
+                                            .disabled(model.terminalRunning || model.setupWizardSavedCLIPath == nil || model.setupWizardCLISettingIsDirty)
+                                    }
+                                }
+                                if profile.usesExistingLogin {
+                                    Text(model.localized("This account keeps its current CLI login. To sign in as a different account, add an isolated profile below."))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             Toggle(model.localized("Allow this account to load and save shared project memory"), isOn: Binding(
                                 get: { model.setupWizardSelectedProfile?.allowsSharedMemory ?? false },
@@ -271,16 +297,20 @@ struct SetupWizardView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox(model.localized("Add a separate account")) {
+            GroupBox(model.localized(model.setupWizardProvider == .local
+                ? "Add a separate local memory account"
+                : "Add a separate account")) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         TextField(model.localized("Display name"), text: $model.setupWizardProfileName)
-                        Button(model.localized("Add isolated account")) {
+                        Button(model.localized(model.setupWizardProvider == .local ? "Add local memory account" : "Add isolated account")) {
                             _ = model.createSetupWizardProfile(name: model.setupWizardProfileName)
                         }
                         .disabled(model.setupWizardProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    Text(model.localized("The new profile uses a separate CLI configuration folder and starts with shared memory enabled. Sign-in starts only when you press the button above for that profile."))
+                    Text(model.localized(model.setupWizardProvider == .local
+                        ? "The new local account has its own memory-consent setting. It does not create a credential folder or start a sign-in flow."
+                        : "The new profile uses a separate CLI configuration folder and starts with shared memory enabled. Sign-in starts only when you press the button above for that profile."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -289,7 +319,27 @@ struct SetupWizardView: View {
         }
     }
 
+    @ViewBuilder
     private var usageStep: some View {
+        if model.setupWizardProvider == .local {
+            localUsageStep
+        } else {
+            cloudUsageStep
+        }
+    }
+
+    private var localUsageStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(model.localized("Local model settings"))
+                .font(.largeTitle.weight(.semibold))
+            Label(model.localized("Local models do not have provider subscription quotas or API billing. Cloud usage settings stay saved separately."), systemImage: "desktopcomputer")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            LocalModelSettingsSection(model: model)
+        }
+    }
+
+    private var cloudUsageStep: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(model.localized("Subscription defaults and local limits"))
                 .font(.largeTitle.weight(.semibold))
@@ -365,7 +415,9 @@ struct SetupWizardView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text(model.localized("Review setup"))
                 .font(.largeTitle.weight(.semibold))
-            Text(model.localized("Saving account or default settings can prepare a local session; this does not run the provider or send a model request. Sign-in and status checks start the official CLI only after you click them."))
+            Text(model.localized(model.setupWizardProvider == .local
+                ? "Saving settings does not contact a model. Connection checks run only after you select Test connection."
+                : "Saving account or default settings can prepare a local session; this does not run the provider or send a model request. Sign-in and status checks start the official CLI only after you click them."))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             GroupBox(model.localized("Readiness for the selected provider")) {
@@ -375,26 +427,41 @@ struct SetupWizardView: View {
                         complete: model.setupWizardReadiness.workspaceConfigured,
                         detail: model.workspaceRootPath.isEmpty ? model.localized("Required. Choose a usable data folder.") : model.workspaceRootPath
                     )
-                    readinessRow(
-                        model.localized("Official CLI"),
-                        complete: model.setupWizardReadiness.commandLineAvailable && !model.setupWizardCLISettingIsDirty,
-                        detail: model.setupWizardCLISettingIsDirty
-                            ? model.localized("The CLI path has edits that are not saved yet.")
-                            : (model.setupWizardSavedCLIPath ?? model.localized("Not found. Install the official CLI or save its executable path."))
-                    )
-                    readinessRow(
-                        model.localized("Subscription sign-in"),
-                        complete: model.setupWizardAuthentication?.confirmedSubscription == true,
-                        detail: model.setupWizardAuthentication.map { model.localized($0.message) }
-                            ?? model.localized("Not checked. Check sign-in in the Account step.")
-                    )
-                    if model.setupWizardReadiness.subscriptionSetupReady {
-                        Label(model.localized("Setup requirements are confirmed."), systemImage: "checkmark.seal.fill")
-                            .foregroundStyle(.green)
+                    if model.setupWizardProvider == .local {
+                        let local = model.settings.localModel
+                        let isConfigured = !local.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            && !model.localModelSettingsAreDirty
+                        readinessRow(
+                            model.localized("Local model configuration"),
+                            complete: isConfigured,
+                            detail: isConfigured
+                                ? "\(local.backend.rawValue) · \(local.model) · \(local.endpoint)"
+                                : model.localized("Choose a model, save the settings, and test the connection when your local service is ready.")
+                        )
+                        Label(model.localized("No CLI sign-in is required. Connection status is not checked automatically."), systemImage: "info.circle")
+                            .foregroundStyle(.secondary)
                     } else {
-                        Label(model.localized("Subscription setup is incomplete. Finish now and complete CLI sign-in later."), systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .fixedSize(horizontal: false, vertical: true)
+                        readinessRow(
+                            model.localized("Official CLI"),
+                            complete: model.setupWizardReadiness.commandLineAvailable && !model.setupWizardCLISettingIsDirty,
+                            detail: model.setupWizardCLISettingIsDirty
+                                ? model.localized("The CLI path has edits that are not saved yet.")
+                                : (model.setupWizardSavedCLIPath ?? model.localized("Not found. Install the official CLI or save its executable path."))
+                        )
+                        readinessRow(
+                            model.localized("Subscription sign-in"),
+                            complete: model.setupWizardAuthentication?.confirmedSubscription == true,
+                            detail: model.setupWizardAuthentication.map { model.localized($0.message) }
+                                ?? model.localized("Not checked. Check sign-in in the Account step.")
+                        )
+                        if model.setupWizardReadiness.subscriptionSetupReady {
+                            Label(model.localized("Setup requirements are confirmed."), systemImage: "checkmark.seal.fill")
+                                .foregroundStyle(.green)
+                        } else {
+                            Label(model.localized("Subscription setup is incomplete. Finish now and complete CLI sign-in later."), systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -450,13 +517,15 @@ struct SetupWizardView: View {
     }
 
     private var officialQuickStartURL: URL? {
-        URL(string: model.setupWizardProvider == .codex
+        guard model.setupWizardProvider != .local else { return nil }
+        return URL(string: model.setupWizardProvider == .codex
             ? "https://developers.openai.com/codex/cli"
             : "https://code.claude.com/docs/en/quickstart")
     }
 
     private var officialAuthenticationURL: URL? {
-        URL(string: model.setupWizardProvider == .codex
+        guard model.setupWizardProvider != .local else { return nil }
+        return URL(string: model.setupWizardProvider == .codex
             ? "https://developers.openai.com/codex/auth"
             : "https://code.claude.com/docs/en/authentication")
     }
