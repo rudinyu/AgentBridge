@@ -50,7 +50,7 @@ struct MainWindowView: View {
         .environment(\.locale, model.appLanguage.locale)
         .sheet(isPresented: Bindable(model.setupWizard).isPresented) {
             SetupWizardView(model: model, wizard: model.setupWizard)
-                .interactiveDismissDisabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminalLaunch != nil)
+                .interactiveDismissDisabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminal.terminalLaunch != nil)
         }
         .alert("AgentBridge", isPresented: Binding(get: { model.errorMessage != nil && !model.setupWizard.isPresented }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("好", role: .cancel) { model.errorMessage = nil }
@@ -218,7 +218,7 @@ struct MainWindowView: View {
 
     var statusBar: some View {
         HStack(spacing: 8) {
-            if model.isRunning || model.isSwitchingTarget || model.terminalRunning { ProgressView().controlSize(.small) }
+            if model.isRunning || model.isSwitchingTarget || model.terminal.terminalRunning { ProgressView().controlSize(.small) }
             Text(model.localized(model.status)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
             Text(appVersionFooterText).font(.caption2).foregroundStyle(.tertiary)

@@ -21,15 +21,15 @@ struct SetupWizardView: View {
         }
         .frame(minWidth: 760, minHeight: 600)
         .background(Color(nsColor: .windowBackgroundColor))
-        .interactiveDismissDisabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminalLaunch != nil)
+        .interactiveDismissDisabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminal.terminalLaunch != nil)
         .sheet(item: Binding(
-            get: { model.terminalLaunch },
-            set: { if $0 == nil { model.closeEmbeddedTerminal() } }
+            get: { model.terminal.terminalLaunch },
+            set: { if $0 == nil { model.terminal.closeEmbeddedTerminal() } }
         )) { launch in
             EmbeddedTerminalPanel(model: model, launch: launch)
                 .padding(14)
                 .frame(minWidth: 720, minHeight: 390)
-                .interactiveDismissDisabled(model.terminalRunning)
+                .interactiveDismissDisabled(model.terminal.terminalRunning)
         }
         .onAppear {
             if wizard.currentStep == .commandLine && wizard.provider != .local { wizard.checkCLIAvailability() }
@@ -59,7 +59,7 @@ struct SetupWizardView: View {
             .pickerStyle(.menu)
             if model.workspaceRootIsConfigured {
                 Button(model.localized("Close for now")) { wizard.dismissForNow() }
-                    .disabled(model.isChangingWorkspaceRoot || model.terminalLaunch != nil)
+                    .disabled(model.isChangingWorkspaceRoot || model.terminal.terminalLaunch != nil)
             }
         }
         .padding(.horizontal, 24)
@@ -160,7 +160,7 @@ struct SetupWizardView: View {
                         model.chooseWorkspaceRoot()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isChangingWorkspaceRoot || model.terminalRunning)
+                    .disabled(model.isChangingWorkspaceRoot || model.terminal.terminalRunning)
                     if model.isChangingWorkspaceRoot {
                         ProgressView(model.localized("Preparing the folder and preserving existing workspace data…"))
                     }
@@ -279,7 +279,7 @@ struct SetupWizardView: View {
                                         .disabled(wizard.authCheckInProgress || wizard.savedCLIPath == nil || wizard.cliSettingIsDirty)
                                     if !profile.usesExistingLogin {
                                         Button(model.localized("Open sign-in in AgentBridge")) { wizard.openProfileLogin() }
-                                            .disabled(model.terminalRunning || wizard.savedCLIPath == nil || wizard.cliSettingIsDirty)
+                                            .disabled(model.terminal.terminalRunning || wizard.savedCLIPath == nil || wizard.cliSettingIsDirty)
                                     }
                                 }
                                 if profile.usesExistingLogin {
@@ -514,7 +514,7 @@ struct SetupWizardView: View {
                 } else {
                     Button(model.localized("Finish setup")) { wizard.finish() }
                         .buttonStyle(.borderedProminent)
-                        .disabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminalLaunch != nil)
+                        .disabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminal.terminalLaunch != nil)
                 }
             }
         }
@@ -581,35 +581,35 @@ struct EmbeddedTerminalPanel: View {
             HStack(spacing: 8) {
                 Image(systemName: "terminal")
                 Text(model.localized(launch.title)).font(.subheadline.weight(.semibold))
-                if model.terminalRunning { ProgressView().controlSize(.small) }
+                if model.terminal.terminalRunning { ProgressView().controlSize(.small) }
                 Spacer()
-                if model.terminalRunning && !model.terminalIsProfileLogin,
-                   let sessionID = model.terminalSessionIDForView {
+                if model.terminal.terminalRunning && !model.terminal.terminalIsProfileLogin,
+                   let sessionID = model.terminal.terminalSessionIDForView {
                     Button(model.localized("Cancel session")) { model.cancelSession(sessionID) }
                 }
-                if model.canSendUsageCommand {
-                    Button(model.localized("Send /usage")) { model.requestUsageCommand() }
+                if model.terminal.canSendUsageCommand {
+                    Button(model.localized("Send /usage")) { model.terminal.requestUsageCommand() }
                         .help(model.localized("Only the fixed /usage command and Enter are sent after the CLI is ready."))
                 }
-                Button(model.localized(model.terminalRunning ? (model.terminalNeedsManualStop ? "End the CLI, then close" : "Cancel and close") : "Close terminal")) {
-                    model.closeEmbeddedTerminal()
+                Button(model.localized(model.terminal.terminalRunning ? (model.terminal.terminalNeedsManualStop ? "End the CLI, then close" : "Cancel and close") : "Close terminal")) {
+                    model.terminal.closeEmbeddedTerminal()
                 }
-                .disabled(model.terminalRunning && model.terminalNeedsManualStop)
+                .disabled(model.terminal.terminalRunning && model.terminal.terminalNeedsManualStop)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             EmbeddedTerminalView(
                 launch: launch,
-                usageCommandRequest: model.usageCommandRequest,
-                allowsUsageScreenCapture: model.terminalIsUsageTUI,
+                usageCommandRequest: model.terminal.usageCommandRequest,
+                allowsUsageScreenCapture: model.terminal.terminalIsUsageTUI,
                 onUsageScreenText: { screenText, capturedAt in
-                    model.usageScreenDidUpdate(screenText, capturedAt: capturedAt)
+                    model.terminal.usageScreenDidUpdate(screenText, capturedAt: capturedAt)
                 },
-                onTermination: { exitCode in model.terminalDidTerminate(exitCode: exitCode) }
+                onTermination: { exitCode in model.terminal.terminalDidTerminate(exitCode: exitCode) }
             )
             .id(launch.id)
             .frame(minHeight: 210, maxHeight: 340)
-            if model.terminalIsUsageTUI && model.terminalRunning {
+            if model.terminal.terminalIsUsageTUI && model.terminal.terminalRunning {
                 Text(model.localized("Wait for the official CLI prompt and sign-in before sending /usage."))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -623,7 +623,7 @@ struct EmbeddedTerminalPanel: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 6)
-            if model.terminalSessionIDForView == nil && !model.terminalIsProfileLogin {
+            if model.terminal.terminalSessionIDForView == nil && !model.terminal.terminalIsProfileLogin {
                 Text(model.localized("A local shell runs with your macOS account permissions."))
                     .font(.caption2)
                     .foregroundStyle(.orange)

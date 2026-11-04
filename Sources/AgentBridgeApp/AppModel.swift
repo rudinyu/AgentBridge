@@ -15,6 +15,7 @@ final class AppModel {
     let chats = DiscussionModel()
     let changes = ChangeReviewModel()
     let extensions = ExtensionsModel()
+    let terminal = TerminalModel()
     var settings = BridgeSettings()
     var sessions: [SessionRecord] = []
     var events: [AuditEvent] = []
@@ -50,7 +51,6 @@ final class AppModel {
     var apiBudget = ""
     var apiKey = ""
     var confirmAPIRun = false
-    var providerUsageReport: ProviderUsageReport?
     var authStatus: [UUID: AuthAssessment] = [:]
     var accountProfiles: [AgentProvider: [AccountProfile]] = [:]
     var selectedProfileIDs: [AgentProvider: UUID] = [:]
@@ -59,14 +59,6 @@ final class AppModel {
     var memorySnapshot: SharedMemorySnapshot?
     var memoryNotes = ""
     var confirmClearMemory = false
-    var terminalLaunch: TerminalLaunchSpec?
-    var terminalTitle = ""
-    var terminalRunning = false
-    var terminalIsProfileLogin = false
-    var terminalIsUsageTUI = false
-    var terminalNeedsManualStop = false
-    var usageCommandRequest = 0
-    var closeTerminalAfterCancellation = false
     var isSwitchingTarget = false
 
     private(set) var service: BridgeService?
@@ -74,12 +66,7 @@ final class AppModel {
     @ObservationIgnored private var activeRunFlags: [UUID: CancellationFlag] = [:]
     @ObservationIgnored private var autonomousCancellationFlags: [UUID: CancellationFlag] = [:]
     private var activeRunSessionID: UUID?
-    private var activeTerminalProfileID: UUID?
-    private var activeTerminalSessionID: UUID?
-    private var activeUsageProvider: AgentProvider?
     private var savedLocalModelSettings: LocalModelSettings?
-
-    var terminalSessionIDForView: UUID? { activeTerminalSessionID }
 
     /// Warning text when the data root is inside a cloud-synced folder.
     var workspaceRootSyncWarning: String? {
@@ -96,7 +83,7 @@ final class AppModel {
 
     var canPresentSetupWizard: Bool {
         activeRunFlags.isEmpty && !changes.isVerifying && !isSwitchingTarget && !isChangingWorkspaceRoot
-            && !terminalRunning && terminalLaunch == nil && !hasActiveAutonomousWorkflow
+            && !terminal.terminalRunning && terminal.terminalLaunch == nil && !hasActiveAutonomousWorkflow
             && !chats.hasActiveDiscussionOperation
     }
 
@@ -106,7 +93,7 @@ final class AppModel {
 
     var canStartAutonomousWorkflow: Bool {
         !isLocalProviderContext && !hasActiveAutonomousWorkflow && activeRunFlags.isEmpty && !changes.isVerifying
-            && !extensions.isTestingMCPRuntime && !terminalRunning && terminalLaunch == nil && !isSwitchingTarget
+            && !extensions.isTestingMCPRuntime && !terminal.terminalRunning && terminal.terminalLaunch == nil && !isSwitchingTarget
             && !isChangingWorkspaceRoot
     }
 
@@ -118,13 +105,6 @@ final class AppModel {
         String(format: localized(source), locale: appLanguage.locale, arguments: arguments)
     }
 
-    var canSendUsageCommand: Bool {
-        terminalIsUsageTUI
-            && terminalRunning
-            && settings.usageMode == .subscription
-            && activeTerminalProfileID == selectedProfileIDs[settings.defaultProvider]
-    }
-
     init() {
         appLanguage = AppLanguage.saved
         setupWizard.attach(to: self)
@@ -132,6 +112,7 @@ final class AppModel {
         chats.attach(to: self)
         changes.attach(to: self)
         extensions.attach(to: self)
+        terminal.attach(to: self)
         chats.loadSavedPreferences()
         do {
             guard try RuntimePaths.workspaceRootConfiguration() != nil else {
@@ -154,7 +135,7 @@ final class AppModel {
         }
     }
 
-    private func reportOperationError(_ message: String) {
+    func reportOperationError(_ message: String) {
         if setupWizard.isPresented {
             setupWizard.errorMessage = message
             errorMessage = nil
@@ -381,7 +362,7 @@ final class AppModel {
         do {
             updateBinaryPathsInSettings()
             try service.saveSettings(settings)
-            providerUsageReport = nil
+            terminal.providerUsageReport = nil
             status = provider == .codex && previous.usageMode == .api
                 ? "已切換至 Codex，並儲存為官方 CLI 訂閱登入模式。"
                 : "新工作階段預設助理已儲存。"
@@ -409,7 +390,7 @@ final class AppModel {
         do {
             updateBinaryPathsInSettings()
             try service.saveSettings(settings)
-            if usageMode == .api { providerUsageReport = nil }
+            if usageMode == .api { terminal.providerUsageReport = nil }
             status = "Claude 使用模式已儲存。"
             refresh(forceUsageStatistics: true)
             if let anchor = selectedSession { selectOrCreateSession(for: .claude, anchoredTo: anchor) }
@@ -544,7 +525,7 @@ final class AppModel {
 
     func chooseWorkspaceRoot() {
         guard !isChangingWorkspaceRoot, !isRunning, !changes.isVerifying, !isSwitchingTarget,
-              !terminalRunning, terminalLaunch == nil, !hasActiveAutonomousWorkflow,
+              !terminal.terminalRunning, terminal.terminalLaunch == nil, !hasActiveAutonomousWorkflow,
               !chats.hasActiveDiscussionOperation else { return }
         let panel = NSOpenPanel()
         panel.title = localized("選擇工作區資料根目錄")
@@ -615,7 +596,7 @@ final class AppModel {
         checkAuthentication(for: profile)
     }
 
-    private func checkAuthentication(for profile: AccountProfile) {
+    func checkAuthentication(for profile: AccountProfile) {
         checkAuthentication(for: profile, completion: nil)
     }
 
@@ -1046,257 +1027,6 @@ final class AppModel {
         }
     }
 
-    func openEmbeddedInteractiveTerminal() {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("The terminal is locked while an autonomous workflow is active.")
-            return
-        }
-        guard let session = selectedSession, session.policy.accessMode == .interactiveManualApproval else {
-            errorMessage = "請先建立互動手動核准模式的工作階段。"
-            return
-        }
-        let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
-        guard let spec = terminalLaunchSpec(
-            title: "\(session.provider.rawValue.capitalized) · \(selectedSessionProfileName)",
-            arguments: ["interactive", session.id.uuidString.lowercased(), "--profile", profileID.uuidString.lowercased()],
-            workingDirectory: session.workspacePath
-        ) else {
-            errorMessage = "找不到 AgentBridge 命令列輔助程式。請先使用 scripts/package-app.sh 建立 .app。"
-            return
-        }
-        terminalIsProfileLogin = false
-        terminalIsUsageTUI = false
-        activeUsageProvider = nil
-        terminalTitle = spec.title
-        activeTerminalProfileID = profileID
-        activeTerminalSessionID = session.id
-        terminalNeedsManualStop = false
-        closeTerminalAfterCancellation = false
-        terminalLaunch = spec
-        terminalRunning = true
-        status = "已在 App 內啟動互動終端機。終端機文字不會自動加入共用記憶。"
-    }
-
-    func openSubscriptionUsageTUI() {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("The terminal is locked while an autonomous workflow is active.")
-            return
-        }
-        guard settings.usageMode == .subscription else {
-            errorMessage = "官方 usage TUI 只支援訂閱登入。"
-            return
-        }
-        guard terminalLaunch == nil else {
-            errorMessage = "請先關閉目前的 App 終端機。"
-            return
-        }
-        let provider = settings.defaultProvider
-        guard provider != .local else {
-            errorMessage = localized("Local models do not have a provider subscription usage screen.")
-            return
-        }
-        guard let profileID = selectedProfileIDs[provider],
-              let profile = accountProfiles[provider]?.first(where: { $0.id == profileID }) else {
-            errorMessage = "找不到目前選取的帳戶設定。"
-            return
-        }
-        guard let spec = terminalLaunchSpec(
-            title: "官方用量 · \(provider.rawValue.capitalized) · \(profile.name)",
-            arguments: [
-                "usage-tui",
-                "--provider", provider.rawValue,
-                "--profile", profile.id.uuidString.lowercased()
-            ],
-            workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
-        ) else {
-            errorMessage = "找不到 AgentBridge 命令列輔助程式。請先使用 scripts/package-app.sh 建立 .app。"
-            return
-        }
-        terminalIsProfileLogin = false
-        terminalIsUsageTUI = true
-        activeUsageProvider = provider
-        providerUsageReport = nil
-        terminalTitle = spec.title
-        activeTerminalProfileID = profile.id
-        activeTerminalSessionID = nil
-        terminalNeedsManualStop = true
-        closeTerminalAfterCancellation = false
-        usageCommandRequest = 0
-        terminalLaunch = spec
-        terminalRunning = true
-        status = "已啟動所選帳戶的官方 CLI 用量終端；請等待可輸入提示符並完成登入，再送出 /usage。"
-    }
-
-    func requestUsageCommand() {
-        guard canSendUsageCommand else { return }
-        usageCommandRequest &+= 1
-        status = "已在目前官方 CLI 終端送出固定的 /usage 指令。"
-    }
-
-    func usageScreenDidUpdate(_ screenText: String, capturedAt: Date) -> Bool {
-        guard terminalIsUsageTUI,
-              let provider = activeUsageProvider,
-              settings.defaultProvider == provider,
-              settings.usageMode == .subscription,
-              let profileID = activeTerminalProfileID,
-              selectedProfileIDs[provider] == profileID,
-              let profile = accountProfiles[provider]?.first(where: { $0.id == profileID }) else { return false }
-        let report = ProviderUsageReportParser.parse(
-            screenText: screenText,
-            provider: provider,
-            accountProfileID: profileID,
-            accountName: profile.name,
-            capturedAt: capturedAt
-        )
-        providerUsageReport = report
-        return report.usageWindows.contains { $0.percentageUsed != nil || $0.resetText != nil }
-    }
-
-    func openProfileLoginTerminal() {
-        guard let profile = selectedAccountProfile else { errorMessage = "找不到所選帳戶設定。"; return }
-        openProfileLoginTerminal(for: profile)
-    }
-
-    func openProfileLoginTerminal(for profile: AccountProfile) {
-        guard profile.provider != .local else {
-            reportOperationError(localized("Local models do not use CLI sign-in."))
-            return
-        }
-        guard !hasActiveAutonomousWorkflow else {
-            reportOperationError(localized("The terminal is locked while an autonomous workflow is active."))
-            return
-        }
-        guard !terminalRunning else {
-            reportOperationError(localized("Close the current terminal before opening sign-in."))
-            return
-        }
-        guard !profile.usesExistingLogin else {
-            reportOperationError(localized("This built-in account keeps its existing CLI login. Add an isolated account to sign in separately."))
-            return
-        }
-        guard let spec = terminalLaunchSpec(
-            title: "登入 · \(profile.provider.rawValue.capitalized) · \(profile.name)",
-            arguments: ["profile-login", profile.id.uuidString.lowercased()],
-            workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
-        ) else {
-            reportOperationError("找不到 AgentBridge 命令列輔助程式。請先使用 scripts/package-app.sh 建立 .app。")
-            return
-        }
-        terminalIsProfileLogin = true
-        terminalIsUsageTUI = false
-        activeUsageProvider = nil
-        terminalTitle = spec.title
-        activeTerminalProfileID = profile.id
-        activeTerminalSessionID = nil
-        terminalNeedsManualStop = true
-        closeTerminalAfterCancellation = false
-        terminalLaunch = spec
-        terminalRunning = true
-        status = "已在 App 內開啟官方 CLI 登入流程。登入由你在終端機完成。"
-        setupWizard.errorMessage = nil
-    }
-
-    func openLocalShell() {
-        guard let session = selectedSession else { errorMessage = "請先選擇工作階段。"; return }
-        guard terminalLaunch == nil else { errorMessage = "請先關閉目前的 App 終端機。"; return }
-        let spec = TerminalLaunchSpec(
-            title: "本機終端 · \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)",
-            executablePath: "/bin/sh",
-            arguments: ["-f"],
-            environment: sanitizedTerminalEnvironment(),
-            workingDirectory: session.workspacePath
-        )
-        terminalIsProfileLogin = false
-        terminalIsUsageTUI = false
-        activeUsageProvider = nil
-        terminalNeedsManualStop = true
-        activeTerminalProfileID = nil
-        activeTerminalSessionID = nil
-        closeTerminalAfterCancellation = false
-        terminalTitle = spec.title
-        terminalLaunch = spec
-        terminalRunning = true
-        status = "已在隔離工作區開啟本機 shell。Shell 命令仍以目前使用者權限執行。"
-    }
-
-    func closeEmbeddedTerminal() {
-        if terminalRunning {
-            if terminalNeedsManualStop {
-                status = "請先在終端機按 Control-C 結束目前程序，再關閉終端面板。"
-                return
-            }
-            guard let sessionID = activeTerminalSessionID else {
-                status = "請先結束終端機中的工作，再關閉面板。"
-                return
-            }
-            closeTerminalAfterCancellation = true
-            cancelSession(sessionID)
-            return
-        }
-        terminalLaunch = nil
-        terminalRunning = false
-        terminalIsUsageTUI = false
-        activeUsageProvider = nil
-        activeTerminalProfileID = nil
-        activeTerminalSessionID = nil
-        terminalNeedsManualStop = false
-        status = "已關閉 App 內終端機。"
-    }
-
-    func terminalDidTerminate(exitCode: Int32?) {
-        terminalRunning = false
-        terminalIsUsageTUI = false
-        activeUsageProvider = nil
-        if let exitCode, exitCode == 0 {
-            status = "終端機工作已完成。"
-        } else {
-            status = "終端機工作已結束\(exitCode.map { "（代碼 \($0)）" } ?? "")。"
-        }
-        if terminalIsProfileLogin, let profileID = activeTerminalProfileID,
-           let profile = accountProfiles.values.flatMap({ $0 }).first(where: { $0.id == profileID }) {
-            checkAuthentication(for: profile)
-        }
-        refresh(forceUsageStatistics: true)
-        if closeTerminalAfterCancellation {
-            terminalLaunch = nil
-            closeTerminalAfterCancellation = false
-            activeTerminalProfileID = nil
-            activeTerminalSessionID = nil
-        }
-    }
-
-    private func terminalLaunchSpec(title: String, arguments: [String], workingDirectory: String) -> TerminalLaunchSpec? {
-        guard let cli = interactiveCLIURL() else { return nil }
-        return TerminalLaunchSpec(
-            title: title,
-            executablePath: cli.path,
-            arguments: arguments,
-            environment: sanitizedTerminalEnvironment(),
-            workingDirectory: workingDirectory
-        )
-    }
-
-    private func sanitizedTerminalEnvironment() -> [String: String] {
-        let environment = ProcessInfo.processInfo.environment
-        var safeEnvironment = [
-            "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
-            "USER": NSUserName(),
-            "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-            "TERM": "xterm-256color"
-        ]
-        if let language = environment["LANG"], language.count <= 64 { safeEnvironment["LANG"] = language }
-        if let temporaryDirectory = environment["TMPDIR"], temporaryDirectory.hasPrefix("/") { safeEnvironment["TMPDIR"] = temporaryDirectory }
-        return safeEnvironment
-    }
-
-    private func interactiveCLIURL() -> URL? {
-        let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/agentbridge")
-        if FileManager.default.isExecutableFile(atPath: bundled.path) { return bundled }
-        guard let argument = CommandLine.arguments.first else { return nil }
-        let sibling = URL(fileURLWithPath: argument).standardizedFileURL.deletingLastPathComponent().appendingPathComponent("agentbridge")
-        return FileManager.default.isExecutableFile(atPath: sibling.path) ? sibling : nil
-    }
-
     func selectOrCreateSession(for provider: AgentProvider, anchoredTo anchor: SessionRecord) {
         guard isProjectConversationActive else { return }
         guard let profileID = selectedProfileIDs[provider], let service else { return }
@@ -1360,7 +1090,7 @@ final class AppModel {
         do {
             try service.selectAccountProfile(id: profileID, provider: provider)
             selectedProfileIDs[provider] = profileID
-            providerUsageReport = nil
+            terminal.providerUsageReport = nil
             accountProfiles[provider] = try service.accountProfiles(provider: provider)
             usage.loadedUsageControlsScopeKey = nil
             refresh(forceUsageStatistics: true)
@@ -1387,7 +1117,7 @@ final class AppModel {
             newProfileName = ""
             newProfileAllowsSharedMemory = true
             selectedProfileIDs[provider] = profile.id
-            providerUsageReport = nil
+            terminal.providerUsageReport = nil
             accountProfiles[provider] = try service.accountProfiles(provider: provider)
             usage.loadedUsageControlsScopeKey = nil
             refresh(forceUsageStatistics: true)

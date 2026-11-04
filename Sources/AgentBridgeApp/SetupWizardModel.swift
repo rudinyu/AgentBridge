@@ -141,7 +141,7 @@ final class SetupWizardModel {
 
     func dismissForNow() {
         guard SetupWizardFlow.canDismiss(workspaceRootConfigured: app.workspaceRootIsConfigured),
-              !app.isChangingWorkspaceRoot, !app.terminalRunning, app.terminalLaunch == nil,
+              !app.isChangingWorkspaceRoot, !app.terminal.terminalRunning, app.terminal.terminalLaunch == nil,
               !app.chats.hasActiveDiscussionOperation else { return }
         isPresented = false
         app.errorMessage = nil
@@ -149,7 +149,7 @@ final class SetupWizardModel {
 
     func finish() {
         guard SetupWizardFlow.canDismiss(workspaceRootConfigured: app.workspaceRootIsConfigured),
-              !app.isChangingWorkspaceRoot, !app.terminalRunning, app.terminalLaunch == nil,
+              !app.isChangingWorkspaceRoot, !app.terminal.terminalRunning, app.terminal.terminalLaunch == nil,
               !app.chats.hasActiveDiscussionOperation else { return }
         UserDefaults.standard.set(true, forKey: Self.completedPreferenceKey)
         currentStep = .welcome
@@ -277,7 +277,7 @@ final class SetupWizardModel {
             if previous.defaultProvider != app.settings.defaultProvider || previous.usageMode != app.settings.usageMode {
                 app.clearAPIAuthorization()
             }
-            app.providerUsageReport = nil
+            app.terminal.providerUsageReport = nil
             app.usage.loadedUsageControlsScopeKey = nil
             app.refresh(forceUsageStatistics: true)
             if let anchor = app.selectedSession { app.selectOrCreateSession(for: provider, anchoredTo: anchor) }
@@ -306,7 +306,7 @@ final class SetupWizardModel {
             app.selectedProfileIDs[provider] = profileID
             app.accountProfiles[provider] = try service.accountProfiles(provider: provider)
             app.usage.loadedUsageControlsScopeKey = nil
-            app.providerUsageReport = nil
+            app.terminal.providerUsageReport = nil
             app.authStatus.removeValue(forKey: profileID)
             status = provider == .local
                 ? app.localized("Local memory account selected. No sign-in is needed.")
@@ -408,7 +408,7 @@ final class SetupWizardModel {
             errorMessage = app.localized("No account profile is available for this provider.")
             return
         }
-        app.openProfileLoginTerminal(for: profile)
+        app.terminal.openProfileLoginTerminal(for: profile)
     }
 
     func loadUsageControls() {

@@ -146,14 +146,14 @@ extension MainWindowView {
                 .font(.caption2).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
-                Button("開啟官方 CLI 用量終端") { model.openSubscriptionUsageTUI() }
+                Button("開啟官方 CLI 用量終端") { model.terminal.openSubscriptionUsageTUI() }
                     .controlSize(.small)
-                    .disabled(model.terminalLaunch != nil || model.isSwitchingTarget)
+                    .disabled(model.terminal.terminalLaunch != nil || model.isSwitchingTarget)
                 Text("等終端顯示可輸入提示符並完成登入後，再按「送出 /usage」。")
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let report = model.providerUsageReport,
+            if let report = model.terminal.providerUsageReport,
                report.provider == model.settings.defaultProvider,
                report.accountProfileID == model.selectedProfileIDs[model.settings.defaultProvider] {
                 providerUsageReportCard(report)

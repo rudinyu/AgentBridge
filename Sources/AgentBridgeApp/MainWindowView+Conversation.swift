@@ -25,9 +25,9 @@ extension MainWindowView {
                 }
             } else {
                 ContentUnavailableView("選擇或建立工作階段", systemImage: "bubble.left.and.bubble.right", description: Text("先選擇 Git 儲存庫，再開始一段固定版本的專案對話。"))
-                    .frame(maxWidth: .infinity, maxHeight: model.terminalLaunch == nil ? .infinity : 110)
+                    .frame(maxWidth: .infinity, maxHeight: model.terminal.terminalLaunch == nil ? .infinity : 110)
             }
-            if !model.setupWizard.isPresented, let launch = model.terminalLaunch {
+            if !model.setupWizard.isPresented, let launch = model.terminal.terminalLaunch {
                 EmbeddedTerminalPanel(model: model, launch: launch)
             }
         }
@@ -59,12 +59,12 @@ extension MainWindowView {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             } else {
-                Button("本機終端機") { model.openLocalShell() }
-                    .disabled(model.terminalLaunch != nil)
+                Button("本機終端機") { model.terminal.openLocalShell() }
+                    .disabled(model.terminal.terminalLaunch != nil)
             }
             if session.provider != .local && session.policy.accessMode == .interactiveManualApproval {
-                Button("開啟內嵌終端機") { model.openEmbeddedInteractiveTerminal() }
-                    .disabled(model.terminalRunning)
+                Button("開啟內嵌終端機") { model.terminal.openEmbeddedInteractiveTerminal() }
+                    .disabled(model.terminal.terminalRunning)
                 if session.status == .running { Button("取消工作階段") { model.cancelSession(session.id) } }
             }
         }
@@ -450,8 +450,8 @@ extension MainWindowView {
                 Text("已核准的指令可能存取工作區外的檔案或網路。")
                     .font(.caption).foregroundStyle(.orange)
                 Spacer()
-                Button("開啟內嵌終端機") { model.openEmbeddedInteractiveTerminal() }
-                    .disabled(model.terminalRunning)
+                Button("開啟內嵌終端機") { model.terminal.openEmbeddedInteractiveTerminal() }
+                    .disabled(model.terminal.terminalRunning)
                 if session.status == .running { Button("取消工作階段") { model.cancelSession(session.id) } }
             }
         }

@@ -282,8 +282,8 @@ extension MainWindowView {
                         Text("Local models do not use sign-in or credential folders.")
                             .font(.caption2).foregroundStyle(.secondary)
                     } else if !profile.usesExistingLogin {
-                        Button("在 App 內登入此帳戶") { model.openProfileLoginTerminal() }
-                            .disabled(model.terminalRunning)
+                        Button("在 App 內登入此帳戶") { model.terminal.openProfileLoginTerminal() }
+                            .disabled(model.terminal.terminalRunning)
                     } else {
                         Text("目前本機登入保持原狀；新增其他帳戶會使用獨立的 CLI 設定資料夾。")
                             .font(.caption2).foregroundStyle(.secondary)
@@ -323,7 +323,7 @@ extension MainWindowView {
                     }
                     Spacer(minLength: 0)
                     Button("變更…") { model.chooseWorkspaceRoot() }
-                        .disabled(model.isChangingWorkspaceRoot || model.isRunning || model.terminalRunning)
+                        .disabled(model.isChangingWorkspaceRoot || model.isRunning || model.terminal.terminalRunning)
                 }
                 TextField("Git 儲存庫路徑", text: $model.repositoryPath)
                 Button("選擇儲存庫…") { model.chooseRepository() }
