@@ -42,7 +42,10 @@ enum AppLocalization {
         if language == .traditionalChinese { return string(source, language: language) }
         if let direct = englishStrings[source] { return direct }
         var translated = source
-        for key in englishStrings.keys.sorted(by: { $0.count > $1.count }) where source.contains(key) {
+        // Plain-word keys such as status raw values only match whole strings;
+        // replacing them inside a sentence would corrupt translated text.
+        for key in englishStrings.keys.sorted(by: { $0.count > $1.count })
+        where source.contains(key) && !key.allSatisfy({ $0.isASCII && $0.isLetter }) {
             guard let value = englishStrings[key], value != key else { continue }
             translated = translated.replacingOccurrences(of: key, with: value)
         }

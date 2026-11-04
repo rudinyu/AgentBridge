@@ -498,7 +498,7 @@ public enum ContextCompressor {
         }) {
             return true
         }
-        let chineseStarts = ["好", "好的", "可以", "同意", "沒問題", "就這樣", "採用", "采用"]
+        let chineseStarts = ["好", "好的", "可以", "同意", "沒問題", "就這樣", "採用", "采用"] // l10n: content matcher
         return chineseStarts.contains { prefix in
             trimmed == prefix || ["，", "。", "！", "？", "：", " "].contains(where: { trimmed.hasPrefix(prefix + $0) })
         }
