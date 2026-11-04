@@ -29,7 +29,7 @@ private enum WorkflowRoleSelection: String, CaseIterable, Identifiable, Hashable
 }
 
 struct AutonomousWorkflowView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     var onOpenWriterSession: (UUID) -> Void
 
     @State private var goal = ""

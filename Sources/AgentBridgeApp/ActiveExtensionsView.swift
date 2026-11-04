@@ -4,7 +4,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ActiveExtensionsView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
 
     @State private var selectedExtensionID = ""
     @State private var skillID = ""
@@ -701,7 +701,7 @@ struct ActiveExtensionsView: View {
 }
 
 private struct MacControlPresetView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let selectedConfigurationID: String?
     let scopeSessionID: UUID?
     var onImported: (String) -> Void

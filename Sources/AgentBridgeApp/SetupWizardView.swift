@@ -2,7 +2,7 @@ import AgentBridgeCore
 import SwiftUI
 
 struct SetupWizardView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
 
     private var stepIndex: Int { SetupWizardStep.allCases.firstIndex(of: model.setupWizardStep) ?? 0 }
 
@@ -572,7 +572,7 @@ struct SetupWizardView: View {
 }
 
 struct EmbeddedTerminalPanel: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let launch: TerminalLaunchSpec
 
     var body: some View {

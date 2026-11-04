@@ -2,7 +2,7 @@ import AgentBridgeCore
 import SwiftUI
 
 struct LocalModelSettingsSection: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
 
     private var localSettings: LocalModelSettings { model.settings.localModel }
 
@@ -99,7 +99,7 @@ struct LocalModelSettingsSection: View {
 }
 
 struct ContextPreviewSheet: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let preview: ContextCompressionPreview
     let settings: LocalModelSettings?
     @Environment(\.dismiss) private var dismiss

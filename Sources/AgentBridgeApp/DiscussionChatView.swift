@@ -4,7 +4,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct DiscussionChatView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let discussionID: UUID
     let onOpenProject: (SessionRecord) -> Void
 
@@ -415,7 +415,7 @@ struct DiscussionChatView: View {
 }
 
 private struct DiscussionHandoffReviewView: View {
-    @ObservedObject var model: AppModel
+    @Bindable var model: AppModel
     let discussionID: UUID
     let onOpenProject: (SessionRecord) -> Void
     @Environment(\.dismiss) private var dismiss

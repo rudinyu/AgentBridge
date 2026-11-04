@@ -1,11 +1,20 @@
 import AppKit
 import Combine
 import Darwin
+import Observation
 import AgentBridgeCore
 import Charts
 import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
+
+/// Owns one `AppModel` per window. `AppModel.init` opens the store and
+/// refreshes, so it must run once per window; `@StateObject` guarantees that,
+/// while a plain `@State` initial value could be evaluated again.
+@MainActor
+private final class AppModelOwner: ObservableObject {
+    let model = AppModel()
+}
 
 @main
 struct AgentBridgeApp: App {
@@ -19,150 +28,151 @@ struct AgentBridgeApp: App {
 }
 
 @MainActor
-final class AppModel: ObservableObject {
-    @Published var appLanguage: AppLanguage {
+@Observable
+final class AppModel {
+    var appLanguage: AppLanguage {
         didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: AppLanguage.preferenceKey) }
     }
-    @Published var isSetupWizardPresented = false
-    @Published var setupWizardStep: SetupWizardStep = .welcome {
+    var isSetupWizardPresented = false
+    var setupWizardStep: SetupWizardStep = .welcome {
         didSet { UserDefaults.standard.set(setupWizardStep.rawValue, forKey: Self.setupWizardStepPreferenceKey) }
     }
-    @Published var setupWizardProvider: AgentProvider = .codex {
+    var setupWizardProvider: AgentProvider = .codex {
         didSet { UserDefaults.standard.set(setupWizardProvider.rawValue, forKey: Self.setupWizardProviderPreferenceKey) }
     }
-    @Published var setupWizardProfileName = "" {
+    var setupWizardProfileName = "" {
         didSet { UserDefaults.standard.set(setupWizardProfileName, forKey: Self.setupWizardProfileNamePreferenceKey) }
     }
-    @Published var setupWizardCLIPath = "" {
+    var setupWizardCLIPath = "" {
         didSet {
             UserDefaults.standard.set(setupWizardCLIPath, forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
         }
     }
-    @Published var setupWizardCLIStatus = ""
-    @Published var setupWizardUsageControls = UsageControlSettings()
-    @Published var setupWizardUsageStatus = ""
-    @Published var setupWizardStatus = ""
-    @Published var setupWizardError: String?
-    @Published var setupWizardAuthCheckInProgress = false
-    @Published var settings = BridgeSettings()
-    @Published var sessions: [SessionRecord] = []
-    @Published var discussions: [DiscussionRecord] = []
-    @Published var events: [AuditEvent] = []
-    @Published var selectedSessionID: UUID?
-    @Published var selectedDiscussionID: UUID?
-    @Published var isProjectConversationActive = false
-    @Published var discussionProgress: [UUID: String] = [:]
-    @Published var isPreparingDiscussionHandoff = false
-    @Published var isApplyingDiscussionHandoff = false
-    @Published var newDiscussionProvider: AgentProvider = .codex
-    @Published var newDiscussionProfileID: UUID?
-    @Published var discussionProfilePreferences: [AgentProvider: UUID] = [:]
-    @Published var localModelModels: [LocalModelDescriptor] = []
-    @Published var localModelUsageStatistics: UsageStatisticsSnapshot?
-    @Published var localModelStatus = "Connection not checked."
-    @Published var localModelError: String?
-    @Published var isRefreshingLocalModels = false
-    @Published var isTestingLocalModel = false
-    @Published var requestedAccessMode: AccessMode = .readOnly
-    @Published var repositoryPath = ""
-    @Published var workspaceRootPath = ""
-    @Published var isChangingWorkspaceRoot = false
-    @Published var codexPath = ""
-    @Published var claudePath = ""
-    @Published var prompt = ""
-    @Published var status = "就緒。"
-    @Published var errorMessage: String?
-    @Published var outputText = ""
-    @Published var isRunning = false
-    @Published var changePlanTitle = ""
-    @Published var changePlanSummary = ""
-    @Published var changePlanStepsText = ""
-    @Published var changeDiff: WorkspaceChangeDiff?
-    @Published var verificationResult: VerificationResult?
-    @Published var branchName = ""
-    @Published var customVerifierPath = ""
-    @Published var customVerifierArgumentsText = ""
-    @Published var isVerifying = false
-    @Published var taskRecords: [ParallelTaskRecord] = []
-    @Published var autonomousRuns: [AutonomousRunRecord] = []
-    @Published var selectedAutonomousRunID: UUID?
-    @Published var isPreparingAutonomousRun = false
-    @Published var isRunningAutonomousRun = false
-    @Published var isTestingMCPRuntime = false
-    @Published var autonomousStatus = ""
-    @Published var autonomousError: String?
-    @Published var activeExtensionConfigurations: [ActiveExtensionConfigurationSummary] = []
-    @Published var activeExtensionError: String?
-    @Published var activeExtensionStatus = ""
-    @Published var detectedMacControlPresetStatus: MacControlPresetStatus?
-    @Published var macControlPermissionReadiness: MacControlPermissionReadiness?
-    @Published var macControlStatusError: String?
-    @Published var isCheckingMacControlPermissions = false
-    @Published var projectMemoryHandoffs: [ProjectMemoryHandoff] = []
-    @Published var memoryHandoffTargetSessionID: UUID?
-    @Published var selectedMemoryTurnIDs = Set<UUID>()
-    @Published var includeMemoryNotes = false
-    @Published var extensionDescriptors: [ExtensionDescriptor] = []
-    @Published var selectedExtensionID = ""
-    @Published var selectedExtensionPermissions = Set<ExtensionPermission>()
-    @Published var extensionPathScopesText = ""
-    @Published var extensionHostScopesText = ""
-    @Published var isImportingExtensionDescriptor = false
-    @Published var apiBudget = ""
-    @Published var apiKey = ""
-    @Published var confirmAPIRun = false
-    @Published var budgetSnapshot: BudgetSnapshot?
-    @Published var apiCostSnapshot: APICostControlSnapshot?
-    @Published var usageStatistics: UsageStatisticsSnapshot?
-    @Published var providerUsageReport: ProviderUsageReport?
-    @Published var usageControls = UsageControlSettings()
-    @Published var apiMonthlyLimitInput = ""
-    @Published var apiDailyLimitInput = ""
-    @Published var apiSessionLimitInput = ""
-    @Published var usageControlStatus = ""
-    @Published var usageAlerts: [String] = []
-    @Published var apiReconciliationCandidates: [APIReconciliationCandidate] = []
-    @Published var apiReconciliationSessionID: UUID?
-    @Published var apiReconciliationActualUSD = ""
-    @Published var apiReconciliationConfirmed = false
-    @Published var apiReconciliationStatus = ""
-    @Published var authStatus: [UUID: AuthAssessment] = [:]
-    @Published var accountProfiles: [AgentProvider: [AccountProfile]] = [:]
-    @Published var selectedProfileIDs: [AgentProvider: UUID] = [:]
-    @Published var newProfileName = ""
-    @Published var newProfileAllowsSharedMemory = true
-    @Published var memorySnapshot: SharedMemorySnapshot?
-    @Published var memoryNotes = ""
-    @Published var confirmClearMemory = false
-    @Published var terminalLaunch: TerminalLaunchSpec?
-    @Published var terminalTitle = ""
-    @Published var terminalRunning = false
-    @Published var terminalIsProfileLogin = false
-    @Published var terminalIsUsageTUI = false
-    @Published var terminalNeedsManualStop = false
-    @Published var usageCommandRequest = 0
-    @Published var closeTerminalAfterCancellation = false
-    @Published var isSwitchingTarget = false
+    var setupWizardCLIStatus = ""
+    var setupWizardUsageControls = UsageControlSettings()
+    var setupWizardUsageStatus = ""
+    var setupWizardStatus = ""
+    var setupWizardError: String?
+    var setupWizardAuthCheckInProgress = false
+    var settings = BridgeSettings()
+    var sessions: [SessionRecord] = []
+    var discussions: [DiscussionRecord] = []
+    var events: [AuditEvent] = []
+    var selectedSessionID: UUID?
+    var selectedDiscussionID: UUID?
+    var isProjectConversationActive = false
+    var discussionProgress: [UUID: String] = [:]
+    var isPreparingDiscussionHandoff = false
+    var isApplyingDiscussionHandoff = false
+    var newDiscussionProvider: AgentProvider = .codex
+    var newDiscussionProfileID: UUID?
+    var discussionProfilePreferences: [AgentProvider: UUID] = [:]
+    var localModelModels: [LocalModelDescriptor] = []
+    var localModelUsageStatistics: UsageStatisticsSnapshot?
+    var localModelStatus = "Connection not checked."
+    var localModelError: String?
+    var isRefreshingLocalModels = false
+    var isTestingLocalModel = false
+    var requestedAccessMode: AccessMode = .readOnly
+    var repositoryPath = ""
+    var workspaceRootPath = ""
+    var isChangingWorkspaceRoot = false
+    var codexPath = ""
+    var claudePath = ""
+    var prompt = ""
+    var status = "就緒。"
+    var errorMessage: String?
+    var outputText = ""
+    var isRunning = false
+    var changePlanTitle = ""
+    var changePlanSummary = ""
+    var changePlanStepsText = ""
+    var changeDiff: WorkspaceChangeDiff?
+    var verificationResult: VerificationResult?
+    var branchName = ""
+    var customVerifierPath = ""
+    var customVerifierArgumentsText = ""
+    var isVerifying = false
+    var taskRecords: [ParallelTaskRecord] = []
+    var autonomousRuns: [AutonomousRunRecord] = []
+    var selectedAutonomousRunID: UUID?
+    var isPreparingAutonomousRun = false
+    var isRunningAutonomousRun = false
+    var isTestingMCPRuntime = false
+    var autonomousStatus = ""
+    var autonomousError: String?
+    var activeExtensionConfigurations: [ActiveExtensionConfigurationSummary] = []
+    var activeExtensionError: String?
+    var activeExtensionStatus = ""
+    var detectedMacControlPresetStatus: MacControlPresetStatus?
+    var macControlPermissionReadiness: MacControlPermissionReadiness?
+    var macControlStatusError: String?
+    var isCheckingMacControlPermissions = false
+    var projectMemoryHandoffs: [ProjectMemoryHandoff] = []
+    var memoryHandoffTargetSessionID: UUID?
+    var selectedMemoryTurnIDs = Set<UUID>()
+    var includeMemoryNotes = false
+    var extensionDescriptors: [ExtensionDescriptor] = []
+    var selectedExtensionID = ""
+    var selectedExtensionPermissions = Set<ExtensionPermission>()
+    var extensionPathScopesText = ""
+    var extensionHostScopesText = ""
+    var isImportingExtensionDescriptor = false
+    var apiBudget = ""
+    var apiKey = ""
+    var confirmAPIRun = false
+    var budgetSnapshot: BudgetSnapshot?
+    var apiCostSnapshot: APICostControlSnapshot?
+    var usageStatistics: UsageStatisticsSnapshot?
+    var providerUsageReport: ProviderUsageReport?
+    var usageControls = UsageControlSettings()
+    var apiMonthlyLimitInput = ""
+    var apiDailyLimitInput = ""
+    var apiSessionLimitInput = ""
+    var usageControlStatus = ""
+    var usageAlerts: [String] = []
+    var apiReconciliationCandidates: [APIReconciliationCandidate] = []
+    var apiReconciliationSessionID: UUID?
+    var apiReconciliationActualUSD = ""
+    var apiReconciliationConfirmed = false
+    var apiReconciliationStatus = ""
+    var authStatus: [UUID: AuthAssessment] = [:]
+    var accountProfiles: [AgentProvider: [AccountProfile]] = [:]
+    var selectedProfileIDs: [AgentProvider: UUID] = [:]
+    var newProfileName = ""
+    var newProfileAllowsSharedMemory = true
+    var memorySnapshot: SharedMemorySnapshot?
+    var memoryNotes = ""
+    var confirmClearMemory = false
+    var terminalLaunch: TerminalLaunchSpec?
+    var terminalTitle = ""
+    var terminalRunning = false
+    var terminalIsProfileLogin = false
+    var terminalIsUsageTUI = false
+    var terminalNeedsManualStop = false
+    var usageCommandRequest = 0
+    var closeTerminalAfterCancellation = false
+    var isSwitchingTarget = false
 
     private var service: BridgeService?
     private var store: AuditStore?
-    private var activeRunFlags: [UUID: CancellationFlag] = [:]
-    private var discussionCancellationFlags: [UUID: CancellationFlag] = [:]
-    private var hasInitializedNewDiscussionTarget = false
-    private var autonomousCancellationFlags: [UUID: CancellationFlag] = [:]
+    @ObservationIgnored private var activeRunFlags: [UUID: CancellationFlag] = [:]
+    @ObservationIgnored private var discussionCancellationFlags: [UUID: CancellationFlag] = [:]
+    @ObservationIgnored private var hasInitializedNewDiscussionTarget = false
+    @ObservationIgnored private var autonomousCancellationFlags: [UUID: CancellationFlag] = [:]
     private var activeRunSessionID: UUID?
     private var activeTerminalProfileID: UUID?
     private var activeTerminalSessionID: UUID?
     private var activeUsageProvider: AgentProvider?
     private var savedLocalModelSettings: LocalModelSettings?
-    private var setupWizardAuthRequestID: UUID?
-    private var loadedUsageControlsScopeKey: String?
-    private var refreshedUsageStatisticsScopeKey: String?
-    private var lastUsageStatisticsRefresh: Date?
-    private var refreshedLocalModelUsageScopeKey: String?
-    private var lastLocalModelUsageRefresh: Date?
-    private var refreshedAPIReconciliationScopeKey: String?
-    private var lastAPIReconciliationRefresh: Date?
+    @ObservationIgnored private var setupWizardAuthRequestID: UUID?
+    @ObservationIgnored private var loadedUsageControlsScopeKey: String?
+    @ObservationIgnored private var refreshedUsageStatisticsScopeKey: String?
+    @ObservationIgnored private var lastUsageStatisticsRefresh: Date?
+    @ObservationIgnored private var refreshedLocalModelUsageScopeKey: String?
+    @ObservationIgnored private var lastLocalModelUsageRefresh: Date?
+    @ObservationIgnored private var refreshedAPIReconciliationScopeKey: String?
+    @ObservationIgnored private var lastAPIReconciliationRefresh: Date?
 
     private static let setupWizardStartedPreferenceKey = "setupWizard.started"
     private static let setupWizardCompletedPreferenceKey = "setupWizard.completed"
@@ -3154,7 +3164,15 @@ final class AppModel: ObservableObject {
 }
 
 struct ContentView: View {
-    @StateObject private var model = AppModel()
+    @StateObject private var owner = AppModelOwner()
+
+    var body: some View {
+        MainWindowView(model: owner.model)
+    }
+}
+
+struct MainWindowView: View {
+    @Bindable var model: AppModel
     @State private var mainArea: MainArea = .chats
     @State private var isProjectConfigurationExpanded = false
     @State private var contextPreview: ContextCompressionPreview?
