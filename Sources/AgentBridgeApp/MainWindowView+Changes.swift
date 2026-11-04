@@ -10,35 +10,35 @@ extension MainWindowView {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("This session writes only inside its isolated workspace. Each change run requires an editable plan, an explicit approval, and official CLI subscription mode. The source repository is not changed by the run.")
                             .font(.caption).foregroundStyle(.secondary)
-                        TextField("Plan title", text: $model.changePlanTitle)
-                        TextField("Plan summary", text: $model.changePlanSummary, axis: .vertical)
+                        TextField("Plan title", text: Bindable(model.changes).changePlanTitle)
+                        TextField("Plan summary", text: Bindable(model.changes).changePlanSummary, axis: .vertical)
                             .lineLimit(2...4)
                         Text("Plan steps · one step per line")
                             .font(.caption.weight(.semibold))
-                        TextEditor(text: $model.changePlanStepsText)
+                        TextEditor(text: Bindable(model.changes).changePlanStepsText)
                             .font(.system(.caption, design: .monospaced))
                             .frame(minHeight: 70, maxHeight: 130)
                             .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                         HStack {
-                            Button("Save plan for review") { model.saveChangePlan() }
+                            Button("Save plan for review") { model.changes.saveChangePlan() }
                             if let plan = session.changePlan {
                                 Text("Plan digest · \(plan.reviewDigest.prefix(16))")
                                     .font(.caption2.monospaced()).foregroundStyle(.secondary)
                                 Spacer()
-                                if !model.selectedChangePlanDraftMatchesSaved {
+                                if !model.changes.selectedChangePlanDraftMatchesSaved {
                                     Label("Unsaved plan edits. Save changes before review or approval.", systemImage: "pencil.line")
                                         .font(.caption).foregroundStyle(.orange)
-                                } else if model.selectedChangePlanIsApproved {
+                                } else if model.changes.selectedChangePlanIsApproved {
                                     Label("Approved", systemImage: "checkmark.seal.fill").font(.caption).foregroundStyle(.green)
                                 } else {
-                                    Button("Approve this displayed plan") { model.approveChangePlan() }
+                                    Button("Approve this displayed plan") { model.changes.approveChangePlan() }
                                         .buttonStyle(.borderedProminent)
                                 }
                             }
                         }
                         if session.changePlan != nil,
-                           model.selectedChangePlanDraftMatchesSaved,
-                           !model.selectedChangePlanIsApproved {
+                           model.changes.selectedChangePlanDraftMatchesSaved,
+                           !model.changes.selectedChangePlanIsApproved {
                             Text("The saved plan is pending approval. Editing and saving it again clears any earlier approval.")
                                 .font(.caption2).foregroundStyle(.orange)
                         }
@@ -54,7 +54,7 @@ extension MainWindowView {
                         HStack {
                             Button("Run approved changes") { model.runApprovedChanges() }
                                 .buttonStyle(.borderedProminent)
-                                .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.changePlan == nil || !model.selectedChangePlanDraftMatchesSaved || !model.selectedChangePlanIsApproved || model.settings.usageMode != .subscription)
+                                .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.changePlan == nil || !model.changes.selectedChangePlanDraftMatchesSaved || !model.changes.selectedChangePlanIsApproved || model.settings.usageMode != .subscription)
                             if model.selectedSessionIsRunning { Button("Cancel this session") { model.cancelSession(session.id) } }
                             Spacer()
                         }
@@ -75,9 +75,9 @@ extension MainWindowView {
                     .font(.caption2).foregroundStyle(.secondary)
                 HStack {
                     Button("Run .codex/ci.sh") { model.runVerification() }
-                        .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || model.changeDiff?.files.isEmpty != false)
+                        .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || model.changes.changeDiff?.files.isEmpty != false)
                     if model.selectedSessionIsRunning { Button("Cancel verification") { model.cancelSession(session.id) } }
-                    if model.verifiedCurrentDiff {
+                    if model.changes.verifiedCurrentDiff {
                         Label("Current diff verified", systemImage: "checkmark.seal.fill").font(.caption).foregroundStyle(.green)
                     } else {
                         Label("Verification must pass for this exact diff", systemImage: "exclamationmark.shield").font(.caption).foregroundStyle(.orange)
@@ -86,20 +86,20 @@ extension MainWindowView {
                 DisclosureGroup("Use an approved custom verifier") {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            TextField("Absolute executable path", text: $model.customVerifierPath)
-                            Button("Choose…") { model.chooseCustomVerifier() }
+                            TextField("Absolute executable path", text: Bindable(model.changes).customVerifierPath)
+                            Button("Choose…") { model.changes.chooseCustomVerifier() }
                         }
                         Text("Arguments · one argv item per line; spaces stay inside that argument")
                             .font(.caption2).foregroundStyle(.secondary)
-                        TextEditor(text: $model.customVerifierArgumentsText)
+                        TextEditor(text: Bindable(model.changes).customVerifierArgumentsText)
                             .font(.system(.caption, design: .monospaced))
                             .frame(minHeight: 45, maxHeight: 85)
                         Button("Approve and run this executable with these arguments") { model.runVerification(custom: true) }
-                            .disabled(model.customVerifierPath.isEmpty || !model.canStartAnotherRun || model.changeDiff?.files.isEmpty != false)
+                            .disabled(model.changes.customVerifierPath.isEmpty || !model.canStartAnotherRun || model.changes.changeDiff?.files.isEmpty != false)
                     }
                     .padding(.top, 4)
                 }
-                if let result = model.verificationResult {
+                if let result = model.changes.verificationResult {
                     HStack(spacing: 10) {
                         Text("Exit: \(result.exitCode.map(String.init) ?? "not reported")")
                         Text("Duration: \(String(format: "%.3f", result.durationSeconds))s")
@@ -125,18 +125,18 @@ extension MainWindowView {
         GroupBox("Full file diff") {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("\(model.changeDiff?.files.count ?? 0) changed files")
+                    Text("\(model.changes.changeDiff?.files.count ?? 0) changed files")
                         .font(.caption.weight(.semibold))
                     Spacer()
                     Button("Refresh diff") { model.refreshSelectedEvents() }
-                    Button("Export patch…") { model.exportChangePatch() }
-                        .disabled(model.changeDiff?.files.isEmpty != false)
+                    Button("Export patch…") { model.changes.exportChangePatch() }
+                        .disabled(model.changes.changeDiff?.files.isEmpty != false)
                     Button("Restore all", role: .destructive) {
-                        model.restoreAllChangeFiles()
+                        model.changes.restoreAllChangeFiles()
                     }
-                    .disabled(model.changeDiff?.files.isEmpty != false)
+                    .disabled(model.changes.changeDiff?.files.isEmpty != false)
                 }
-                if let diff = model.changeDiff, !diff.files.isEmpty {
+                if let diff = model.changes.changeDiff, !diff.files.isEmpty {
                     ForEach(diff.files, id: \.path) { file in
                         GroupBox {
                             VStack(alignment: .leading, spacing: 6) {
@@ -144,7 +144,7 @@ extension MainWindowView {
                                     Text(file.path).font(.caption.monospaced()).textSelection(.enabled)
                                     Text(file.status.rawValue).font(.caption2).foregroundStyle(.secondary)
                                     Spacer()
-                                    Button("Reject / restore file", role: .destructive) { model.restoreChangeFile(file.path) }
+                                    Button("Reject / restore file", role: .destructive) { model.changes.restoreChangeFile(file.path) }
                                 }
                                 if file.isBinary {
                                     Text("Binary diff; file content is represented as binary.")
@@ -165,12 +165,12 @@ extension MainWindowView {
                         .frame(minHeight: 90)
                 }
                 HStack {
-                    Button("Accept this verified diff") { model.acceptChanges() }
-                        .disabled(!model.verifiedCurrentDiff || model.changeDiff?.files.isEmpty != false)
-                    TextField("Local branch name", text: $model.branchName)
+                    Button("Accept this verified diff") { model.changes.acceptChanges() }
+                        .disabled(!model.changes.verifiedCurrentDiff || model.changes.changeDiff?.files.isEmpty != false)
+                    TextField("Local branch name", text: Bindable(model.changes).branchName)
                         .frame(maxWidth: 240)
-                    Button("Apply to branch as an uncommitted worktree") { model.applyChangesToBranch() }
-                        .disabled(!model.verifiedCurrentDiff || model.changeDiff?.files.isEmpty != false || model.branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Apply to branch as an uncommitted worktree") { model.changes.applyChangesToBranch() }
+                        .disabled(!model.changes.verifiedCurrentDiff || model.changes.changeDiff?.files.isEmpty != false || model.changes.branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 Text("Applying checks the source base commit for conflicts and creates an uncommitted isolated worktree. AgentBridge never commits, pushes, or merges.")
                     .font(.caption2).foregroundStyle(.secondary)

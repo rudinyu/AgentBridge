@@ -13,6 +13,7 @@ final class AppModel {
     let setupWizard = SetupWizardModel()
     let usage = UsageModel()
     let chats = DiscussionModel()
+    let changes = ChangeReviewModel()
     var settings = BridgeSettings()
     var sessions: [SessionRecord] = []
     var events: [AuditEvent] = []
@@ -34,15 +35,6 @@ final class AppModel {
     var errorMessage: String?
     var outputText = ""
     var isRunning = false
-    var changePlanTitle = ""
-    var changePlanSummary = ""
-    var changePlanStepsText = ""
-    var changeDiff: WorkspaceChangeDiff?
-    var verificationResult: VerificationResult?
-    var branchName = ""
-    var customVerifierPath = ""
-    var customVerifierArgumentsText = ""
-    var isVerifying = false
     var taskRecords: [ParallelTaskRecord] = []
     var autonomousRuns: [AutonomousRunRecord] = []
     var selectedAutonomousRunID: UUID?
@@ -116,7 +108,7 @@ final class AppModel {
     var workspaceRootIsConfigured: Bool { !workspaceRootPath.isEmpty && service != nil && store != nil }
 
     var canPresentSetupWizard: Bool {
-        activeRunFlags.isEmpty && !isVerifying && !isSwitchingTarget && !isChangingWorkspaceRoot
+        activeRunFlags.isEmpty && !changes.isVerifying && !isSwitchingTarget && !isChangingWorkspaceRoot
             && !terminalRunning && terminalLaunch == nil && !hasActiveAutonomousWorkflow
             && !chats.hasActiveDiscussionOperation
     }
@@ -126,7 +118,7 @@ final class AppModel {
     }
 
     var canStartAutonomousWorkflow: Bool {
-        !isLocalProviderContext && !hasActiveAutonomousWorkflow && activeRunFlags.isEmpty && !isVerifying
+        !isLocalProviderContext && !hasActiveAutonomousWorkflow && activeRunFlags.isEmpty && !changes.isVerifying
             && !isTestingMCPRuntime && !terminalRunning && terminalLaunch == nil && !isSwitchingTarget
             && !isChangingWorkspaceRoot
     }
@@ -151,6 +143,7 @@ final class AppModel {
         setupWizard.attach(to: self)
         usage.attach(to: self)
         chats.attach(to: self)
+        changes.attach(to: self)
         chats.loadSavedPreferences()
         do {
             guard try RuntimePaths.workspaceRootConfiguration() != nil else {
@@ -221,22 +214,6 @@ final class AppModel {
         selectedSessionID = id
     }
 
-    var selectedChangePlanDraftMatchesSaved: Bool {
-        guard let plan = selectedSession?.changePlan else { return false }
-        return ChangePlanDraft(
-            title: changePlanTitle,
-            summary: changePlanSummary,
-            stepsText: changePlanStepsText
-        ).matches(plan)
-    }
-
-    var selectedChangePlanIsApproved: Bool {
-        guard selectedChangePlanDraftMatchesSaved,
-              let session = selectedSession,
-              let plan = session.changePlan else { return false }
-        return session.approvedChangePlanDigest == plan.reviewDigest
-    }
-
     var selectedSessionIsRunning: Bool {
         selectedSession.map { activeRunFlags[$0.id] != nil } ?? false
     }
@@ -246,15 +223,6 @@ final class AppModel {
             && !isTestingMCPRuntime
             && activeRunFlags.count < 3
             && selectedSession.map { activeRunFlags[$0.id] == nil } == true
-    }
-
-    var verifiedCurrentDiff: Bool {
-        guard let session = selectedSession, let diff = changeDiff,
-              session.verificationPassed == true,
-              session.verificationDiffDigest == diff.digest,
-              let verifiedAt = session.verificationCompletedAt,
-              let lastChangeAt = session.lastChangeRunAt else { return false }
-        return verifiedAt >= lastChangeAt
     }
 
     var isClaudeAPIRunContext: Bool {
@@ -347,7 +315,7 @@ final class AppModel {
                 refreshSelectedEvents()
             }
             if previousSelectedSessionID != selectedSessionID {
-                loadChangePlanDraftFromSelectedSession()
+                changes.loadChangePlanDraftFromSelectedSession()
             }
             try usage.refresh(service: service, force: forceUsageStatistics)
         } catch {
@@ -377,13 +345,13 @@ final class AppModel {
                     guard let self, let service = self.service else { return }
                     do {
                         let diff = try await service.changesDiff(sessionID: selectedSessionID)
-                        if self.selectedSessionID == selectedSessionID { self.changeDiff = diff }
+                        if self.selectedSessionID == selectedSessionID { self.changes.changeDiff = diff }
                     } catch {
                         if self.selectedSessionID == selectedSessionID { self.errorMessage = error.localizedDescription }
                     }
                 }
             } else {
-                changeDiff = nil
+                changes.changeDiff = nil
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -392,7 +360,7 @@ final class AppModel {
 
     func selectedSessionDidChange() {
         clearAPIAuthorization()
-        loadChangePlanDraftFromSelectedSession()
+        changes.loadChangePlanDraftFromSelectedSession()
         selectedMemoryTurnIDs = []
         memoryHandoffTargetSessionID = nil
         loadSelectedExtensionGrant()
@@ -404,18 +372,6 @@ final class AppModel {
             } catch {
                 errorMessage = error.localizedDescription
             }
-        }
-    }
-
-    private func loadChangePlanDraftFromSelectedSession() {
-        if let plan = selectedSession?.changePlan {
-            changePlanTitle = plan.title
-            changePlanSummary = plan.summary
-            changePlanStepsText = plan.steps.joined(separator: "\n")
-        } else {
-            changePlanTitle = ""
-            changePlanSummary = ""
-            changePlanStepsText = ""
         }
     }
 
@@ -599,7 +555,7 @@ final class AppModel {
     }
 
     func chooseWorkspaceRoot() {
-        guard !isChangingWorkspaceRoot, !isRunning, !isVerifying, !isSwitchingTarget,
+        guard !isChangingWorkspaceRoot, !isRunning, !changes.isVerifying, !isSwitchingTarget,
               !terminalRunning, terminalLaunch == nil, !hasActiveAutonomousWorkflow,
               !chats.hasActiveDiscussionOperation else { return }
         let panel = NSOpenPanel()
@@ -841,65 +797,12 @@ final class AppModel {
         }
     }
 
-    func saveChangePlan() {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
-            return
-        }
-        guard let service, let session = selectedSession,
-              session.policy.accessMode == .isolatedChanges else {
-            errorMessage = "請先建立隔離變更工作階段。"
-            return
-        }
-        let steps = changePlanStepsText
-            .split(whereSeparator: \.isNewline)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        do {
-            let plan = try service.createChangePlan(
-                sessionID: session.id,
-                title: changePlanTitle,
-                summary: changePlanSummary,
-                steps: steps
-            )
-            changePlanTitle = plan.title
-            changePlanSummary = plan.summary
-            changePlanStepsText = plan.steps.joined(separator: "\n")
-            status = "計畫已保存為待檢視狀態；尚未授權寫入。"
-            refresh()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func approveChangePlan() {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
-            return
-        }
-        guard let service, let session = selectedSession, let plan = session.changePlan else {
-            errorMessage = "請先保存一份工作計畫。"
-            return
-        }
-        guard selectedChangePlanDraftMatchesSaved else {
-            errorMessage = localized("Save your plan changes before review or approval.")
-            return
-        }
-        do {
-            _ = try service.approveChangePlan(sessionID: session.id, planID: plan.id, reviewedDigest: plan.reviewDigest)
-            status = "已明確核准目前顯示的計畫；現在可以執行隔離變更。"
-            refresh()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     func runApprovedChanges() {
         guard let service, let session = selectedSession, let plan = session.changePlan else {
             errorMessage = "請先保存並明確核准目前的工作計畫。"
             return
         }
-        guard selectedChangePlanDraftMatchesSaved else {
+        guard changes.selectedChangePlanDraftMatchesSaved else {
             errorMessage = localized("Save your plan changes before review or approval.")
             return
         }
@@ -959,52 +862,6 @@ final class AppModel {
         }
     }
 
-    func restoreChangeFile(_ path: String) {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
-            return
-        }
-        guard let service, let session = selectedSession else { return }
-        Task { @MainActor [weak self] in
-            do {
-                try await service.restoreChangeFiles(sessionID: session.id, filePaths: [path])
-                self?.refreshSelectedEvents()
-                self?.refresh()
-            } catch { self?.errorMessage = error.localizedDescription }
-        }
-    }
-
-    func restoreAllChangeFiles() {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
-            return
-        }
-        guard let service, let session = selectedSession else { return }
-        Task { @MainActor [weak self] in
-            do {
-                try await service.restoreAllChanges(sessionID: session.id)
-                self?.refreshSelectedEvents()
-                self?.refresh()
-            } catch { self?.errorMessage = error.localizedDescription }
-        }
-    }
-
-    func exportChangePatch() {
-        guard let service, let session = selectedSession else { return }
-        Task { @MainActor [weak self] in
-            do {
-                let patch = try await service.exportChangePatch(sessionID: session.id)
-                let panel = NSSavePanel()
-                panel.nameFieldStringValue = "AgentBridge-\(session.id.uuidString.prefix(8)).patch"
-                panel.allowedContentTypes = [.plainText]
-                guard panel.runModal() == .OK, let url = panel.url else { return }
-                try patch.write(to: url, options: .atomic)
-                self?.status = "已匯出 \(patch.count) 位元組補丁。"
-                self?.refreshSelectedEvents()
-            } catch { self?.errorMessage = error.localizedDescription }
-        }
-    }
-
     func runVerification(custom: Bool = false) {
         guard let service, let session = selectedSession,
               session.policy.accessMode == .isolatedChanges else { return }
@@ -1017,19 +874,19 @@ final class AppModel {
             return
         }
         guard activeRunFlags.count < 3 else { errorMessage = "最多可同時執行三項工作。"; return }
-        let executable = custom ? URL(fileURLWithPath: customVerifierPath) : nil
-        let arguments = custom ? customVerifierArgumentsText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) : []
+        let executable = custom ? URL(fileURLWithPath: changes.customVerifierPath) : nil
+        let arguments = custom ? changes.customVerifierArgumentsText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) : []
         let cancellation = CancellationFlag()
         activeRunFlags[session.id] = cancellation
         activeRunSessionID = session.id
         isRunning = true
-        isVerifying = true
-        verificationResult = nil
+        changes.isVerifying = true
+        changes.verificationResult = nil
         Task { @MainActor [self] in
             defer {
                 activeRunFlags.removeValue(forKey: session.id)
                 isRunning = !activeRunFlags.isEmpty
-                isVerifying = false
+                changes.isVerifying = false
                 activeRunSessionID = activeRunFlags.keys.first
                 refresh()
                 refreshSelectedEvents()
@@ -1042,53 +899,13 @@ final class AppModel {
                     customCommandApproved: custom,
                     cancellation: cancellation
                 )
-                verificationResult = result
+                changes.verificationResult = result
                 status = result.succeeded
                     ? "驗證 CLI 回報成功；退出代碼 0，耗時 \(String(format: "%.2f", result.durationSeconds)) 秒。"
                     : "驗證未通過或未完成；請查看 CLI 輸出與活動記錄。"
             } catch {
                 errorMessage = error.localizedDescription
             }
-        }
-    }
-
-    func chooseCustomVerifier() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Choose Executable"
-        if panel.runModal() == .OK, let url = panel.url { customVerifierPath = url.path }
-    }
-
-    func acceptChanges() {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
-            return
-        }
-        guard let service, let session = selectedSession else { return }
-        Task { @MainActor [weak self] in
-            do {
-                _ = try await service.acceptChanges(sessionID: session.id)
-                self?.status = "已接受目前已驗證的差異；來源儲存庫仍未修改。"
-                self?.refresh()
-            } catch { self?.errorMessage = error.localizedDescription }
-        }
-    }
-
-    func applyChangesToBranch() {
-        guard !hasActiveAutonomousWorkflow else {
-            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
-            return
-        }
-        guard let service, let session = selectedSession else { return }
-        let requestedBranchName = branchName
-        Task { @MainActor [weak self] in
-            do {
-                let result = try await service.applyChangesToLocalBranch(sessionID: session.id, branchName: requestedBranchName)
-                self?.status = "已建立未提交工作樹：\(result.worktreePath)；沒有建立提交、推送或合併。"
-                self?.refresh()
-            } catch { self?.errorMessage = error.localizedDescription }
         }
     }
 
