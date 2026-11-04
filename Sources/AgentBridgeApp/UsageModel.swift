@@ -66,13 +66,13 @@ final class UsageModel {
     }
 
     private var localUsageProfileID: UUID? {
-        if let discussion = app.selectedDiscussion, discussion.provider == .local {
+        if let discussion = app.chats.selectedDiscussion, discussion.provider == .local {
             return discussion.accountProfileID
         }
         if let session = app.selectedSession, session.provider == .local {
             return session.accountProfileID ?? AccountProfile.defaultID(for: .local)
         }
-        if app.newDiscussionProvider == .local, let newDiscussionProfileID = app.newDiscussionProfileID {
+        if app.chats.newDiscussionProvider == .local, let newDiscussionProfileID = app.chats.newDiscussionProfileID {
             return newDiscussionProfileID
         }
         return app.selectedProfileIDs[.local]
@@ -124,7 +124,7 @@ final class UsageModel {
             return
         }
         let currentLocalRunID: UUID?
-        if let discussion = app.selectedDiscussion, discussion.provider == .local,
+        if let discussion = app.chats.selectedDiscussion, discussion.provider == .local,
            discussion.accountProfileID == profileID {
             currentLocalRunID = discussion.id
         } else if let session = app.selectedSession, session.provider == .local,

@@ -9,21 +9,21 @@ extension MainWindowView {
                 GroupBox("Start a chat") {
                     VStack(alignment: .leading, spacing: 9) {
                         Picker("Provider", selection: Binding(
-                            get: { model.newDiscussionProvider },
-                            set: { model.selectNewDiscussionProvider($0) }
+                            get: { model.chats.newDiscussionProvider },
+                            set: { model.chats.selectNewDiscussionProvider($0) }
                         )) {
                             Text("Codex").tag(AgentProvider.codex)
                             Text("Claude").tag(AgentProvider.claude)
                             Text("Local").tag(AgentProvider.local)
                         }
-                        if let profile = model.accountProfiles[model.newDiscussionProvider]?.first(where: {
-                            $0.id == model.newDiscussionProfileID
+                        if let profile = model.accountProfiles[model.chats.newDiscussionProvider]?.first(where: {
+                            $0.id == model.chats.newDiscussionProfileID
                         }) {
-                            Picker(model.newDiscussionProvider == .local ? "Memory account" : "Account", selection: Binding(
-                                get: { model.newDiscussionProfileID ?? profile.id },
-                                set: { model.selectNewDiscussionProfile($0) }
+                            Picker(model.chats.newDiscussionProvider == .local ? "Memory account" : "Account", selection: Binding(
+                                get: { model.chats.newDiscussionProfileID ?? profile.id },
+                                set: { model.chats.selectNewDiscussionProfile($0) }
                             )) {
-                                ForEach(model.accountProfiles[model.newDiscussionProvider] ?? []) { account in
+                                ForEach(model.accountProfiles[model.chats.newDiscussionProvider] ?? []) { account in
                                     Text(account.name).tag(account.id)
                                 }
                             }
@@ -31,18 +31,18 @@ extension MainWindowView {
                             Text("No account profile is available for this provider.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Text(model.newDiscussionProvider == .local
+                        Text(model.chats.newDiscussionProvider == .local
                             ? "Local chats use the configured model and separate local memory account. No API key or cloud fallback is used."
                             : "Chats use the provider’s official CLI subscription sign-in. Claude API usage is not available here.")
                             .font(.caption2).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        if model.newDiscussionProvider == .local
-                            || model.selectedDiscussion?.provider == .local
+                        if model.chats.newDiscussionProvider == .local
+                            || model.chats.selectedDiscussion?.provider == .local
                             || model.settings.defaultProvider == .local {
                             LocalModelSettingsSection(model: model)
                         }
                         Button {
-                            model.createDiscussion()
+                            model.chats.createDiscussion()
                         } label: {
                             Label("New Chat", systemImage: "plus.bubble")
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -54,16 +54,16 @@ extension MainWindowView {
                 }
 
                 GroupBox("Chats") {
-                    if model.discussions.isEmpty {
+                    if model.chats.discussions.isEmpty {
                         Text("No saved chats yet. Start a New Chat whenever you are ready.")
                             .font(.caption).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 5)
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
-                            ForEach(model.discussions) { discussion in
+                            ForEach(model.chats.discussions) { discussion in
                                 Button {
-                                    model.openDiscussion(discussion.id)
+                                    model.chats.openDiscussion(discussion.id)
                                 } label: {
                                     discussionRow(discussion)
                                 }
@@ -121,7 +121,7 @@ extension MainWindowView {
     }
 
     func discussionRow(_ discussion: DiscussionRecord) -> some View {
-        let isSelected = model.selectedDiscussionID == discussion.id
+        let isSelected = model.chats.selectedDiscussionID == discussion.id
         let title = discussion.turns.first?.userText.trimmingCharacters(in: .whitespacesAndNewlines)
         let titleText = title.flatMap { $0.isEmpty ? nil : String($0.prefix(46)) }
             ?? model.localized("New conversation")
@@ -175,7 +175,7 @@ extension MainWindowView {
 
     @ViewBuilder
     var chatsPanel: some View {
-        if let discussion = model.selectedDiscussion {
+        if let discussion = model.chats.selectedDiscussion {
             DiscussionChatView(model: model, discussionID: discussion.id) { session in
                 model.openProjectSession(session.id)
                 mainArea = .conversation
@@ -190,7 +190,7 @@ extension MainWindowView {
                     .multilineTextAlignment(.center).foregroundStyle(.secondary)
                     .frame(maxWidth: 520)
                 Button {
-                    model.createDiscussion()
+                    model.chats.createDiscussion()
                 } label: {
                     Label("New Chat", systemImage: "plus.bubble")
                 }
@@ -248,7 +248,7 @@ extension MainWindowView {
             }
             .padding(.vertical, 2)
         }
-        .disabled(model.hasActiveAutonomousWorkflow || model.hasActiveDiscussionOperation)
+        .disabled(model.hasActiveAutonomousWorkflow || model.chats.hasActiveDiscussionOperation)
     }
 
     var accountPanel: some View {
@@ -300,7 +300,7 @@ extension MainWindowView {
             }
             .padding(.vertical, 2)
         }
-        .disabled(model.hasActiveAutonomousWorkflow || model.hasActiveDiscussionOperation)
+        .disabled(model.hasActiveAutonomousWorkflow || model.chats.hasActiveDiscussionOperation)
     }
 
     var workspacePanel: some View {
@@ -354,7 +354,7 @@ extension MainWindowView {
             }
             .padding(.vertical, 2)
         }
-        .disabled(model.hasActiveAutonomousWorkflow || model.hasActiveDiscussionOperation)
+        .disabled(model.hasActiveAutonomousWorkflow || model.chats.hasActiveDiscussionOperation)
     }
 
     var sessionList: some View {

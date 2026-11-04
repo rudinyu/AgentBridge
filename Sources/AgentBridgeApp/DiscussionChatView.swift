@@ -18,10 +18,10 @@ struct DiscussionChatView: View {
     @State private var handoffMode: DiscussionProjectMode = .createNew
 
     private var discussion: DiscussionRecord? {
-        model.discussions.first(where: { $0.id == discussionID })
+        model.chats.discussions.first(where: { $0.id == discussionID })
     }
 
-    private var isRunning: Bool { model.isDiscussionRunning(id: discussionID) }
+    private var isRunning: Bool { model.chats.isDiscussionRunning(id: discussionID) }
     private var isBusy: Bool { isRunning || discussion?.status == .transitioning }
 
     private var currentProfileAllowsSharing: Bool {
@@ -42,7 +42,7 @@ struct DiscussionChatView: View {
         self.model = model
         self.discussionID = discussionID
         self.onOpenProject = onOpenProject
-        let record = model.discussions.first(where: { $0.id == discussionID })
+        let record = model.chats.discussions.first(where: { $0.id == discussionID })
         _isShareable = State(initialValue: record.map {
             model.profileAllowsSharedMemory(provider: $0.provider, profileID: $0.accountProfileID)
         } ?? false)
@@ -102,7 +102,7 @@ struct DiscussionChatView: View {
                 Spacer()
                 statusLabel(discussion)
                 if isRunning {
-                    Button("Cancel") { model.cancelDiscussion(id: discussion.id) }
+                    Button("Cancel") { model.chats.cancelDiscussion(id: discussion.id) }
                         .buttonStyle(.bordered)
                 }
             }
@@ -111,8 +111,8 @@ struct DiscussionChatView: View {
                 Picker("Provider", selection: Binding(
                     get: { discussion.provider },
                     set: { provider in
-                        model.setDiscussionProvider(id: discussion.id, provider: provider)
-                        if let updated = model.discussions.first(where: { $0.id == discussion.id }) {
+                        model.chats.setDiscussionProvider(id: discussion.id, provider: provider)
+                        if let updated = model.chats.discussions.first(where: { $0.id == discussion.id }) {
                             isShareable = model.profileAllowsSharedMemory(
                                 provider: updated.provider,
                                 profileID: updated.accountProfileID
@@ -126,12 +126,12 @@ struct DiscussionChatView: View {
                 }
                 .pickerStyle(.menu)
                 .frame(width: 150)
-                .disabled(isBusy || model.hasActiveDiscussionOperation)
+                .disabled(isBusy || model.chats.hasActiveDiscussionOperation)
 
                 Picker(discussion.provider == .local ? "Memory account" : "Account", selection: Binding(
                     get: { discussion.accountProfileID },
                     set: { profileID in
-                        model.setDiscussionTarget(id: discussion.id, provider: discussion.provider, profileID: profileID)
+                        model.chats.setDiscussionTarget(id: discussion.id, provider: discussion.provider, profileID: profileID)
                         isShareable = model.profileAllowsSharedMemory(provider: discussion.provider, profileID: profileID)
                     }
                 )) {
@@ -141,7 +141,7 @@ struct DiscussionChatView: View {
                 }
                 .pickerStyle(.menu)
                 .frame(maxWidth: 240)
-                .disabled(isBusy || model.hasActiveDiscussionOperation)
+                .disabled(isBusy || model.chats.hasActiveDiscussionOperation)
 
                 if discussion.provider == .local {
                     VStack(alignment: .leading, spacing: 2) {
@@ -160,9 +160,9 @@ struct DiscussionChatView: View {
                 }
                 Spacer(minLength: 4)
                 Button("Create Git Project…") { presentHandoffReview(.createNew) }
-                    .disabled(isBusy || model.hasActiveDiscussionOperation)
+                    .disabled(isBusy || model.chats.hasActiveDiscussionOperation)
                 Button("Link Existing Project…") { presentHandoffReview(.attachExisting) }
-                    .disabled(isBusy || model.hasActiveDiscussionOperation)
+                    .disabled(isBusy || model.chats.hasActiveDiscussionOperation)
             }
 
             Text(discussion.provider == .local
@@ -233,7 +233,7 @@ struct DiscussionChatView: View {
                     ForEach(discussion.turns) { turn in
                         turnBubble(turn)
                     }
-                    if isBusy, let progress = model.discussionProgress[discussion.id], !progress.isEmpty {
+                    if isBusy, let progress = model.chats.discussionProgress[discussion.id], !progress.isEmpty {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
                             Text(model.localized(progress))
@@ -252,7 +252,7 @@ struct DiscussionChatView: View {
             .onChange(of: discussion.updatedAt) { _, _ in
                 withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("discussion-bottom", anchor: .bottom) }
             }
-            .onChange(of: model.discussionProgress[discussion.id]) { _, value in
+            .onChange(of: model.chats.discussionProgress[discussion.id]) { _, value in
                 if value != nil {
                     withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("discussion-bottom", anchor: .bottom) }
                 }
@@ -324,13 +324,13 @@ struct DiscussionChatView: View {
                 .frame(minHeight: 78, maxHeight: 150)
                 .padding(4)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-                .disabled(isBusy || model.hasActiveDiscussionOperation || isLoadingContextPreview)
+                .disabled(isBusy || model.chats.hasActiveDiscussionOperation || isLoadingContextPreview)
                 .accessibilityLabel("Message")
 
             HStack(alignment: .center, spacing: 10) {
                 Toggle("Use this turn in future context and project handoff", isOn: $isShareable)
                     .font(.caption)
-                    .disabled(!currentProfileAllowsSharing || isBusy || model.hasActiveDiscussionOperation)
+                    .disabled(!currentProfileAllowsSharing || isBusy || model.chats.hasActiveDiscussionOperation)
                 if !currentProfileAllowsSharing {
                     Text("Profile consent required")
                         .font(.caption2).foregroundStyle(.orange)
@@ -342,8 +342,8 @@ struct DiscussionChatView: View {
                     if isLoadingContextPreview { ProgressView().controlSize(.small) }
                     else { Label("Preview context", systemImage: "text.magnifyingglass") }
                 }
-                .disabled(isBusy || model.hasActiveDiscussionOperation || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoadingContextPreview || (discussion.provider == .local && model.localModelSettingsAreDirty))
-                if let progress = model.discussionProgress[discussion.id], !progress.isEmpty, !isBusy {
+                .disabled(isBusy || model.chats.hasActiveDiscussionOperation || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoadingContextPreview || (discussion.provider == .local && model.localModelSettingsAreDirty))
+                if let progress = model.chats.discussionProgress[discussion.id], !progress.isEmpty, !isBusy {
                     Text(model.localized(progress))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -354,7 +354,7 @@ struct DiscussionChatView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return, modifiers: [.command])
-                .disabled(isBusy || model.hasActiveDiscussionOperation || isLoadingContextPreview || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (discussion.provider == .local && model.localModelSettingsAreDirty))
+                .disabled(isBusy || model.chats.hasActiveDiscussionOperation || isLoadingContextPreview || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (discussion.provider == .local && model.localModelSettingsAreDirty))
             }
         }
     }
@@ -365,7 +365,7 @@ struct DiscussionChatView: View {
         Task { @MainActor in
             defer { isLoadingContextPreview = false }
             do {
-                let preview = try await model.previewDiscussionContext(id: discussionID, currentPrompt: prompt)
+                let preview = try await model.chats.previewDiscussionContext(id: discussionID, currentPrompt: prompt)
                 contextPreview = preview
                 contextPreviewSettings = discussion.provider == .local ? model.settings.localModel : nil
                 if showEvenWhenSafe || preview.requiresReview {
@@ -389,16 +389,16 @@ struct DiscussionChatView: View {
         Task { @MainActor in
             defer { isLoadingContextPreview = false }
             do {
-                let preview = try await model.previewDiscussionContext(id: discussion.id, currentPrompt: message)
+                let preview = try await model.chats.previewDiscussionContext(id: discussion.id, currentPrompt: message)
                 if preview.requiresReview {
                     contextPreview = preview
                     contextPreviewSettings = discussion.provider == .local ? model.settings.localModel : nil
                     isShowingContextPreview = true
                     return
                 }
-                model.sendDiscussionMessage(id: discussion.id, prompt: message, isShareable: isShareable) { succeeded in
+                model.chats.sendDiscussionMessage(id: discussion.id, prompt: message, isShareable: isShareable) { succeeded in
                     guard succeeded,
-                          model.selectedDiscussionID == discussion.id,
+                          model.chats.selectedDiscussionID == discussion.id,
                           prompt == message else { return }
                     prompt = ""
                 }
@@ -433,7 +433,7 @@ private struct DiscussionHandoffReviewView: View {
     @State private var errorMessage: String?
 
     private var discussion: DiscussionRecord? {
-        model.discussions.first(where: { $0.id == discussionID })
+        model.chats.discussions.first(where: { $0.id == discussionID })
     }
 
     private var targetProfileAllowsSharing: Bool {
@@ -487,9 +487,9 @@ private struct DiscussionHandoffReviewView: View {
         self.model = model
         self.discussionID = discussionID
         self.onOpenProject = onOpenProject
-        let record = model.discussions.first(where: { $0.id == discussionID })
-        let targetProvider = record?.provider ?? model.newDiscussionProvider
-        let targetProfileID = record?.accountProfileID ?? model.preferredDiscussionProfileID(for: targetProvider)
+        let record = model.chats.discussions.first(where: { $0.id == discussionID })
+        let targetProvider = record?.provider ?? model.chats.newDiscussionProvider
+        let targetProfileID = record?.accountProfileID ?? model.chats.preferredDiscussionProfileID(for: targetProvider)
         let canShareToTarget = targetProfileID.map {
             model.profileAllowsSharedMemory(provider: targetProvider, profileID: $0)
         } ?? false
@@ -598,7 +598,7 @@ private struct DiscussionHandoffReviewView: View {
                     Text("Local").tag(AgentProvider.local)
                 }
                 .onChange(of: targetProvider) { _, provider in
-                    targetProfileID = model.preferredDiscussionProfileID(for: provider)
+                    targetProfileID = model.chats.preferredDiscussionProfileID(for: provider)
                     if provider == .local { accessMode = .readOnly }
                     selectedTurnIDs = eligibleTurnIDs(for: provider, profileID: targetProfileID)
                     clearPreview()
@@ -875,7 +875,7 @@ private struct DiscussionHandoffReviewView: View {
         Task {
             defer { isPreparing = false }
             do {
-                let handoff = try await model.prepareDiscussionProjectHandoff(
+                let handoff = try await model.chats.prepareDiscussionProjectHandoff(
                     discussionID: discussion.id,
                     destinationPath: destinationPath,
                     mode: mode,
@@ -899,7 +899,7 @@ private struct DiscussionHandoffReviewView: View {
         Task {
             defer { isCreating = false }
             do {
-                let session = try await model.createOrAttachProjectFromDiscussion(
+                let session = try await model.chats.createOrAttachProjectFromDiscussion(
                     handoffID: handoff.id,
                     reviewedDigest: handoff.reviewedDigest
                 )

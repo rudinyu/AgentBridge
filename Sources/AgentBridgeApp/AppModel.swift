@@ -12,19 +12,12 @@ final class AppModel {
     }
     let setupWizard = SetupWizardModel()
     let usage = UsageModel()
+    let chats = DiscussionModel()
     var settings = BridgeSettings()
     var sessions: [SessionRecord] = []
-    var discussions: [DiscussionRecord] = []
     var events: [AuditEvent] = []
     var selectedSessionID: UUID?
-    var selectedDiscussionID: UUID?
     var isProjectConversationActive = false
-    var discussionProgress: [UUID: String] = [:]
-    var isPreparingDiscussionHandoff = false
-    var isApplyingDiscussionHandoff = false
-    var newDiscussionProvider: AgentProvider = .codex
-    var newDiscussionProfileID: UUID?
-    var discussionProfilePreferences: [AgentProvider: UUID] = [:]
     var localModelModels: [LocalModelDescriptor] = []
     var localModelStatus = "Connection not checked."
     var localModelError: String?
@@ -100,17 +93,12 @@ final class AppModel {
     private(set) var service: BridgeService?
     private var store: AuditStore?
     @ObservationIgnored private var activeRunFlags: [UUID: CancellationFlag] = [:]
-    @ObservationIgnored private var discussionCancellationFlags: [UUID: CancellationFlag] = [:]
-    @ObservationIgnored private var hasInitializedNewDiscussionTarget = false
     @ObservationIgnored private var autonomousCancellationFlags: [UUID: CancellationFlag] = [:]
     private var activeRunSessionID: UUID?
     private var activeTerminalProfileID: UUID?
     private var activeTerminalSessionID: UUID?
     private var activeUsageProvider: AgentProvider?
     private var savedLocalModelSettings: LocalModelSettings?
-
-    private static let newDiscussionProviderPreferenceKey = "discussion.newProvider"
-    private static let discussionProfilePreferencesKey = "discussion.profilePreferences"
 
     var terminalSessionIDForView: UUID? { activeTerminalSessionID }
 
@@ -130,17 +118,7 @@ final class AppModel {
     var canPresentSetupWizard: Bool {
         activeRunFlags.isEmpty && !isVerifying && !isSwitchingTarget && !isChangingWorkspaceRoot
             && !terminalRunning && terminalLaunch == nil && !hasActiveAutonomousWorkflow
-            && !hasActiveDiscussionOperation
-    }
-
-    var hasActiveDiscussionOperation: Bool {
-        !discussionCancellationFlags.isEmpty || isPreparingDiscussionHandoff || isApplyingDiscussionHandoff
-            || discussions.contains(where: { $0.status.isInFlight })
-    }
-
-    func isDiscussionRunning(id: UUID) -> Bool {
-        discussionCancellationFlags[id] != nil
-            || discussions.first(where: { $0.id == id })?.status == .running
+            && !chats.hasActiveDiscussionOperation
     }
 
     var hasActiveAutonomousWorkflow: Bool {
@@ -172,18 +150,8 @@ final class AppModel {
         appLanguage = AppLanguage.saved
         setupWizard.attach(to: self)
         usage.attach(to: self)
-        if let savedProvider = UserDefaults.standard.string(forKey: Self.newDiscussionProviderPreferenceKey)
-            .flatMap(AgentProvider.init(rawValue:)) {
-            newDiscussionProvider = savedProvider
-        }
-        if let savedProfiles = UserDefaults.standard.dictionary(forKey: Self.discussionProfilePreferencesKey) as? [String: String] {
-            for (providerRawValue, profileRawValue) in savedProfiles {
-                guard let provider = AgentProvider(rawValue: providerRawValue),
-                      let profileID = UUID(uuidString: profileRawValue) else { continue }
-                discussionProfilePreferences[provider] = profileID
-            }
-        }
-        newDiscussionProfileID = discussionProfilePreferences[newDiscussionProvider]
+        chats.attach(to: self)
+        chats.loadSavedPreferences()
         do {
             guard try RuntimePaths.workspaceRootConfiguration() != nil else {
                 status = "請選擇工作區資料根目錄以開始。"
@@ -219,10 +187,10 @@ final class AppModel {
     }
 
     var isLocalProviderContext: Bool {
-        selectedDiscussion?.provider == .local
+        chats.selectedDiscussion?.provider == .local
             || selectedSession?.provider == .local
-            || (selectedDiscussion == nil && selectedSession == nil
-                && (settings.defaultProvider == .local || newDiscussionProvider == .local))
+            || (chats.selectedDiscussion == nil && selectedSession == nil
+                && (settings.defaultProvider == .local || chats.newDiscussionProvider == .local))
     }
 
     var localModelSettingsAreDirty: Bool {
@@ -231,11 +199,7 @@ final class AppModel {
     }
 
     var hasSelectedLocalRunScope: Bool {
-        selectedDiscussion?.provider == .local || selectedSession?.provider == .local
-    }
-
-    var selectedDiscussion: DiscussionRecord? {
-        discussions.first(where: { $0.id == selectedDiscussionID })
+        chats.selectedDiscussion?.provider == .local || selectedSession?.provider == .local
     }
 
     func profileName(for provider: AgentProvider, profileID: UUID) -> String {
@@ -247,20 +211,8 @@ final class AppModel {
         accountProfiles[provider]?.first(where: { $0.id == profileID })?.allowsSharedMemory ?? false
     }
 
-    func preferredDiscussionProfileID(for provider: AgentProvider) -> UUID? {
-        discussionProfilePreferences[provider]
-            ?? (newDiscussionProvider == provider ? newDiscussionProfileID : nil)
-            ?? selectedProfileIDs[provider]
-            ?? accountProfiles[provider]?.first?.id
-    }
-
-    func openDiscussion(_ id: UUID) {
-        selectedDiscussionID = id
-        isProjectConversationActive = false
-    }
-
     func openProjectSession(_ id: UUID) {
-        selectedDiscussionID = nil
+        chats.selectedDiscussionID = nil
         isProjectConversationActive = true
         guard selectedSessionID != id else {
             selectedSessionDidChange()
@@ -370,9 +322,9 @@ final class AppModel {
                 accountProfiles[provider] = try service.accountProfiles(provider: provider)
                 selectedProfileIDs[provider] = try service.selectedAccountProfile(provider: provider).id
             }
-            reconcileNewDiscussionTarget()
+            chats.reconcileNewDiscussionTarget()
             sessions = try service.sessions()
-            refreshDiscussions()
+            chats.refreshDiscussions()
             taskRecords = try service.taskRecords()
             extensionDescriptors = try service.extensionDescriptors()
             do {
@@ -400,36 +352,6 @@ final class AppModel {
             try usage.refresh(service: service, force: forceUsageStatistics)
         } catch {
             errorMessage = error.localizedDescription
-        }
-    }
-
-    func refreshDiscussions() {
-        guard let service else {
-            discussions = []
-            return
-        }
-        do {
-            discussions = try service.discussions()
-            if let selectedDiscussionID,
-               !discussions.contains(where: { $0.id == selectedDiscussionID }) {
-                self.selectedDiscussionID = nil
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    @discardableResult
-    private func refreshDiscussion(id: UUID) -> DiscussionRecord? {
-        guard let service else { return nil }
-        do {
-            let discussion = try service.discussion(id: id)
-            if discussions.first(where: { $0.id == id }) != discussion {
-                replaceDiscussion(discussion)
-            }
-            return discussion
-        } catch {
-            return nil
         }
     }
 
@@ -498,7 +420,7 @@ final class AppModel {
     }
 
     func selectDefaultProvider(_ provider: AgentProvider) {
-        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+        guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
             errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
@@ -529,7 +451,7 @@ final class AppModel {
     }
 
     func selectUsageMode(_ usageMode: UsageMode) {
-        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+        guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
             errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
@@ -636,18 +558,6 @@ final class AppModel {
         }
     }
 
-    func previewDiscussionContext(id: UUID, currentPrompt: String) async throws -> ContextCompressionPreview {
-        guard let service else {
-            throw AgentBridgeError.invalidInput(localized("Choose a workspace folder before previewing context."))
-        }
-        let localSettings = discussions.first(where: { $0.id == id })?.provider == .local ? settings.localModel : nil
-        return try service.previewDiscussionContext(
-            id: id,
-            currentPrompt: currentPrompt,
-            settings: localSettings
-        )
-    }
-
     func previewProjectContext(sessionID: UUID, currentPrompt: String) async throws -> ContextCompressionPreview {
         guard let service else {
             throw AgentBridgeError.invalidInput(localized("Choose a workspace folder before previewing context."))
@@ -691,7 +601,7 @@ final class AppModel {
     func chooseWorkspaceRoot() {
         guard !isChangingWorkspaceRoot, !isRunning, !isVerifying, !isSwitchingTarget,
               !terminalRunning, terminalLaunch == nil, !hasActiveAutonomousWorkflow,
-              !hasActiveDiscussionOperation else { return }
+              !chats.hasActiveDiscussionOperation else { return }
         let panel = NSOpenPanel()
         panel.title = localized("選擇工作區資料根目錄")
         panel.message = localized("AgentBridge 會在此資料夾保存隔離工作區與共用記憶；私人設定和用量資料仍保留在 Application Support。")
@@ -737,7 +647,7 @@ final class AppModel {
     }
 
     func saveSettings() {
-        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+        guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
             errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
@@ -753,7 +663,7 @@ final class AppModel {
     }
 
     func checkAuthentication() {
-        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+        guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
             errorMessage = localized("Provider checks are paused while a discussion request is active.")
             return
         }
@@ -865,290 +775,6 @@ final class AppModel {
                 status = "無法建立工作階段。"
             }
         }
-    }
-
-    func createDiscussion(provider: AgentProvider? = nil, profileID: UUID? = nil) {
-        guard let service else { return }
-        let targetProvider = provider ?? newDiscussionProvider
-        let preferredProfileID = profileID
-            ?? (targetProvider == newDiscussionProvider ? newDiscussionProfileID : nil)
-            ?? discussionProfilePreferences[targetProvider]
-            ?? selectedProfileIDs[targetProvider]
-            ?? accountProfiles[targetProvider]?.first?.id
-        guard let targetProfileID = preferredProfileID
-            ?? (targetProvider == .local ? try? service.selectedAccountProfile(provider: .local).id : nil) else {
-            errorMessage = localized("No account profile is available for this provider.")
-            return
-        }
-        do {
-            let discussion = try service.createDiscussion(provider: targetProvider, accountProfileID: targetProfileID)
-            discussions = try service.discussions()
-            discussionProfilePreferences[targetProvider] = targetProfileID
-            persistDiscussionProfilePreferences()
-            selectedDiscussionID = discussion.id
-            isProjectConversationActive = false
-            discussionProgress.removeValue(forKey: discussion.id)
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func setDiscussionTarget(id: UUID, provider: AgentProvider, profileID: UUID) {
-        guard !hasActiveDiscussionOperation else {
-            errorMessage = localized("A discussion request or project handoff is already in progress.")
-            return
-        }
-        if let discussion = discussions.first(where: { $0.id == id }), discussion.status.isInFlight {
-            errorMessage = localized("A discussion request or project handoff is already in progress.")
-            return
-        }
-        guard let service,
-              accountProfiles[provider]?.contains(where: { $0.id == profileID }) == true else {
-            errorMessage = localized("Choose an available account profile.")
-            return
-        }
-        do {
-            let discussion = try service.setDiscussionTarget(id: id, provider: provider, accountProfileID: profileID)
-            replaceDiscussion(discussion)
-            discussionProfilePreferences[provider] = profileID
-            persistDiscussionProfilePreferences()
-            discussionProgress.removeValue(forKey: id)
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func setDiscussionProvider(id: UUID, provider: AgentProvider) {
-        guard let profileID = preferredDiscussionProfileID(for: provider) else {
-            errorMessage = localized("No account profile is available for this provider.")
-            return
-        }
-        setDiscussionTarget(id: id, provider: provider, profileID: profileID)
-    }
-
-    func selectNewDiscussionProvider(_ provider: AgentProvider) {
-        newDiscussionProvider = provider
-        UserDefaults.standard.set(provider.rawValue, forKey: Self.newDiscussionProviderPreferenceKey)
-        let profileID = discussionProfilePreferences[provider]
-            ?? selectedProfileIDs[provider]
-            ?? accountProfiles[provider]?.first?.id
-        newDiscussionProfileID = profileID
-        if let profileID {
-            discussionProfilePreferences[provider] = profileID
-            persistDiscussionProfilePreferences()
-        }
-    }
-
-    func selectNewDiscussionProfile(_ profileID: UUID) {
-        guard accountProfiles[newDiscussionProvider]?.contains(where: { $0.id == profileID }) == true else { return }
-        newDiscussionProfileID = profileID
-        discussionProfilePreferences[newDiscussionProvider] = profileID
-        persistDiscussionProfilePreferences()
-    }
-
-    func sendDiscussionMessage(
-        id: UUID,
-        prompt: String,
-        isShareable: Bool,
-        onCompletion: @escaping @MainActor (Bool) -> Void
-    ) {
-        guard let service,
-              let discussion = discussions.first(where: { $0.id == id }) else {
-            onCompletion(false)
-            return
-        }
-        let message = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty else {
-            onCompletion(false)
-            return
-        }
-        guard !hasActiveDiscussionOperation, !discussion.status.isInFlight,
-              discussionCancellationFlags[id] == nil else {
-            onCompletion(false)
-            return
-        }
-
-        let hasConsent = profileAllowsSharedMemory(provider: discussion.provider, profileID: discussion.accountProfileID)
-        let cancellation = CancellationFlag()
-        discussionCancellationFlags[id] = cancellation
-        discussionProgress[id] = localized(discussion.provider == .local
-            ? "Sending to the configured local model…"
-            : "Sending with the official CLI subscription sign-in…")
-        errorMessage = nil
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let startingRevision = discussion.revision
-            let refreshTask = Task { @MainActor [weak self] in
-                while !Task.isCancelled {
-                    guard let self, self.discussionCancellationFlags[id] != nil else { return }
-                    if let latest = self.refreshDiscussion(id: id),
-                       latest.revision != startingRevision || latest.status.isInFlight {
-                        return
-                    }
-                    do {
-                        try await Task.sleep(nanoseconds: 250_000_000)
-                    } catch {
-                        return
-                    }
-                }
-            }
-            defer {
-                refreshTask.cancel()
-                self.discussionCancellationFlags.removeValue(forKey: id)
-                self.refreshDiscussions()
-                if discussion.provider == .local {
-                    try? self.usage.refreshLocalModelUsageStatisticsIfNeeded(service: service, force: true)
-                }
-            }
-            do {
-                _ = try await service.sendDiscussionMessage(
-                    id: id,
-                    prompt: message,
-                    isShareable: isShareable && hasConsent,
-                    cancellation: cancellation
-                ) { [weak self] progress in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.refreshDiscussion(id: id)
-                        guard self.selectedDiscussionID == id else { return }
-                        self.discussionProgress[id] = progress
-                    }
-                }
-                _ = self.refreshDiscussion(id: id)
-                self.discussionProgress[id] = self.localized("Response complete.")
-                onCompletion(true)
-            } catch {
-                let persistedDiscussion = self.refreshDiscussion(id: id)
-                if cancellation.isCancelled || persistedDiscussion?.status == .cancelled {
-                    self.discussionProgress[id] = self.localized("Cancellation requested…")
-                } else {
-                    self.discussionProgress[id] = error.localizedDescription
-                    self.errorMessage = error.localizedDescription
-                }
-                onCompletion(false)
-            }
-        }
-    }
-
-    func cancelDiscussion(id: UUID) {
-        guard let service else { return }
-        let cancellation = discussionCancellationFlags[id]
-        cancellation?.cancel()
-
-        guard let latest = refreshDiscussion(id: id) else {
-            if cancellation != nil {
-                discussionProgress[id] = localized("Cancellation requested…")
-            }
-            return
-        }
-        guard latest.status == .running else {
-            if latest.status == .completed {
-                discussionProgress[id] = localized("Response complete.")
-            } else if cancellation != nil {
-                discussionProgress[id] = localized("Cancellation requested…")
-            }
-            return
-        }
-
-        do {
-            try service.cancelDiscussion(id: id)
-            discussionProgress[id] = localized("Cancellation requested…")
-            refreshDiscussion(id: id)
-        } catch {
-            let updated = refreshDiscussion(id: id)
-            if updated?.status == .completed {
-                discussionProgress[id] = localized("Response complete.")
-            } else if updated?.status == .cancelled || cancellation != nil {
-                discussionProgress[id] = localized("Cancellation requested…")
-            } else if updated?.status == .running {
-                discussionProgress[id] = error.localizedDescription
-            }
-        }
-    }
-
-    func prepareDiscussionProjectHandoff(
-        discussionID: UUID,
-        destinationPath: String,
-        mode: DiscussionProjectMode,
-        targetProvider: AgentProvider,
-        targetProfileID: UUID,
-        selectedTurnIDs: Set<UUID>,
-        accessMode: AccessMode = .readOnly
-    ) async throws -> DiscussionProjectHandoff {
-        guard let service else { throw AgentBridgeError.persistence("The workspace data root is not ready.") }
-        isPreparingDiscussionHandoff = true
-        defer { isPreparingDiscussionHandoff = false }
-        let handoff = try await service.prepareDiscussionProjectHandoff(
-            discussionID: discussionID,
-            destinationPath: destinationPath,
-            mode: mode,
-            targetProvider: targetProvider,
-            targetProfileID: targetProfileID,
-            selectedTurnIDs: selectedTurnIDs,
-            accessMode: accessMode
-        )
-        refreshDiscussions()
-        return handoff
-    }
-
-    func createOrAttachProjectFromDiscussion(
-        handoffID: UUID,
-        reviewedDigest: String
-    ) async throws -> SessionRecord {
-        guard let service else { throw AgentBridgeError.persistence("The workspace data root is not ready.") }
-        isApplyingDiscussionHandoff = true
-        defer { isApplyingDiscussionHandoff = false }
-        let session = try await service.createOrAttachProjectFromDiscussion(
-            handoffID: handoffID,
-            reviewedDigest: reviewedDigest,
-            explicitConfirmation: true
-        )
-        refresh()
-        refreshDiscussions()
-        selectedDiscussionID = nil
-        isProjectConversationActive = true
-        selectedSessionID = session.id
-        return session
-    }
-
-    private func replaceDiscussion(_ discussion: DiscussionRecord) {
-        if let index = discussions.firstIndex(where: { $0.id == discussion.id }) {
-            discussions[index] = discussion
-        } else {
-            discussions.insert(discussion, at: 0)
-        }
-        discussions.sort { $0.updatedAt > $1.updatedAt }
-    }
-
-    private func reconcileNewDiscussionTarget() {
-        if !hasInitializedNewDiscussionTarget {
-            if UserDefaults.standard.string(forKey: Self.newDiscussionProviderPreferenceKey) == nil {
-                newDiscussionProvider = settings.defaultProvider
-            }
-            hasInitializedNewDiscussionTarget = true
-        }
-        let availableProfiles = accountProfiles[newDiscussionProvider] ?? []
-        if let newDiscussionProfileID,
-           availableProfiles.contains(where: { $0.id == newDiscussionProfileID }) { return }
-        let preferredProfileID = discussionProfilePreferences[newDiscussionProvider]
-        let selectedProfileID = selectedProfileIDs[newDiscussionProvider]
-        newDiscussionProfileID = [preferredProfileID, selectedProfileID, availableProfiles.first?.id]
-            .compactMap { $0 }
-            .first(where: { id in availableProfiles.contains(where: { $0.id == id }) })
-        if let newDiscussionProfileID {
-            discussionProfilePreferences[newDiscussionProvider] = newDiscussionProfileID
-            persistDiscussionProfilePreferences()
-        }
-    }
-
-    private func persistDiscussionProfilePreferences() {
-        let values = Dictionary(uniqueKeysWithValues: discussionProfilePreferences.map {
-            ($0.key.rawValue, $0.value.uuidString.lowercased())
-        })
-        UserDefaults.standard.set(values, forKey: Self.discussionProfilePreferencesKey)
     }
 
     func runPrompt() {
@@ -2125,7 +1751,7 @@ final class AppModel {
     }
 
     func selectAccountProfile(_ profileID: UUID) {
-        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+        guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
             errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
@@ -2149,7 +1775,7 @@ final class AppModel {
     }
 
     func createAccountProfile() {
-        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+        guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
             errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
@@ -2179,7 +1805,7 @@ final class AppModel {
     }
 
     func setSelectedAccountMemorySharing(_ allowed: Bool) {
-        guard !hasActiveAutonomousWorkflow, !hasActiveDiscussionOperation else {
+        guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
             errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }

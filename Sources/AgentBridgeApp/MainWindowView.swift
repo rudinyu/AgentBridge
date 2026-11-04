@@ -131,9 +131,9 @@ struct MainWindowView: View {
                         .background(.quaternary, in: Capsule())
                 }
             }
-            if model.selectedDiscussionID == nil && !model.isLocalProviderContext {
+            if model.chats.selectedDiscussionID == nil && !model.isLocalProviderContext {
                 Button("檢查登入與方案") { model.checkAuthentication() }
-                    .disabled(model.hasActiveAutonomousWorkflow || model.hasActiveDiscussionOperation)
+                    .disabled(model.hasActiveAutonomousWorkflow || model.chats.hasActiveDiscussionOperation)
             }
             Button("更新") { model.refresh() }
         }
@@ -161,10 +161,10 @@ struct MainWindowView: View {
             case .chats:
                 model.isProjectConversationActive = false
             case .conversation:
-                model.selectedDiscussionID = nil
+                model.chats.selectedDiscussionID = nil
                 model.isProjectConversationActive = model.selectedSessionID != nil
             case .autonomous, .extensions:
-                model.selectedDiscussionID = nil
+                model.chats.selectedDiscussionID = nil
                 model.isProjectConversationActive = model.selectedSessionID != nil
             }
         } label: {

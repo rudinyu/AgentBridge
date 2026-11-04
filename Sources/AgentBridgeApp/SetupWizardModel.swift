@@ -142,7 +142,7 @@ final class SetupWizardModel {
     func dismissForNow() {
         guard SetupWizardFlow.canDismiss(workspaceRootConfigured: app.workspaceRootIsConfigured),
               !app.isChangingWorkspaceRoot, !app.terminalRunning, app.terminalLaunch == nil,
-              !app.hasActiveDiscussionOperation else { return }
+              !app.chats.hasActiveDiscussionOperation else { return }
         isPresented = false
         app.errorMessage = nil
     }
@@ -150,7 +150,7 @@ final class SetupWizardModel {
     func finish() {
         guard SetupWizardFlow.canDismiss(workspaceRootConfigured: app.workspaceRootIsConfigured),
               !app.isChangingWorkspaceRoot, !app.terminalRunning, app.terminalLaunch == nil,
-              !app.hasActiveDiscussionOperation else { return }
+              !app.chats.hasActiveDiscussionOperation else { return }
         UserDefaults.standard.set(true, forKey: Self.completedPreferenceKey)
         currentStep = .welcome
         isPresented = false
