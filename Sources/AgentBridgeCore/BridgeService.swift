@@ -50,11 +50,9 @@ public final class BridgeService: @unchecked Sendable {
     private let adapter: ProviderAdapter
     private let localModelClient = LocalModelClient()
     private let baseEnvironment: [String: String]
-    private let legacyBudgetLedger: BudgetLedger
     private let monthlyAPILimitUSD: Double
-    private let budgetLedgerLock = NSLock()
-    private var profileBudgetLedgers: [UUID: BudgetLedger]
-    private var profileAPICostLedgers: [UUID: APICostControlLedger] = [:]
+    private let spendLedgerLock = NSLock()
+    private var profileSpendLedgers: [UUID: APISpendLedger] = [:]
     private let accountProfileStore: AccountProfileStore
     private let sharedMemoryStore: SharedMemoryStore
     private let projectMemoryStore: ProjectMemoryStore
@@ -83,10 +81,7 @@ public final class BridgeService: @unchecked Sendable {
         self.adapter = ProviderAdapter(runner: runner)
         self.baseEnvironment = baseEnvironment
         self.workspaceManager = WorkspaceManager(store: store, runner: runner, baseEnvironment: baseEnvironment)
-        let legacyBudgetLedger = try BudgetLedger(rootURL: store.rootURL, monthlyLimitUSD: monthlyAPILimitUSD)
-        self.legacyBudgetLedger = legacyBudgetLedger
         self.monthlyAPILimitUSD = monthlyAPILimitUSD
-        self.profileBudgetLedgers = [AccountProfile.defaultID(for: .claude): legacyBudgetLedger]
         self.accountProfileStore = try AccountProfileStore(rootURL: store.rootURL)
         self.sharedMemoryStore = try SharedMemoryStore(rootURL: store.sharedMemoryURL)
         self.projectMemoryStore = try ProjectMemoryStore(
@@ -1140,11 +1135,15 @@ public final class BridgeService: @unchecked Sendable {
         try activeExtensionRuntimeStore.auditEvents()
     }
     /// Uses the currently selected Claude profile when no profile ID is given.
-    /// The built-in profile keeps the historical ledger location; custom
-    /// profiles use separate ledgers and must configure a local monthly cap.
+    /// The built-in profile keeps the historical monthly cap; custom profiles
+    /// must configure a local monthly cap.
     public func budgetSnapshot(profileID: UUID? = nil, now: Date = Date()) throws -> BudgetSnapshot {
         let id = try profileID ?? accountProfileStore.selected(provider: .claude).id
-        return try budgetLedger(for: id).snapshot(now: now)
+        let controls = try usageControlStore.settings(provider: .claude, accountProfileID: id)
+        return try spendLedger(for: id).budgetSnapshot(
+            monthlyLimitUSD: apiSpendLimits(for: id, controls: controls).monthlyUSD,
+            now: now
+        )
     }
 
     public func usageControlSettings(provider: AgentProvider, profileID: UUID) throws -> UsageControlSettings {
@@ -1173,13 +1172,9 @@ public final class BridgeService: @unchecked Sendable {
                 throw UsageControlError.invalidAPIDollarLimit
             }
             if let monthlyLimit = settings.apiMonthlyLimitUSD, existingSettings.apiMonthlyLimitUSD == nil {
-            // This creates an empty ledger on first configuration and rejects
-            // any pre-existing ledger with a different cap before settings are saved.
-                let root = apiLedgerRoot(for: profileID)
-                let configuredLedger = try BudgetLedger(rootURL: root, monthlyLimitUSD: monthlyLimit)
-                budgetLedgerLock.lock()
-                profileBudgetLedgers[profileID] = configuredLedger
-                budgetLedgerLock.unlock()
+                // Fixes the cap in the ledger on first configuration and rejects
+                // a ledger that already holds a different cap before settings are saved.
+                try spendLedger(for: profileID).bindMonthlyLimit(monthlyLimit)
             }
         }
         try usageControlStore.save(settings, provider: provider, accountProfileID: profileID)
@@ -1226,7 +1221,7 @@ public final class BridgeService: @unchecked Sendable {
         let profile = try accountProfile(id: profileID)
         guard profile.provider == .claude else { throw AgentBridgeError.unsupportedAPIUsage }
         let controls = try usageControlStore.settings(provider: .claude, accountProfileID: profileID)
-        return try apiCostLedger(for: profileID).snapshot(
+        return try spendLedger(for: profileID).costControlSnapshot(
             sessionID: sessionID,
             dailyLimitUSD: controls.apiDailyLimitUSD,
             sessionLimitUSD: controls.apiSessionLimitUSD
@@ -1237,18 +1232,8 @@ public final class BridgeService: @unchecked Sendable {
         let profile = try accountProfile(id: profileID)
         guard profile.provider == .claude else { throw AgentBridgeError.unsupportedAPIUsage }
 
-        let monthlyReservations: [BudgetReservation]
-        let controls = try usageControlStore.settings(provider: .claude, accountProfileID: profileID)
-        if profileID == AccountProfile.defaultID(for: .claude)
-            || controls.apiMonthlyLimitUSD != nil {
-            monthlyReservations = try budgetLedger(for: profileID).unresolvedReservations()
-        } else {
-            monthlyReservations = []
-        }
-        let windowReservations = try apiCostLedger(for: profileID).unresolvedReservations()
-        let monthlyBySession = Dictionary(uniqueKeysWithValues: monthlyReservations.map { ($0.sessionID, $0) })
-        let windowBySession = Dictionary(uniqueKeysWithValues: windowReservations.map { ($0.sessionID, $0) })
-        let candidateSessionIDs = Set(monthlyBySession.keys).union(windowBySession.keys)
+        let reservations = try spendLedger(for: profileID).unresolvedReservations()
+        let candidateSessionIDs = Set(reservations.map(\.sessionID))
         let sessionsByID = Dictionary(uniqueKeysWithValues: try store.loadSessions().compactMap { session -> (UUID, SessionRecord)? in
             let boundProfileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
             guard session.provider == .claude, boundProfileID == profileID,
@@ -1256,34 +1241,28 @@ public final class BridgeService: @unchecked Sendable {
             return (session.id, session)
         })
 
-        return candidateSessionIDs.compactMap { sessionID in
-            guard let session = sessionsByID[sessionID] else { return nil }
-            let monthly = monthlyBySession[sessionID]
-            let windows = windowBySession[sessionID]
+        return reservations.compactMap { reservation in
+            guard let session = sessionsByID[reservation.sessionID] else { return nil }
             return APIReconciliationCandidate(
                 accountProfileID: profileID,
                 session: session,
-                requestedUSD: windows?.requestedUSD ?? monthly?.requestedUSD,
-                monthlyReservedUSD: monthly?.reservedUSD,
-                dailySessionReservedUSD: windows?.reservedUSD,
-                monthlyLedgerUnresolved: monthly != nil,
-                dailySessionLedgerUnresolved: windows != nil
+                requestedUSD: reservation.requestedUSD,
+                reservedUSD: reservation.reservedUSD
             )
         }
         .sorted { $0.session.updatedAt > $1.session.updatedAt }
     }
 
     /// Manually records a bill-verified actual cost for a Claude API session
-    /// that has no active run lease. The monthly and daily/session ledgers
-    /// settle by session ID, making retries safe if one ledger write succeeds
-    /// before another fails.
+    /// that has no active run lease. Settlement is keyed by session ID, so
+    /// repeating it with the same amount is safe.
     public func reconcileAPIUsageFromProviderBill(
         profileID: UUID,
         sessionID: UUID,
         actualUSD: Double,
         explicitlyConfirmed: Bool,
         now: Date = Date()
-    ) throws -> APIManualSettlementResult {
+    ) throws {
         guard explicitlyConfirmed else { throw UsageControlError.apiReconciliationConfirmationRequired }
         guard actualUSD.isFinite, actualUSD >= 0 else { throw BudgetLedgerError.invalidActualCost }
 
@@ -1300,21 +1279,9 @@ public final class BridgeService: @unchecked Sendable {
         session = try loadSession(sessionID)
         try validateAPIReconciliationSession(session, accountProfileID: profileID)
 
-        return try usageControlStore.withRunAuthorization(provider: .claude, accountProfileID: profileID) { controls in
-            let monthlyLimit = controls.apiMonthlyLimitUSD
-                ?? (profileID == AccountProfile.defaultID(for: .claude) ? monthlyAPILimitUSD : nil)
-            guard let monthlyLimit else { throw UsageControlError.apiMonthlyLimitRequired(profileID) }
-            let monthlyLedger = try budgetLedger(for: profileID, configuredMonthlyLimit: monthlyLimit)
-            let windowLedger = try apiCostLedger(for: profileID)
-            let hasMonthlyReservation = try monthlyLedger.validateSessionReconciliation(
-                sessionID: sessionID,
-                actualUSD: actualUSD
-            )
-            let hasWindowReservation = try windowLedger.validateSessionReconciliation(
-                sessionID: sessionID,
-                actualUSD: actualUSD
-            )
-            guard hasMonthlyReservation || hasWindowReservation else {
+        try usageControlStore.withRunAuthorization(provider: .claude, accountProfileID: profileID) { _ in
+            let ledger = try spendLedger(for: profileID)
+            guard try ledger.validateSessionReconciliation(sessionID: sessionID, actualUSD: actualUSD) else {
                 throw UsageControlError.apiReconciliationNotFound(sessionID)
             }
 
@@ -1336,31 +1303,12 @@ public final class BridgeService: @unchecked Sendable {
                 message: String(format: "使用者確認將依 Anthropic 帳單，以 US$%.6f 結算此 Claude API 工作階段。", actualUSD)
             ))
 
-            let monthlySettled = try monthlyLedger.reconcile(sessionID: sessionID, actualUSD: actualUSD, now: now)
-            let windowSettled: Bool
-            do {
-                windowSettled = try windowLedger.reconcile(sessionID: sessionID, actualUSD: actualUSD, now: now)
-            } catch {
-                if monthlySettled {
-                    try? store.appendEvent(AuditEvent(
-                        sessionID: sessionID,
-                        kind: "api.cost.manual_reconciliation.partial",
-                        message: String(format: "部分結算：月度帳本已記錄 US$%.6f，但每日/工作階段帳本未完成。請以相同帳單金額重試。", actualUSD)
-                    ))
-                    throw UsageControlError.apiReconciliationPartial(sessionID)
-                }
-                throw error
-            }
-
+            try ledger.reconcile(sessionID: sessionID, actualUSD: actualUSD, now: now)
             try store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: "api.cost.manual_reconciled",
-                message: String(format: "使用者已對照 Anthropic 帳單，手動結算實際費用 US$%.6f。月度帳本：%@；每日/工作階段帳本：%@。", actualUSD, monthlySettled ? "已結算" : "無此預留", windowSettled ? "已結算" : "無此預留")
+                message: String(format: "使用者已對照 Anthropic 帳單，手動結算實際費用 US$%.6f。", actualUSD)
             ))
-            return APIManualSettlementResult(
-                monthlyLedgerSettled: monthlySettled,
-                dailySessionLedgerSettled: windowSettled
-            )
         }
     }
 
@@ -1907,7 +1855,7 @@ public final class BridgeService: @unchecked Sendable {
             usageMode: settings.usageMode,
             requestedAPIUSD: apiRequest?.requestedBudgetUSD
         )
-        let activeBudgetLedger = apiMode ? try budgetLedger(for: profile.id) : nil
+        let activeSpendLedger = apiMode ? try spendLedger(for: profile.id) : nil
 
         try await workspaceManager.validateWorkspace(for: session, accessMode: .readOnly)
         let executable = try RuntimeEnvironment.resolveExecutable(provider: session.provider, configuredPath: settings.binaryPath(for: session.provider))
@@ -1945,41 +1893,20 @@ public final class BridgeService: @unchecked Sendable {
         }
         let apiKey = apiRequest?.apiKey
         let environment = try providerEnvironment(profile: profile, privateTemporaryDirectory: temp, apiKey: apiKey)
-        var reservation: BudgetReservation?
-        var apiCostReservation: APICostReservation?
-        var activeAPICostLedger: APICostControlLedger?
+        var reservation: APISpendReservation?
         if let apiRequest {
-            guard let activeBudgetLedger else { throw UsageControlError.apiMonthlyLimitRequired(profile.id) }
-            let controls = try usageControlStore.settings(provider: .claude, accountProfileID: profile.id)
-            let costLedger = try apiCostLedger(for: profile.id)
-            let costReservation: APICostReservation
+            guard let activeSpendLedger else { throw UsageControlError.apiMonthlyLimitRequired(profile.id) }
             do {
-                costReservation = try costLedger.reserve(
+                let controls = try usageControlStore.settings(provider: .claude, accountProfileID: profile.id)
+                reservation = try activeSpendLedger.reserve(
                     sessionID: sessionID,
                     requestedUSD: apiRequest.requestedBudgetUSD,
-                    dailyLimitUSD: controls.apiDailyLimitUSD,
-                    sessionLimitUSD: controls.apiSessionLimitUSD
-                )
-                apiCostReservation = costReservation
-                activeAPICostLedger = costLedger
-                reservation = try activeBudgetLedger.reserve(
-                    sessionID: sessionID,
-                    requestedUSD: apiRequest.requestedBudgetUSD,
-                    explicitlyAuthorized: apiRequest.explicitlyAuthorized
+                    explicitlyAuthorized: apiRequest.explicitlyAuthorized,
+                    limits: apiSpendLimits(for: profile.id, controls: controls)
                 )
             } catch {
-                if let apiCostReservation { try? costLedger.cancelUnstarted(reservationID: apiCostReservation.id) }
-                let reportedError: Error
-                if let costError = error as? APICostLedgerError,
-                   case .duplicateSession = costError {
-                    // The monthly ledger remains the compatibility authority
-                    // for refusing a second API run against one session.
-                    reportedError = BudgetLedgerError.duplicateSession(sessionID)
-                } else {
-                    reportedError = error
-                }
-                try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "usage.run.blocked", message: OutputRedactor.redact(reportedError.localizedDescription)))
-                throw reportedError
+                try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "usage.run.blocked", message: OutputRedactor.redact(error.localizedDescription)))
+                throw error
             }
         } else {
             let assessment = try await checkAuthentication(profile: profile, executable: executable)
@@ -1994,7 +1921,6 @@ public final class BridgeService: @unchecked Sendable {
         // read-only call; do not revive older opaque vendor history on failure.
         activeSession.providerSessionID = nil
         let emitter = ProgressEmitter(sessionID: sessionID, store: store, callback: onProgress)
-        var reservationReconciled = false
         var taskID: UUID?
         var mcpServerCommands: [MCPServerCommandConfiguration] = []
         do {
@@ -2065,11 +1991,7 @@ public final class BridgeService: @unchecked Sendable {
                 output = parsedOutput
             }
             if let reservation {
-                try activeBudgetLedger?.reconcile(reservationID: reservation.id, actualUSD: output.actualCostUSD)
-                if let apiCostReservation {
-                    try activeAPICostLedger?.reconcile(reservationID: apiCostReservation.id, actualUSD: output.actualCostUSD)
-                }
-                reservationReconciled = true
+                try activeSpendLedger?.reconcile(reservationID: reservation.id, actualUSD: output.actualCostUSD)
                 if let actual = output.actualCostUSD, actual > reservation.requestedUSD {
                     try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "api.budget.exceeded", message: "Claude 回報費用高於單次上限；本次輸出不會標示為成功。費用以供應商帳單為準。"))
                     throw AgentBridgeError.providerFailed(.claude, "供應商回報費用超過單次上限。")
@@ -2106,10 +2028,6 @@ public final class BridgeService: @unchecked Sendable {
             return output
         } catch {
             try? recordMCPProxyReceipts(mcpServerCommands, sessionID: sessionID, failOnIncomplete: false)
-            if let reservation, !reservationReconciled { try? activeBudgetLedger?.reconcile(reservationID: reservation.id, actualUSD: nil) }
-            if let apiCostReservation, !reservationReconciled {
-                try? activeAPICostLedger?.reconcile(reservationID: apiCostReservation.id, actualUSD: nil)
-            }
             activeSession.status = (error as? AgentBridgeError) == .processCancelled ? .cancelled : .failed
             activeSession.updatedAt = Date()
             try? store.saveSession(activeSession)
@@ -2909,41 +2827,15 @@ public final class BridgeService: @unchecked Sendable {
                 if usageMode == .api {
                     guard profile.provider == .claude else { throw AgentBridgeError.unsupportedAPIUsage }
                     guard !controls.disableFutureAPI else { throw UsageControlError.apiDisabled(profile.id) }
-                    let monthlyLimit = controls.apiMonthlyLimitUSD
-                        ?? (profile.id == AccountProfile.defaultID(for: .claude) ? monthlyAPILimitUSD : nil)
-                    guard let monthlyLimit else {
-                        throw UsageControlError.apiMonthlyLimitRequired(profile.id)
-                    }
-                    let budget = try budgetLedger(for: profile.id, configuredMonthlyLimit: monthlyLimit).snapshot(now: now)
+                    let limits = try apiSpendLimits(for: profile.id, controls: controls)
+                    let ledger = try spendLedger(for: profile.id)
+                    let budget = try ledger.budgetSnapshot(monthlyLimitUSD: limits.monthlyUSD, now: now)
                     guard budget.reservedUSD == 0 else { throw APICostLedgerError.unresolvedCall }
-                    guard budget.usedUSD + budget.reservedUSD < budget.monthlyLimitUSD else {
+                    guard budget.usedUSD < budget.monthlyLimitUSD else {
                         throw UsageControlError.apiMonthlyLimitReached
                     }
-                    let costSnapshot = try apiCostLedger(for: profile.id).snapshot(
-                        sessionID: runID,
-                        dailyLimitUSD: controls.apiDailyLimitUSD,
-                        sessionLimitUSD: controls.apiSessionLimitUSD,
-                        now: now
-                    )
-                    guard !costSnapshot.hasUnresolvedCall else { throw APICostLedgerError.unresolvedCall }
                     if let requestedAPIUSD {
-                        let reservedUSD = requestedAPIUSD * 2
-                        if let limit = costSnapshot.dailyLimitUSD,
-                           costSnapshot.dailyUsedUSD + costSnapshot.dailyReservedUSD + reservedUSD > limit {
-                            throw APICostLedgerError.dollarLimitReached(
-                                scope: "UTC 每日",
-                                limitUSD: limit,
-                                committedUSD: costSnapshot.dailyUsedUSD + costSnapshot.dailyReservedUSD + reservedUSD
-                            )
-                        }
-                        if let limit = costSnapshot.sessionLimitUSD,
-                           costSnapshot.sessionUsedUSD + costSnapshot.sessionReservedUSD + reservedUSD > limit {
-                            throw APICostLedgerError.dollarLimitReached(
-                                scope: "目前工作階段",
-                                limitUSD: limit,
-                                committedUSD: costSnapshot.sessionUsedUSD + costSnapshot.sessionReservedUSD + reservedUSD
-                            )
-                        }
+                        try ledger.checkReservation(sessionID: runID, requestedUSD: requestedAPIUSD, limits: limits, now: now)
                     }
                     try enforceRunLimit(used: statistics.apiDailyRuns, limit: controls.apiDailyRunLimit, window: .rolling24Hours)
                     try enforceRunLimit(used: statistics.apiSessionRuns, limit: controls.apiSessionRunLimit, window: .currentSession)
@@ -2990,6 +2882,13 @@ public final class BridgeService: @unchecked Sendable {
                 ))
                 throw error
             } catch let error as APICostLedgerError {
+                try? store.appendEvent(AuditEvent(
+                    sessionID: runID,
+                    kind: "usage.run.blocked",
+                    message: error.localizedDescription
+                ))
+                throw error
+            } catch let error as BudgetLedgerError {
                 try? store.appendEvent(AuditEvent(
                     sessionID: runID,
                     kind: "usage.run.blocked",
@@ -3044,62 +2943,46 @@ public final class BridgeService: @unchecked Sendable {
         throw UsageControlError.runLimitReached(window: window, used: used, limit: limit)
     }
 
-    private func budgetLedger(for profileID: UUID) throws -> BudgetLedger {
-        let profile = try accountProfile(id: profileID)
-        guard profile.provider == .claude else { throw AgentBridgeError.unsupportedAPIUsage }
-        if profileID == AccountProfile.defaultID(for: .claude) { return legacyBudgetLedger }
-
-        let controls = try usageControlStore.settings(provider: .claude, accountProfileID: profileID)
-        guard let monthlyLimit = controls.apiMonthlyLimitUSD else {
-            throw UsageControlError.apiMonthlyLimitRequired(profileID)
-        }
-
-        return try budgetLedger(for: profileID, configuredMonthlyLimit: monthlyLimit)
+    /// The monthly cap comes from local controls; the built-in profile falls
+    /// back to the historical cap, and other profiles must configure one.
+    private func apiSpendLimits(for profileID: UUID, controls: UsageControlSettings) throws -> APISpendLimits {
+        let monthlyLimit = controls.apiMonthlyLimitUSD
+            ?? (profileID == AccountProfile.defaultID(for: .claude) ? monthlyAPILimitUSD : nil)
+        guard let monthlyLimit else { throw UsageControlError.apiMonthlyLimitRequired(profileID) }
+        return APISpendLimits(
+            monthlyUSD: monthlyLimit,
+            dailyUSD: controls.apiDailyLimitUSD,
+            sessionUSD: controls.apiSessionLimitUSD
+        )
     }
 
-    /// Variant for callers already holding UsageControlStore's run-authorization
-    /// lock. It uses the validated settings passed by that locked operation,
-    /// avoiding a recursive attempt to acquire the same non-recursive lock.
-    private func budgetLedger(for profileID: UUID, configuredMonthlyLimit monthlyLimit: Double) throws -> BudgetLedger {
+    /// Opens the account's spend ledger. On first use it imports the earlier
+    /// monthly ledger (kept in the private root for the built-in profile) and
+    /// the day/session ledger; those files are left unchanged.
+    private func spendLedger(for profileID: UUID) throws -> APISpendLedger {
         let profile = try accountProfile(id: profileID)
         guard profile.provider == .claude else { throw AgentBridgeError.unsupportedAPIUsage }
-        if profileID == AccountProfile.defaultID(for: .claude) { return legacyBudgetLedger }
-
-        budgetLedgerLock.lock()
-        let cached = profileBudgetLedgers[profileID]
-        budgetLedgerLock.unlock()
+        spendLedgerLock.lock()
+        let cached = profileSpendLedgers[profileID]
+        spendLedgerLock.unlock()
         if let cached { return cached }
 
-        let ledger = try BudgetLedger(rootURL: apiLedgerRoot(for: profileID), monthlyLimitUSD: monthlyLimit)
-        budgetLedgerLock.lock()
-        defer { budgetLedgerLock.unlock() }
-        if let existing = profileBudgetLedgers[profileID] { return existing }
-        profileBudgetLedgers[profileID] = ledger
-        return ledger
-    }
-
-    private func apiLedgerRoot(for profileID: UUID) -> URL {
-        store.rootURL
-            .appendingPathComponent("api-ledgers", isDirectory: true)
-            .appendingPathComponent(profileID.uuidString.lowercased(), isDirectory: true)
-    }
-
-    private func apiCostLedger(for profileID: UUID) throws -> APICostControlLedger {
-        let profile = try accountProfile(id: profileID)
-        guard profile.provider == .claude else { throw AgentBridgeError.unsupportedAPIUsage }
-        budgetLedgerLock.lock()
-        let cached = profileAPICostLedgers[profileID]
-        budgetLedgerLock.unlock()
-        if let cached { return cached }
-
-        let root = store.rootURL
-            .appendingPathComponent("api-cost-controls", isDirectory: true)
-            .appendingPathComponent(profileID.uuidString.lowercased(), isDirectory: true)
-        let ledger = try APICostControlLedger(rootURL: root)
-        budgetLedgerLock.lock()
-        defer { budgetLedgerLock.unlock() }
-        if let existing = profileAPICostLedgers[profileID] { return existing }
-        profileAPICostLedgers[profileID] = ledger
+        let directoryName = profileID.uuidString.lowercased()
+        let legacyMonthlyRoot = profileID == AccountProfile.defaultID(for: .claude)
+            ? store.rootURL
+            : store.rootURL.appendingPathComponent("api-ledgers", isDirectory: true)
+                .appendingPathComponent(directoryName, isDirectory: true)
+        let ledger = try APISpendLedger(
+            rootURL: store.rootURL.appendingPathComponent("api-spend", isDirectory: true)
+                .appendingPathComponent(directoryName, isDirectory: true),
+            legacyMonthlyRootURL: legacyMonthlyRoot,
+            legacyCostRootURL: store.rootURL.appendingPathComponent("api-cost-controls", isDirectory: true)
+                .appendingPathComponent(directoryName, isDirectory: true)
+        )
+        spendLedgerLock.lock()
+        defer { spendLedgerLock.unlock() }
+        if let existing = profileSpendLedgers[profileID] { return existing }
+        profileSpendLedgers[profileID] = ledger
         return ledger
     }
 

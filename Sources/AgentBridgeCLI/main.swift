@@ -1903,7 +1903,7 @@ enum AgentBridgeCLI {
         }
         let profile = try service.accountProfile(id: profileID)
         guard profile.provider == .claude else { throw AgentBridgeError.unsupportedAPIUsage }
-        let result = try service.reconcileAPIUsageFromProviderBill(
+        try service.reconcileAPIUsageFromProviderBill(
             profileID: profileID,
             sessionID: sessionID,
             actualUSD: actualUSD,
@@ -1912,7 +1912,6 @@ enum AgentBridgeCLI {
         print(String(format: "已依使用者確認的 Anthropic 帳單金額 US$%.6f 手動結算。", actualUSD))
         print("Claude 帳戶：\(profile.name)（\(profile.id.uuidString.lowercased())）")
         print("工作階段：\(sessionID.uuidString.lowercased())")
-        print("月度帳本：\(result.monthlyLedgerSettled ? "已結算" : "無此預留")；每日/工作階段帳本：\(result.dailySessionLedgerSettled ? "已結算" : "無此預留")。")
     }
 
     private static func parseProvider(_ value: String) throws -> AgentProvider {

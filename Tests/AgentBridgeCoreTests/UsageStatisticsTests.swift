@@ -111,151 +111,6 @@ final class UsageStatisticsTests: XCTestCase {
         XCTAssertThrowsError(try UsageControlSettings(apiMonthlyLimitUSD: .infinity).validate())
     }
 
-    func testAPIDollarCapsReserveAcrossInstancesAndFailClosedOnUnresolvedCost() throws {
-        let root = try temporaryDirectory().appendingPathComponent("api-cost", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
-        let firstClient = try APICostControlLedger(rootURL: root)
-        let secondClient = try APICostControlLedger(rootURL: root)
-        let sessionID = UUID()
-        let reservation = try firstClient.reserve(
-            sessionID: sessionID,
-            requestedUSD: 4,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10,
-            now: Date(timeIntervalSince1970: 1_800_000_000)
-        )
-        XCTAssertEqual(reservation.reservedUSD, 8)
-        XCTAssertThrowsError(try secondClient.reserve(
-            sessionID: UUID(),
-            requestedUSD: 0.5,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10,
-            now: Date(timeIntervalSince1970: 1_800_000_001)
-        )) { error in
-            XCTAssertEqual(error as? APICostLedgerError, .unresolvedCall)
-        }
-
-        try firstClient.reconcile(reservationID: reservation.id, actualUSD: 5)
-        let snapshot = try secondClient.snapshot(
-            sessionID: sessionID,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10,
-            now: Date(timeIntervalSince1970: 1_800_000_002)
-        )
-        XCTAssertEqual(snapshot.dailyUsedUSD, 5)
-        XCTAssertEqual(snapshot.dailyReservedUSD, 0)
-        XCTAssertFalse(snapshot.hasUnresolvedCall)
-        XCTAssertThrowsError(try secondClient.reserve(
-            sessionID: sessionID,
-            requestedUSD: 0.5,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10,
-            now: Date(timeIntervalSince1970: 1_800_000_002)
-        )) { XCTAssertEqual($0 as? APICostLedgerError, .duplicateSession(sessionID)) }
-        XCTAssertThrowsError(try secondClient.reserve(
-            sessionID: UUID(),
-            requestedUSD: 3,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10,
-            now: Date(timeIntervalSince1970: 1_800_000_003)
-        )) { error in
-            guard let apiError = error as? APICostLedgerError else {
-                return XCTFail("Unexpected API daily cap error: \(error)")
-            }
-            guard case .dollarLimitReached(let scope, let limit, let committed) = apiError else {
-                return XCTFail("Unexpected API daily cap error: \(apiError)")
-            }
-            XCTAssertEqual(scope, "UTC 每日")
-            XCTAssertEqual(limit, 10)
-            XCTAssertEqual(committed, 11)
-        }
-    }
-
-    func testAPICostLedgerRejectsPersistedAggregateOverflow() throws {
-        let maximumRequestedMicros = Int64.max / 2
-        let scenarios: [(name: String, requestedMicros: Int64, firstActualMicros: Int64?, secondActualMicros: Int64?)] = [
-            ("used", 1, Int64.max, 1),
-            ("reserved", maximumRequestedMicros, nil, nil)
-        ]
-
-        for scenario in scenarios {
-            let root = try temporaryDirectory().appendingPathComponent("api-cost-\(scenario.name)-overflow", isDirectory: true)
-            defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
-            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let day = "2026-10-27"
-            let createdAt = "2026-10-27T00:00:00Z"
-
-            func reservation(sessionID: UUID, actualMicros: Int64?) -> [String: Any] {
-                var value: [String: Any] = [
-                    "id": UUID().uuidString,
-                    "sessionID": sessionID.uuidString,
-                    "requestedMicros": scenario.requestedMicros,
-                    "reservedMicros": scenario.requestedMicros * 2,
-                    "utcDay": day,
-                    "createdAt": createdAt
-                ]
-                if let actualMicros {
-                    value["actualMicros"] = actualMicros
-                }
-                return value
-            }
-
-            let firstSessionID = UUID()
-            let secondSessionID = UUID()
-            let firstReservation = reservation(sessionID: firstSessionID, actualMicros: scenario.firstActualMicros)
-            let secondReservation = reservation(sessionID: secondSessionID, actualMicros: scenario.secondActualMicros)
-            let fixture: [String: Any] = [
-                "schemaVersion": 1,
-                "reservations": [firstReservation, secondReservation]
-            ]
-            let data = try JSONSerialization.data(withJSONObject: fixture)
-            try data.write(to: root.appendingPathComponent(".api-cost-ledger.json"))
-
-            XCTAssertThrowsError(
-                try APICostControlLedger(rootURL: root),
-                "The \(scenario.name) aggregate should be rejected before it can overflow."
-            ) { error in
-                guard case APICostLedgerError.persistence(let message) = error else {
-                    return XCTFail("Unexpected error for \(scenario.name) aggregate: \(error)")
-                }
-                XCTAssertTrue(message.contains("加總"), "Expected an aggregate-overflow diagnostic, got: \(message)")
-            }
-        }
-    }
-
-    func testConcurrentAPICostReservationsAllowOnlyOneUnresolvedCallAcrossInstances() async throws {
-        let root = try temporaryDirectory().appendingPathComponent("concurrent-api-cost", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
-        let clients = try (0..<8).map { _ in try APICostControlLedger(rootURL: root) }
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let successes = await withTaskGroup(of: Bool.self, returning: Int.self) { group in
-            for (index, client) in clients.enumerated() {
-                group.addTask {
-                    (try? client.reserve(
-                        sessionID: UUID(),
-                        requestedUSD: 1,
-                        dailyLimitUSD: 100,
-                        sessionLimitUSD: nil,
-                        now: now.addingTimeInterval(Double(index))
-                    )) != nil
-                }
-            }
-            var successfulReservations = 0
-            for await succeeded in group where succeeded { successfulReservations += 1 }
-            return successfulReservations
-        }
-
-        XCTAssertEqual(successes, 1)
-        let snapshot = try clients[0].snapshot(
-            sessionID: UUID(),
-            dailyLimitUSD: 100,
-            sessionLimitUSD: nil,
-            now: now
-        )
-        XCTAssertTrue(snapshot.hasUnresolvedCall)
-        XCTAssertEqual(snapshot.dailyReservedUSD, 2)
-    }
-
     func testClaudeAPIBudgetsAreIsolatedForNewProfilesAndLegacyLedgerIsPreserved() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -455,12 +310,8 @@ final class UsageStatisticsTests: XCTestCase {
                 explicitlyConfirmed: true
             )) { XCTAssertEqual($0 as? BudgetLedgerError, .invalidActualCost) }
         }
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().reservedUSD, 4)
-        XCTAssertTrue(try fixture.costLedger.snapshot(
-            sessionID: fixture.session.id,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10
-        ).hasUnresolvedCall)
+        XCTAssertEqual(try fixture.budget().reservedUSD, 4)
+        XCTAssertTrue(try fixture.window().hasUnresolvedCall)
     }
 
     func testZeroCostSettlementRequiresBillConfirmationAndDoesNotReleaseAutomatically() throws {
@@ -473,28 +324,18 @@ final class UsageStatisticsTests: XCTestCase {
             actualUSD: 0,
             explicitlyConfirmed: false
         )) { XCTAssertEqual($0 as? UsageControlError, .apiReconciliationConfirmationRequired) }
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().reservedUSD, 4)
-        XCTAssertTrue(try fixture.costLedger.snapshot(
-            sessionID: fixture.session.id,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10
-        ).hasUnresolvedCall)
+        XCTAssertEqual(try fixture.budget().reservedUSD, 4)
+        XCTAssertTrue(try fixture.window().hasUnresolvedCall)
 
-        let result = try fixture.service.reconcileAPIUsageFromProviderBill(
+        try fixture.service.reconcileAPIUsageFromProviderBill(
             profileID: fixture.profile.id,
             sessionID: fixture.session.id,
             actualUSD: 0,
             explicitlyConfirmed: true
         )
-        XCTAssertTrue(result.monthlyLedgerSettled)
-        XCTAssertTrue(result.dailySessionLedgerSettled)
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().usedUSD, 0)
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().reservedUSD, 0)
-        XCTAssertEqual(try fixture.costLedger.snapshot(
-            sessionID: fixture.session.id,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10
-        ).dailyUsedUSD, 0)
+        XCTAssertEqual(try fixture.budget().usedUSD, 0)
+        XCTAssertEqual(try fixture.budget().reservedUSD, 0)
+        XCTAssertEqual(try fixture.window().dailyUsedUSD, 0)
     }
 
     func testManualAPISettlementRejectsWrongProviderAccountAndSession() throws {
@@ -532,7 +373,7 @@ final class UsageStatisticsTests: XCTestCase {
             actualUSD: 1.25,
             explicitlyConfirmed: true
         )) { XCTAssertEqual($0 as? AgentBridgeError, .sessionNotFound(missingSessionID)) }
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().reservedUSD, 4)
+        XCTAssertEqual(try fixture.budget().reservedUSD, 4)
     }
 
     func testManualAPISettlementRejectsRunningSession() throws {
@@ -546,12 +387,8 @@ final class UsageStatisticsTests: XCTestCase {
             actualUSD: 1.25,
             explicitlyConfirmed: true
         )) { XCTAssertEqual($0 as? AgentBridgeError, .sessionMismatch("這個工作階段已在其他視窗或終端機執行。")) }
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().reservedUSD, 4)
-        XCTAssertTrue(try fixture.costLedger.snapshot(
-            sessionID: fixture.session.id,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10
-        ).hasUnresolvedCall)
+        XCTAssertEqual(try fixture.budget().reservedUSD, 4)
+        XCTAssertTrue(try fixture.window().hasUnresolvedCall)
         withExtendedLifetime(activeRunLease) {}
     }
 
@@ -559,25 +396,19 @@ final class UsageStatisticsTests: XCTestCase {
         let fixture = try makeManualSettlementFixture(status: .running)
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
 
-        let result = try fixture.service.reconcileAPIUsageFromProviderBill(
+        try fixture.service.reconcileAPIUsageFromProviderBill(
             profileID: fixture.profile.id,
             sessionID: fixture.session.id,
             actualUSD: 1.25,
             explicitlyConfirmed: true
         )
 
-        XCTAssertTrue(result.monthlyLedgerSettled)
-        XCTAssertTrue(result.dailySessionLedgerSettled)
         XCTAssertEqual(try fixture.store.session(id: fixture.session.id)?.status, .failed)
         XCTAssertTrue(try fixture.store.events(sessionID: fixture.session.id).contains(where: {
             $0.kind == "api.session.stale_run_recovered"
         }))
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().usedUSD, 1.25, accuracy: 0.000_001)
-        XCTAssertFalse(try fixture.costLedger.snapshot(
-            sessionID: fixture.session.id,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10
-        ).hasUnresolvedCall)
+        XCTAssertEqual(try fixture.budget().usedUSD, 1.25, accuracy: 0.000_001)
+        XCTAssertFalse(try fixture.window().hasUnresolvedCall)
     }
 
     func testManualAPISettlementUpdatesBothLedgersAuditsTheBillAmountAndIsIdempotent() throws {
@@ -586,24 +417,18 @@ final class UsageStatisticsTests: XCTestCase {
         let candidates = try fixture.service.unresolvedAPICalls(profileID: fixture.profile.id)
         XCTAssertEqual(candidates.count, 1)
         XCTAssertEqual(candidates[0].session.id, fixture.session.id)
-        XCTAssertTrue(candidates[0].monthlyLedgerUnresolved)
-        XCTAssertTrue(candidates[0].dailySessionLedgerUnresolved)
+        XCTAssertEqual(candidates[0].requestedUSD, 2)
+        XCTAssertEqual(candidates[0].reservedUSD, 4)
 
-        let result = try fixture.service.reconcileAPIUsageFromProviderBill(
+        try fixture.service.reconcileAPIUsageFromProviderBill(
             profileID: fixture.profile.id,
             sessionID: fixture.session.id,
             actualUSD: 1.25,
             explicitlyConfirmed: true
         )
-        XCTAssertTrue(result.monthlyLedgerSettled)
-        XCTAssertTrue(result.dailySessionLedgerSettled)
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().usedUSD, 1.25, accuracy: 0.000_001)
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().reservedUSD, 0)
-        let windowSnapshot = try fixture.costLedger.snapshot(
-            sessionID: fixture.session.id,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10
-        )
+        XCTAssertEqual(try fixture.budget().usedUSD, 1.25, accuracy: 0.000_001)
+        XCTAssertEqual(try fixture.budget().reservedUSD, 0)
+        let windowSnapshot = try fixture.window()
         XCTAssertEqual(windowSnapshot.dailyUsedUSD, 1.25, accuracy: 0.000_001)
         XCTAssertEqual(windowSnapshot.sessionUsedUSD, 1.25, accuracy: 0.000_001)
         XCTAssertFalse(windowSnapshot.hasUnresolvedCall)
@@ -613,14 +438,12 @@ final class UsageStatisticsTests: XCTestCase {
         XCTAssertTrue(events.contains(where: { $0.kind == "api.cost.manual_reconciled" && $0.message.contains("US$1.250000") }))
         XCTAssertFalse(events.contains(where: { $0.message.contains("api-key") }))
 
-        let retry = try fixture.service.reconcileAPIUsageFromProviderBill(
+        try fixture.service.reconcileAPIUsageFromProviderBill(
             profileID: fixture.profile.id,
             sessionID: fixture.session.id,
             actualUSD: 1.25,
             explicitlyConfirmed: true
         )
-        XCTAssertTrue(retry.monthlyLedgerSettled)
-        XCTAssertTrue(retry.dailySessionLedgerSettled)
         XCTAssertThrowsError(try fixture.service.reconcileAPIUsageFromProviderBill(
             profileID: fixture.profile.id,
             sessionID: fixture.session.id,
@@ -629,49 +452,70 @@ final class UsageStatisticsTests: XCTestCase {
         )) { XCTAssertTrue($0 is BudgetLedgerError) }
     }
 
-    func testManualAPISettlementRetriesWhenMonthlyLedgerWasAlreadySettled() throws {
-        let fixture = try makeManualSettlementFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
-        XCTAssertTrue(try fixture.monthlyLedger.reconcile(sessionID: fixture.session.id, actualUSD: 1.25))
-
-        let candidate = try XCTUnwrap(fixture.service.unresolvedAPICalls(profileID: fixture.profile.id).first)
-        XCTAssertFalse(candidate.monthlyLedgerUnresolved)
-        XCTAssertTrue(candidate.dailySessionLedgerUnresolved)
-        let result = try fixture.service.reconcileAPIUsageFromProviderBill(
-            profileID: fixture.profile.id,
-            sessionID: fixture.session.id,
-            actualUSD: 1.25,
-            explicitlyConfirmed: true
+    func testServiceImportsLegacyLedgersFromTheirEarlierLocations() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try AuditStore(rootURL: root.appendingPathComponent("AgentBridge", isDirectory: true))
+        let service = try BridgeService(store: store)
+        let profileID = AccountProfile.defaultID(for: .claude)
+        let session = SessionRecord(
+            provider: .claude,
+            sourceRepositoryPath: "/tmp/legacy-repository",
+            workspacePath: "/tmp/legacy-workspace",
+            snapshotCommit: String(repeating: "d", count: 40),
+            sourceWasDirty: false,
+            status: .failed,
+            accountProfileID: profileID
         )
-        XCTAssertTrue(result.monthlyLedgerSettled)
-        XCTAssertTrue(result.dailySessionLedgerSettled)
-        XCTAssertTrue(try fixture.service.unresolvedAPICalls(profileID: fixture.profile.id).isEmpty)
-    }
+        try store.saveSession(session)
+        // Earlier releases settled the monthly ledger first; an interruption
+        // could leave the day/session ledger unresolved for the same call.
+        let created = "2026-11-01T00:00:00Z"
+        let monthly: [String: Any] = [
+            "schemaVersion": 1,
+            "monthlyLimitMicros": 140_000_000,
+            "reservations": [[
+                "id": UUID().uuidString, "sessionID": session.id.uuidString,
+                "requestedMicros": 2_000_000, "reservedMicros": 4_000_000,
+                "month": "2026-11", "createdAt": created,
+                "actualMicros": 1_250_000, "reconciledAt": created, "chargedMonth": "2026-11"
+            ]]
+        ]
+        let unrelatedSessionID = UUID()
+        let cost: [String: Any] = [
+            "schemaVersion": 1,
+            "reservations": [
+                [
+                    "id": UUID().uuidString, "sessionID": session.id.uuidString,
+                    "requestedMicros": 2_000_000, "reservedMicros": 4_000_000,
+                    "utcDay": "2026-11-01", "createdAt": created
+                ],
+                [
+                    "id": UUID().uuidString, "sessionID": unrelatedSessionID.uuidString,
+                    "requestedMicros": 1_000_000, "reservedMicros": 2_000_000,
+                    "utcDay": "2026-11-01", "createdAt": created
+                ]
+            ]
+        ]
+        let costRoot = store.rootURL.appendingPathComponent("api-cost-controls", isDirectory: true)
+            .appendingPathComponent(profileID.uuidString.lowercased(), isDirectory: true)
+        try FileManager.default.createDirectory(at: costRoot, withIntermediateDirectories: true)
+        for (object, url) in [
+            (monthly, store.rootURL.appendingPathComponent(".budget-ledger.json")),
+            (cost, costRoot.appendingPathComponent(".api-cost-ledger.json"))
+        ] {
+            try JSONSerialization.data(withJSONObject: object).write(to: url)
+            XCTAssertEqual(chmod(url.path, 0o600), 0)
+        }
 
-    func testManualAPISettlementPreflightsConflictsBeforeChangingEitherLedger() throws {
-        let fixture = try makeManualSettlementFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
-        XCTAssertTrue(try fixture.costLedger.reconcile(sessionID: fixture.session.id, actualUSD: 0.75))
-
-        XCTAssertThrowsError(try fixture.service.reconcileAPIUsageFromProviderBill(
-            profileID: fixture.profile.id,
-            sessionID: fixture.session.id,
-            actualUSD: 1.25,
-            explicitlyConfirmed: true
-        )) { XCTAssertTrue($0 is APICostLedgerError) }
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().usedUSD, 0)
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().reservedUSD, 4)
-
-        let retry = try fixture.service.reconcileAPIUsageFromProviderBill(
-            profileID: fixture.profile.id,
-            sessionID: fixture.session.id,
-            actualUSD: 0.75,
-            explicitlyConfirmed: true
-        )
-        XCTAssertTrue(retry.monthlyLedgerSettled)
-        XCTAssertTrue(retry.dailySessionLedgerSettled)
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().usedUSD, 0.75, accuracy: 0.000_001)
-        XCTAssertEqual(try fixture.monthlyLedger.snapshot().reservedUSD, 0)
+        let budget = try service.budgetSnapshot(profileID: profileID, now: ISO8601DateFormatter().date(from: "2026-11-02T00:00:00Z")!)
+        XCTAssertEqual(budget.usedUSD, 1.25, accuracy: 0.000_001)
+        XCTAssertEqual(budget.reservedUSD, 2, accuracy: 0.000_001)
+        // The session settled in the monthly ledger is settled; the unrelated
+        // reservation stays blocked and is not offered for this account.
+        XCTAssertTrue(try service.unresolvedAPICalls(profileID: profileID).isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.rootURL
+            .appendingPathComponent("api-spend/\(profileID.uuidString.lowercased())/api-spend-ledger.json").path))
     }
 
     private func makeSession(id: UUID, provider: AgentProvider, profileID: UUID) -> SessionRecord {
@@ -763,22 +607,15 @@ final class UsageStatisticsTests: XCTestCase {
             accountProfileID: profile.id
         )
         try store.saveSession(session)
-        let profileDirectory = profile.id.uuidString.lowercased()
-        let monthlyLedger = try BudgetLedger(
-            rootURL: store.rootURL.appendingPathComponent("api-ledgers", isDirectory: true)
-                .appendingPathComponent(profileDirectory, isDirectory: true),
-            monthlyLimitUSD: 25
+        let spendLedger = try APISpendLedger(
+            rootURL: store.rootURL.appendingPathComponent("api-spend", isDirectory: true)
+                .appendingPathComponent(profile.id.uuidString.lowercased(), isDirectory: true)
         )
-        _ = try monthlyLedger.reserve(sessionID: session.id, requestedUSD: 2, explicitlyAuthorized: true)
-        let costLedger = try APICostControlLedger(
-            rootURL: store.rootURL.appendingPathComponent("api-cost-controls", isDirectory: true)
-                .appendingPathComponent(profileDirectory, isDirectory: true)
-        )
-        _ = try costLedger.reserve(
+        _ = try spendLedger.reserve(
             sessionID: session.id,
             requestedUSD: 2,
-            dailyLimitUSD: 10,
-            sessionLimitUSD: 10
+            explicitlyAuthorized: true,
+            limits: APISpendLimits(monthlyUSD: 25, dailyUSD: 10, sessionUSD: 10)
         )
         return ManualAPISettlementFixture(
             rootURL: root,
@@ -786,8 +623,7 @@ final class UsageStatisticsTests: XCTestCase {
             service: service,
             profile: profile,
             session: session,
-            monthlyLedger: monthlyLedger,
-            costLedger: costLedger
+            spendLedger: spendLedger
         )
     }
 }
@@ -798,6 +634,13 @@ private struct ManualAPISettlementFixture {
     let service: BridgeService
     let profile: AccountProfile
     let session: SessionRecord
-    let monthlyLedger: BudgetLedger
-    let costLedger: APICostControlLedger
+    let spendLedger: APISpendLedger
+
+    func budget() throws -> BudgetSnapshot {
+        try spendLedger.budgetSnapshot(monthlyLimitUSD: 25)
+    }
+
+    func window() throws -> APICostControlSnapshot {
+        try spendLedger.costControlSnapshot(sessionID: session.id, dailyLimitUSD: 10, sessionLimitUSD: 10)
+    }
 }

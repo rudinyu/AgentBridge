@@ -1375,13 +1375,13 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            let result = try service.reconcileAPIUsageFromProviderBill(
+            try service.reconcileAPIUsageFromProviderBill(
                 profileID: profile.id,
                 sessionID: candidate.session.id,
                 actualUSD: actualUSD,
                 explicitlyConfirmed: true
             )
-            apiReconciliationStatus = String(format: "費用已手動結算：月度帳本 %@；每日/工作階段帳本 %@。", result.monthlyLedgerSettled ? "已更新" : "沒有對應預留", result.dailySessionLedgerSettled ? "已更新" : "沒有對應預留")
+            apiReconciliationStatus = "費用已手動結算。"
             apiReconciliationActualUSD = ""
             apiReconciliationConfirmed = false
             lastAPIReconciliationRefresh = nil
@@ -3644,9 +3644,7 @@ struct ContentView: View {
                                 }
                                 Text(candidate.session.id.uuidString.lowercased())
                                     .font(.system(size: 8, design: .monospaced)).foregroundStyle(.tertiary)
-                                Text(String(format: model.localized("月度預留：%@ · 每日/工作階段預留：%@"),
-                                            model.localized(candidate.monthlyLedgerUnresolved ? "未結算" : "無待結算"),
-                                            model.localized(candidate.dailySessionLedgerUnresolved ? "未結算" : "無待結算")))
+                                Text(String(format: model.localized("未結算預留：US$%.2f"), candidate.reservedUSD))
                                     .font(.system(size: 8)).foregroundStyle(.secondary)
                             }
                             .contentShape(Rectangle())

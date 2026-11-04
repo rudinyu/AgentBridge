@@ -60,8 +60,8 @@ AgentBridge 0.10.0 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCo
 | 自主編排 | 驗證模型產生的任務圖、綁定核准、排程相依任務與有限次審查修正，並保存流程狀態 |
 | 擴充執行器 | 保存 Skill 快照與 MCP 啟動設定，另行要求綁定摘要的執行同意 |
 | MCP 代理／Mac Control | 依有效授權過濾工具與呼叫；Mac Control 另強制限制目標 App 及觀察／控制模式 |
-| `BudgetLedger` | 依帳戶分開的 Claude API 月度上限、保守預留和結算；內建帳戶沿用舊版 US$140 帳本 |
-| `UsageControlStore` / `APICostControlLedger` | 逐帳戶執行次數與選用日／工作階段 USD 上限、門檻去重、有筆數上限的設定稽核、並行呼叫預留及帳單恢復 |
+| `APISpendLedger` | 每個帳戶一份 Claude API 帳本：保守預留時一次寫入即同時檢查月上限與選用的 UTC 日／工作階段上限，並阻擋並行呼叫及處理結算；內建帳戶沿用舊版 US$140 上限 |
+| `UsageControlStore` | 逐帳戶執行次數上限與 USD 上限設定、門檻去重，以及有筆數上限的設定稽核 |
 | `OutputRedactor` | 遮蔽常見 token 格式與本次已知 API key |
 | CLI / SwiftUI App | 共用對話、帳戶切換、記憶管理、內嵌終端與單次 API 確認介面 |
 
@@ -117,7 +117,7 @@ Git clone 停用 hooks、fsmonitor、untracked cache 及 LFS smudge，移除 ori
 
 預設只使用官方 CLI 的訂閱登入。Claude API 只能明確切換，並且每次執行都要求 API key、單次 USD 預算和付費確認；Codex 畫面沒有 Claude API 控制項，切至 Codex 會強制回到訂閱模式。App 和 CLI 共用以整數微美元保存的 US$140 UTC 月度本機帳本。每次執行預留單次預算兩倍，以協調並行呼叫；API key 只放入該次子程序環境，不寫入設定或稽核檔。
 
-Claude CLI 的 `--max-budget-usd` 依客戶端估算，不是供應商帳單的硬上限。有效回應的 `total_cost_usd` 用於自動結算；費用缺漏、失敗或取消時保留預算，避免把未知支出當成免費。使用者可在 App 或 CLI 依 provider 帳單手動結算，月度與日／工作階段帳本可用相同金額安全重試。API 執行不續用訂閱 session，也不會在開發測試中呼叫模型。內建 Claude 帳戶沿用舊版 US$140 本機月度帳本；每個新增 Claude 帳戶必須設定獨立月上限並使用自己的帳本，帳本建立後上限固定。App 與 CLI 共用各帳戶帳本；每次呼叫會在啟動前，針對月、選用 UTC 日與工作階段上限預留所輸入單次預算的兩倍，並且最多允許一筆費用未確認的付費呼叫。API key 只提供給該次子程序，不會寫入設定或稽核檔。本機帳本無法查看其他工具或 AgentBridge 外部的用量；需供應商端限制時，請另在 Anthropic Console 設定。
+Claude CLI 的 `--max-budget-usd` 依客戶端估算，不是供應商帳單的硬上限。有效回應的 `total_cost_usd` 用於自動結算；費用缺漏、失敗或取消時保留預算，避免把未知支出當成免費。使用者可在 App 或 CLI 依 provider 帳單手動結算，可用相同金額安全重試。舊版本分別保存月度與日／工作階段帳本；首次使用時，每個帳戶的紀錄會依工作階段合併到單一帳本，任一舊帳本已結算的呼叫即視為已結算，舊檔案保持不變。之後若再開啟舊版本，它只會看到合併前的紀錄。API 執行不續用訂閱 session，也不會在開發測試中呼叫模型。內建 Claude 帳戶沿用舊版 US$140 本機月度帳本；每個新增 Claude 帳戶必須設定獨立月上限並使用自己的帳本，帳本建立後上限固定。App 與 CLI 共用各帳戶帳本；每次呼叫會在啟動前，針對月、選用 UTC 日與工作階段上限預留所輸入單次預算的兩倍，並且最多允許一筆費用未確認的付費呼叫。API key 只提供給該次子程序，不會寫入設定或稽核檔。本機帳本無法查看其他工具或 AgentBridge 外部的用量；需供應商端限制時，請另在 Anthropic Console 設定。
 
 ## 用量統計與提醒
 

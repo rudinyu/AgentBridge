@@ -9,6 +9,7 @@
 - Added English translations for 272 previously untranslated Core messages, mainly discussions, local models and workspace operations, plus a test that fails when a new Chinese Core message lacks an English entry.
 - Fixed English message display capitalizing status words inside translated sentences.
 - Consolidated eight hand-written store locks into one shared lock helper, so every store now retries interrupted lock waits, opens lock files close-on-exec, and requires an owner-only, single-link regular lock file. File locations and formats are unchanged.
+- Merged the Claude API monthly ledger and the day/session ledger into one ledger per account, so each paid call is reserved and settled once against all three caps. Existing records are imported once by session and the earlier files are left unchanged; manual settlement no longer reports a separate status for each ledger.
 
 ## 0.10.0 — 2026-11-03
 

@@ -78,7 +78,6 @@ public enum UsageControlError: Error, LocalizedError, Equatable {
     case apiMonthlyLimitReached
     case apiReconciliationConfirmationRequired
     case apiReconciliationNotFound(UUID)
-    case apiReconciliationPartial(UUID)
     case runLimitReached(window: UsageLimitWindow, used: Int, limit: Int)
     case persistence(String)
 
@@ -98,8 +97,6 @@ public enum UsageControlError: Error, LocalizedError, Equatable {
             "手動結算前必須明確確認金額已對照 Anthropic provider 帳單。"
         case .apiReconciliationNotFound(let sessionID):
             "找不到工作階段 \(sessionID.uuidString) 的未結算 Claude API 預留紀錄。"
-        case .apiReconciliationPartial(let sessionID):
-            "工作階段 \(sessionID.uuidString) 只有部分本機帳本完成結算；請使用相同帳單金額重試。"
         case .runLimitReached(let window, let used, let limit):
             "已達 AgentBridge 本機\(window.displayName)執行上限（\(used)/\(limit)）；請等候用量離開此期間或調整本機上限。"
         case .persistence(let message):
@@ -301,7 +298,7 @@ public struct UsageControlAuditRecord: Codable, Equatable, Sendable {
     }
 }
 
-/// Private settings and run limits kept separately from BudgetLedger accounting.
+/// Private settings and run limits kept separately from APISpendLedger accounting.
 /// This store uses a private directory, no-follow file opens, a cross-process
 /// lock, bounded input, and atomic replacement.
 public final class UsageControlStore: @unchecked Sendable {
@@ -589,22 +586,6 @@ private struct UsageControlEntry: Codable {
     var settings: UsageControlSettings
 }
 
-public struct APICostReservation: Codable, Equatable, Sendable {
-    public let id: UUID
-    public let sessionID: UUID
-    public let requestedUSD: Double
-    public let reservedUSD: Double
-    public let utcDay: String
-
-    public init(id: UUID, sessionID: UUID, requestedUSD: Double, reservedUSD: Double, utcDay: String) {
-        self.id = id
-        self.sessionID = sessionID
-        self.requestedUSD = requestedUSD
-        self.reservedUSD = reservedUSD
-        self.utcDay = utcDay
-    }
-}
-
 public struct APICostControlSnapshot: Equatable, Sendable {
     public let dailyLimitUSD: Double?
     public let dailyUsedUSD: Double
@@ -644,51 +625,25 @@ public struct APICostControlSnapshot: Equatable, Sendable {
 public struct APIReconciliationCandidate: Equatable, Identifiable, Sendable {
     public let accountProfileID: UUID
     public let session: SessionRecord
-    public let requestedUSD: Double?
-    public let monthlyReservedUSD: Double?
-    public let dailySessionReservedUSD: Double?
-    public let monthlyLedgerUnresolved: Bool
-    public let dailySessionLedgerUnresolved: Bool
+    public let requestedUSD: Double
+    public let reservedUSD: Double
 
     public var id: UUID { session.id }
 
-    public init(
-        accountProfileID: UUID,
-        session: SessionRecord,
-        requestedUSD: Double?,
-        monthlyReservedUSD: Double?,
-        dailySessionReservedUSD: Double?,
-        monthlyLedgerUnresolved: Bool,
-        dailySessionLedgerUnresolved: Bool
-    ) {
+    public init(accountProfileID: UUID, session: SessionRecord, requestedUSD: Double, reservedUSD: Double) {
         self.accountProfileID = accountProfileID
         self.session = session
         self.requestedUSD = requestedUSD
-        self.monthlyReservedUSD = monthlyReservedUSD
-        self.dailySessionReservedUSD = dailySessionReservedUSD
-        self.monthlyLedgerUnresolved = monthlyLedgerUnresolved
-        self.dailySessionLedgerUnresolved = dailySessionLedgerUnresolved
+        self.reservedUSD = reservedUSD
     }
 }
 
-public struct APIManualSettlementResult: Equatable, Sendable {
-    public let monthlyLedgerSettled: Bool
-    public let dailySessionLedgerSettled: Bool
-
-    public init(monthlyLedgerSettled: Bool, dailySessionLedgerSettled: Bool) {
-        self.monthlyLedgerSettled = monthlyLedgerSettled
-        self.dailySessionLedgerSettled = dailySessionLedgerSettled
-    }
-}
-
+/// Errors for the optional UTC-day and session USD caps that
+/// `APISpendLedger` checks alongside the monthly cap.
 public enum APICostLedgerError: Error, LocalizedError, Equatable {
     case invalidAmount
     case unresolvedCall
-    case duplicateSession(UUID)
     case dollarLimitReached(scope: String, limitUSD: Double, committedUSD: Double)
-    case reservationNotFound(UUID)
-    case conflictingReconciliation(UUID)
-    case persistence(String)
 
     public var errorDescription: String? {
         switch self {
@@ -696,448 +651,8 @@ public enum APICostLedgerError: Error, LocalizedError, Equatable {
             "Claude API 本機 USD 預算必須是有限且大於零的金額。"
         case .unresolvedCall:
             "前一次 Claude API 執行的費用尚未確認；為避免累積未知支出，請先在官方帳單確認後再執行。"
-        case .duplicateSession(let id):
-            "工作階段 \(id.uuidString) 已有 Claude API 費用紀錄；請使用新的隔離工作階段。"
         case .dollarLimitReached(let scope, let limitUSD, let committedUSD):
             String(format: "Claude API 本機%@上限不足：US$%.2f / US$%.2f（包含新執行的預留金額）。本次不會呼叫模型服務。", scope, committedUSD, limitUSD)
-        case .reservationNotFound(let id):
-            "找不到 Claude API 本機預留紀錄 \(id.uuidString)。"
-        case .conflictingReconciliation(let id):
-            "Claude API 本機預留紀錄 \(id.uuidString) 已使用不同費用完成結算。"
-        case .persistence(let message):
-            "無法安全讀寫 Claude API 本機 USD 控制帳本：\(message)"
         }
     }
-}
-
-/// Cross-process reservation ledger for optional UTC-day and AgentBridge
-/// session USD caps. Each accepted call reserves twice its per-run amount.
-/// A missing actual cost remains unresolved and blocks later paid calls.
-public final class APICostControlLedger: @unchecked Sendable {
-    public let rootURL: URL
-    private let ledgerURL: URL
-    private let lockURL: URL
-    private let fileManager: FileManager
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
-    private let instanceLock = NSLock()
-    private static let microsPerUSD: Int64 = 1_000_000
-    private static let maximumFileSize = 4 * 1_024 * 1024
-    private static let maximumReservations = 20_000
-
-    public init(rootURL: URL, fileManager: FileManager = .default) throws {
-        guard rootURL.isFileURL, rootURL.path.hasPrefix("/"),
-              !rootURL.path.split(separator: "/", omittingEmptySubsequences: true).contains("..") else {
-            throw APICostLedgerError.persistence("帳本資料夾路徑無效。")
-        }
-        self.rootURL = rootURL.standardizedFileURL
-        self.ledgerURL = rootURL.appendingPathComponent(".api-cost-ledger.json")
-        self.lockURL = rootURL.appendingPathComponent(".api-cost-ledger.lock")
-        self.fileManager = fileManager
-        encoder.dateEncodingStrategy = .iso8601
-        decoder.dateDecodingStrategy = .iso8601
-        try AuditStore.createPrivateDirectory(self.rootURL, fileManager: fileManager)
-        try withLock {
-            if fileManager.fileExists(atPath: ledgerURL.path) {
-                _ = try readDocument()
-            } else {
-                try writeDocument(APICostLedgerDocument())
-            }
-        }
-    }
-
-    public func reserve(
-        sessionID: UUID,
-        requestedUSD: Double,
-        dailyLimitUSD: Double?,
-        sessionLimitUSD: Double?,
-        now: Date = Date()
-    ) throws -> APICostReservation {
-        guard requestedUSD.isFinite, requestedUSD > 0,
-              let requestedMicros = Self.microDollars(requestedUSD),
-              requestedMicros <= Int64.max / 2 else {
-            throw APICostLedgerError.invalidAmount
-        }
-        for limit in [dailyLimitUSD, sessionLimitUSD].compactMap({ $0 }) {
-            guard limit.isFinite, limit >= 0.01, limit <= 100_000,
-                  Self.microDollars(limit) != nil else {
-                throw APICostLedgerError.invalidAmount
-            }
-        }
-        let reservedMicros = requestedMicros * 2
-        let today = Self.utcDayKey(now)
-
-        return try withLock {
-            var document = try readDocument()
-            guard !document.reservations.contains(where: { $0.sessionID == sessionID }) else {
-                throw APICostLedgerError.duplicateSession(sessionID)
-            }
-            guard !document.reservations.contains(where: { $0.actualMicros == nil }) else {
-                throw APICostLedgerError.unresolvedCall
-            }
-            guard document.reservations.count < Self.maximumReservations else {
-                throw APICostLedgerError.persistence("預留紀錄數量已達安全上限。")
-            }
-            if let dailyLimitUSD, let dailyLimit = Self.microDollars(dailyLimitUSD) {
-                let totals = try Self.totals(document.reservations.filter { $0.utcDay == today })
-                let committed = try Self.checkedAdd(try Self.checkedAdd(totals.used, totals.reserved), reservedMicros)
-                guard committed <= dailyLimit else {
-                    throw APICostLedgerError.dollarLimitReached(
-                        scope: "UTC 每日",
-                        limitUSD: dailyLimitUSD,
-                        committedUSD: Self.usd(committed)
-                    )
-                }
-            }
-            if let sessionLimitUSD, let sessionLimit = Self.microDollars(sessionLimitUSD) {
-                let totals = try Self.totals(document.reservations.filter { $0.sessionID == sessionID })
-                let committed = try Self.checkedAdd(try Self.checkedAdd(totals.used, totals.reserved), reservedMicros)
-                guard committed <= sessionLimit else {
-                    throw APICostLedgerError.dollarLimitReached(
-                        scope: "目前工作階段",
-                        limitUSD: sessionLimitUSD,
-                        committedUSD: Self.usd(committed)
-                    )
-                }
-            }
-
-            let reservation = StoredAPICostReservation(
-                id: UUID(),
-                sessionID: sessionID,
-                requestedMicros: requestedMicros,
-                reservedMicros: reservedMicros,
-                utcDay: today,
-                createdAt: now,
-                actualMicros: nil
-            )
-            document.reservations.append(reservation)
-            try writeDocument(document)
-            return APICostReservation(
-                id: reservation.id,
-                sessionID: sessionID,
-                requestedUSD: Self.usd(requestedMicros),
-                reservedUSD: Self.usd(reservedMicros),
-                utcDay: today
-            )
-        }
-    }
-
-    /// `nil` deliberately keeps the reservation unresolved and blocks future
-    /// paid calls until a validated provider cost is recorded.
-    public func reconcile(reservationID: UUID, actualUSD: Double?) throws {
-        guard let actualUSD else { return }
-        guard actualUSD.isFinite, actualUSD >= 0,
-              let actualMicros = Self.microDollars(actualUSD) else {
-            throw APICostLedgerError.invalidAmount
-        }
-        try withLock {
-            var document = try readDocument()
-            guard let index = document.reservations.firstIndex(where: { $0.id == reservationID }) else {
-                throw APICostLedgerError.reservationNotFound(reservationID)
-            }
-            if let existing = document.reservations[index].actualMicros {
-                guard existing == actualMicros else { throw APICostLedgerError.conflictingReconciliation(reservationID) }
-                return
-            }
-            document.reservations[index].actualMicros = actualMicros
-            try writeDocument(document)
-        }
-    }
-
-    public func unresolvedReservations() throws -> [APICostReservation] {
-        try withLock {
-            try readDocument().reservations
-                .filter { $0.actualMicros == nil }
-                .map { reservation in
-                    APICostReservation(
-                        id: reservation.id,
-                        sessionID: reservation.sessionID,
-                        requestedUSD: Self.usd(reservation.requestedMicros),
-                        reservedUSD: Self.usd(reservation.reservedMicros),
-                        utcDay: reservation.utcDay
-                    )
-                }
-        }
-    }
-
-    public func validateSessionReconciliation(sessionID: UUID, actualUSD: Double) throws -> Bool {
-        guard actualUSD.isFinite, actualUSD >= 0,
-              let actualMicros = Self.microDollars(actualUSD) else {
-            throw APICostLedgerError.invalidAmount
-        }
-        return try withLock {
-            let document = try readDocument()
-            guard let reservation = document.reservations.first(where: { $0.sessionID == sessionID }) else {
-                return false
-            }
-            if let existing = reservation.actualMicros, existing != actualMicros {
-                throw APICostLedgerError.conflictingReconciliation(reservation.id)
-            }
-            return true
-        }
-    }
-
-    /// Settles the unique reservation for a session from a user-confirmed bill
-    /// amount. The operation is idempotent for the same amount and rejects a
-    /// conflicting prior settlement. Returns false when this ledger has no
-    /// record for the session (for example, a legacy monthly-only entry).
-    @discardableResult
-    public func reconcile(sessionID: UUID, actualUSD: Double, now: Date = Date()) throws -> Bool {
-        guard actualUSD.isFinite, actualUSD >= 0,
-              let actualMicros = Self.microDollars(actualUSD) else {
-            throw APICostLedgerError.invalidAmount
-        }
-        return try withLock {
-            var document = try readDocument()
-            guard let index = document.reservations.firstIndex(where: { $0.sessionID == sessionID }) else {
-                return false
-            }
-            if let existing = document.reservations[index].actualMicros {
-                guard existing == actualMicros else {
-                    throw APICostLedgerError.conflictingReconciliation(document.reservations[index].id)
-                }
-                return true
-            }
-            document.reservations[index].actualMicros = actualMicros
-            try writeDocument(document)
-            return true
-        }
-    }
-
-    /// Cancels only a call that failed before the monthly BudgetLedger accepted
-    /// its reservation and before any provider process could be launched.
-    public func cancelUnstarted(reservationID: UUID) throws {
-        try withLock {
-            var document = try readDocument()
-            guard let reservation = document.reservations.first(where: { $0.id == reservationID }) else {
-                throw APICostLedgerError.reservationNotFound(reservationID)
-            }
-            guard reservation.actualMicros == nil else {
-                throw APICostLedgerError.conflictingReconciliation(reservationID)
-            }
-            document.reservations.removeAll(where: { $0.id == reservationID })
-            try writeDocument(document)
-        }
-    }
-
-    public func snapshot(
-        sessionID: UUID,
-        dailyLimitUSD: Double?,
-        sessionLimitUSD: Double?,
-        now: Date = Date()
-    ) throws -> APICostControlSnapshot {
-        try withLock {
-            let document = try readDocument()
-            let day = Self.utcDayKey(now)
-            let daily = try Self.totals(document.reservations.filter { $0.utcDay == day })
-            let session = try Self.totals(document.reservations.filter { $0.sessionID == sessionID })
-            return APICostControlSnapshot(
-                dailyLimitUSD: dailyLimitUSD,
-                dailyUsedUSD: Self.usd(daily.used),
-                dailyReservedUSD: Self.usd(daily.reserved),
-                sessionLimitUSD: sessionLimitUSD,
-                sessionUsedUSD: Self.usd(session.used),
-                sessionReservedUSD: Self.usd(session.reserved),
-                hasUnresolvedCall: document.reservations.contains(where: { $0.actualMicros == nil })
-            )
-        }
-    }
-
-    private func withLock<T>(_ operation: () throws -> T) throws -> T {
-        instanceLock.lock()
-        defer { instanceLock.unlock() }
-        return try PrivateLockFile.withLock(at: lockURL, error: { failure in
-            switch failure {
-            case .unavailable: APICostLedgerError.persistence("無法開啟鎖定檔。")
-            case .notPrivateFile: APICostLedgerError.persistence("鎖定檔不是安全的一般檔案。")
-            case .lockFailed: APICostLedgerError.persistence("無法鎖定本機 USD 帳本。")
-            }
-        }, operation)
-    }
-
-    private func readDocument() throws -> APICostLedgerDocument {
-        let descriptor = open(ledgerURL.path, O_RDONLY | O_NOFOLLOW)
-        guard descriptor >= 0 else {
-            if errno == ENOENT { return APICostLedgerDocument() }
-            throw APICostLedgerError.persistence("無法安全開啟本機 USD 帳本。")
-        }
-        defer { _ = close(descriptor) }
-        var metadata = stat()
-        guard fstat(descriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
-              metadata.st_size >= 0, metadata.st_size <= off_t(Self.maximumFileSize) else {
-            throw APICostLedgerError.persistence("本機 USD 帳本格式或大小不安全。")
-        }
-        var data = Data()
-        var buffer = [UInt8](repeating: 0, count: 32_768)
-        while true {
-            let count = buffer.withUnsafeMutableBytes { bytes in
-                read(descriptor, bytes.baseAddress, bytes.count)
-            }
-            if count < 0 {
-                if errno == EINTR { continue }
-                throw APICostLedgerError.persistence("無法讀取本機 USD 帳本。")
-            }
-            if count == 0 { break }
-            data.append(contentsOf: buffer.prefix(count))
-            guard data.count <= Self.maximumFileSize else {
-                throw APICostLedgerError.persistence("本機 USD 帳本超過大小上限。")
-            }
-        }
-        do {
-            let document = try decoder.decode(APICostLedgerDocument.self, from: data)
-            var reservationIDs = Set<UUID>()
-            var sessionIDs = Set<UUID>()
-            guard document.schemaVersion == 1, document.reservations.count <= Self.maximumReservations,
-                  document.reservations.allSatisfy({ reservation in
-                    reservation.requestedMicros > 0
-                        && reservation.requestedMicros <= Int64.max / 2
-                        && reservation.reservedMicros == reservation.requestedMicros * 2
-                        && Self.isUTCDayKey(reservation.utcDay)
-                        && (reservation.actualMicros == nil || reservation.actualMicros! >= 0)
-                        && reservationIDs.insert(reservation.id).inserted
-                        && sessionIDs.insert(reservation.sessionID).inserted
-                  }) else {
-                throw APICostLedgerError.persistence("本機 USD 帳本版本或金額不支援。")
-            }
-            try Self.validateAggregateTotals(document.reservations)
-            return document
-        } catch let error as APICostLedgerError {
-            throw error
-        } catch {
-            throw APICostLedgerError.persistence("本機 USD 帳本格式錯誤。")
-        }
-    }
-
-    private func writeDocument(_ document: APICostLedgerDocument) throws {
-        let data: Data
-        do { data = try encoder.encode(document) }
-        catch { throw APICostLedgerError.persistence("無法編碼本機 USD 帳本。") }
-        guard data.count <= Self.maximumFileSize else {
-            throw APICostLedgerError.persistence("本機 USD 帳本超過大小上限。")
-        }
-        let temporaryURL = rootURL.appendingPathComponent(".api-cost-ledger-\(UUID().uuidString.lowercased()).tmp")
-        let descriptor = open(temporaryURL.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode_t(0o600))
-        guard descriptor >= 0 else { throw APICostLedgerError.persistence("無法建立本機 USD 帳本暫存檔。") }
-        defer {
-            _ = close(descriptor)
-            try? fileManager.removeItem(at: temporaryURL)
-        }
-        do {
-            try data.withUnsafeBytes { bytes in
-                guard let baseAddress = bytes.baseAddress else { return }
-                var offset = 0
-                while offset < bytes.count {
-                    let count = write(descriptor, baseAddress.advanced(by: offset), bytes.count - offset)
-                    if count < 0 {
-                        if errno == EINTR { continue }
-                        throw APICostLedgerError.persistence("無法寫入本機 USD 帳本。")
-                    }
-                    guard count > 0 else { throw APICostLedgerError.persistence("本機 USD 帳本寫入未完成。") }
-                    offset += count
-                }
-            }
-            guard fsync(descriptor) == 0 else { throw APICostLedgerError.persistence("無法同步本機 USD 帳本。") }
-            if fileManager.fileExists(atPath: ledgerURL.path) {
-                var existing = stat()
-                guard lstat(ledgerURL.path, &existing) == 0, (existing.st_mode & S_IFMT) == S_IFREG else {
-                    throw APICostLedgerError.persistence("本機 USD 帳本不能是符號連結或非一般檔案。")
-                }
-            }
-            guard rename(temporaryURL.path, ledgerURL.path) == 0 else {
-                throw APICostLedgerError.persistence("無法安全更新本機 USD 帳本。")
-            }
-        } catch let error as APICostLedgerError {
-            throw error
-        } catch {
-            throw APICostLedgerError.persistence("無法儲存本機 USD 帳本。")
-        }
-    }
-
-    private static func microDollars(_ usd: Double) -> Int64? {
-        guard usd.isFinite, usd >= 0 else { return nil }
-        let rounded = ceil(usd * Double(microsPerUSD))
-        guard rounded <= Double(Int64.max) else { return nil }
-        return Int64(rounded)
-    }
-
-    private static func usd(_ micros: Int64) -> Double {
-        Double(micros) / Double(microsPerUSD)
-    }
-
-    private static func totals(_ reservations: [StoredAPICostReservation]) throws -> (used: Int64, reserved: Int64) {
-        var totals = (used: Int64(0), reserved: Int64(0))
-        for reservation in reservations {
-            totals = try adding(reservation, to: totals)
-        }
-        return totals
-    }
-
-    private static func validateAggregateTotals(_ reservations: [StoredAPICostReservation]) throws {
-        var totalsByDay: [String: (used: Int64, reserved: Int64)] = [:]
-        var totalsBySession: [UUID: (used: Int64, reserved: Int64)] = [:]
-        for reservation in reservations {
-            totalsByDay[reservation.utcDay] = try adding(
-                reservation,
-                to: totalsByDay[reservation.utcDay] ?? (used: 0, reserved: 0)
-            )
-            totalsBySession[reservation.sessionID] = try adding(
-                reservation,
-                to: totalsBySession[reservation.sessionID] ?? (used: 0, reserved: 0)
-            )
-        }
-    }
-
-    private static func adding(
-        _ reservation: StoredAPICostReservation,
-        to totals: (used: Int64, reserved: Int64)
-    ) throws -> (used: Int64, reserved: Int64) {
-        if let actualMicros = reservation.actualMicros {
-            return (used: try checkedAdd(totals.used, actualMicros), reserved: totals.reserved)
-        }
-        return (used: totals.used, reserved: try checkedAdd(totals.reserved, reservation.reservedMicros))
-    }
-
-    private static func checkedAdd(_ left: Int64, _ right: Int64) throws -> Int64 {
-        let (result, overflow) = left.addingReportingOverflow(right)
-        guard !overflow else {
-            throw APICostLedgerError.persistence("本機 USD 帳本加總超出安全範圍。")
-        }
-        return result
-    }
-
-    private static func utcDayKey(_ date: Date) -> String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
-        let parts = calendar.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
-    }
-
-    private static func isUTCDayKey(_ value: String) -> Bool {
-        let parts = value.split(separator: "-", omittingEmptySubsequences: false)
-        guard parts.count == 3, parts[0].count == 4, parts[1].count == 2, parts[2].count == 2,
-              let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else {
-            return false
-        }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
-        let components = DateComponents(year: year, month: month, day: day)
-        guard let date = calendar.date(from: components) else { return false }
-        let actual = calendar.dateComponents([.year, .month, .day], from: date)
-        return actual.year == year && actual.month == month && actual.day == day
-    }
-}
-
-private struct APICostLedgerDocument: Codable {
-    var schemaVersion = 1
-    var reservations: [StoredAPICostReservation] = []
-}
-
-private struct StoredAPICostReservation: Codable {
-    let id: UUID
-    let sessionID: UUID
-    let requestedMicros: Int64
-    let reservedMicros: Int64
-    let utcDay: String
-    let createdAt: Date
-    var actualMicros: Int64?
 }

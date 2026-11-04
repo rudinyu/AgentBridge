@@ -763,7 +763,9 @@ esac
         XCTAssertFalse(storedText.contains("api-prompt-marker"))
         XCTAssertFalse(storedText.contains("inherited-secret-must-not-pass"))
         let settingsContents = try String(contentsOf: root.appendingPathComponent("state/settings.json"), encoding: .utf8)
-        let budgetContents = try String(contentsOf: root.appendingPathComponent("state/.budget-ledger.json"), encoding: .utf8)
+        let budgetContents = try String(contentsOf: root.appendingPathComponent(
+            "state/api-spend/\(AccountProfile.defaultID(for: .claude).uuidString.lowercased())/api-spend-ledger.json"
+        ), encoding: .utf8)
         XCTAssertFalse(settingsContents.contains("fixture-api-key"))
         XCTAssertFalse(budgetContents.contains("fixture-api-key"))
         let budget = try service.budgetSnapshot()
