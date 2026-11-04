@@ -48,11 +48,11 @@ struct MainWindowView: View {
         .frame(minWidth: 1160, minHeight: 780)
         .background(Color(nsColor: .windowBackgroundColor))
         .environment(\.locale, model.appLanguage.locale)
-        .sheet(isPresented: $model.isSetupWizardPresented) {
-            SetupWizardView(model: model)
+        .sheet(isPresented: Bindable(model.setupWizard).isPresented) {
+            SetupWizardView(model: model, wizard: model.setupWizard)
                 .interactiveDismissDisabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminalLaunch != nil)
         }
-        .alert("AgentBridge", isPresented: Binding(get: { model.errorMessage != nil && !model.isSetupWizardPresented }, set: { if !$0 { model.errorMessage = nil } })) {
+        .alert("AgentBridge", isPresented: Binding(get: { model.errorMessage != nil && !model.setupWizard.isPresented }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("好", role: .cancel) { model.errorMessage = nil }
         } message: {
             Text(model.localized(model.errorMessage ?? ""))
@@ -74,7 +74,7 @@ struct MainWindowView: View {
             if isLocal && (mainArea == .autonomous || mainArea == .extensions) { mainArea = .chats }
         }
         .onChange(of: model.selectedExtensionID) { _, _ in model.selectedExtensionDidChange() }
-        .onChange(of: model.isSetupWizardPresented) { _, isPresented in
+        .onChange(of: model.setupWizard.isPresented) { _, isPresented in
             if !isPresented { model.errorMessage = nil }
         }
         .onAppear { model.refresh() }
@@ -121,7 +121,7 @@ struct MainWindowView: View {
                 Text("繁體中文").tag(AppLanguage.traditionalChinese)
             }
             .pickerStyle(.menu)
-            Button(model.localized("Setup Wizard")) { model.openSetupWizard() }
+            Button(model.localized("Setup Wizard")) { model.setupWizard.open() }
                 .disabled(!model.canPresentSetupWizard)
             if let session = model.selectedSession {
                 if model.isProjectConversationActive {

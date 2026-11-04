@@ -10,27 +10,7 @@ final class AppModel {
     var appLanguage: AppLanguage {
         didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: AppLanguage.preferenceKey) }
     }
-    var isSetupWizardPresented = false
-    var setupWizardStep: SetupWizardStep = .welcome {
-        didSet { UserDefaults.standard.set(setupWizardStep.rawValue, forKey: Self.setupWizardStepPreferenceKey) }
-    }
-    var setupWizardProvider: AgentProvider = .codex {
-        didSet { UserDefaults.standard.set(setupWizardProvider.rawValue, forKey: Self.setupWizardProviderPreferenceKey) }
-    }
-    var setupWizardProfileName = "" {
-        didSet { UserDefaults.standard.set(setupWizardProfileName, forKey: Self.setupWizardProfileNamePreferenceKey) }
-    }
-    var setupWizardCLIPath = "" {
-        didSet {
-            UserDefaults.standard.set(setupWizardCLIPath, forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
-        }
-    }
-    var setupWizardCLIStatus = ""
-    var setupWizardUsageControls = UsageControlSettings()
-    var setupWizardUsageStatus = ""
-    var setupWizardStatus = ""
-    var setupWizardError: String?
-    var setupWizardAuthCheckInProgress = false
+    let setupWizard = SetupWizardModel()
     var settings = BridgeSettings()
     var sessions: [SessionRecord] = []
     var discussions: [DiscussionRecord] = []
@@ -131,7 +111,7 @@ final class AppModel {
     var closeTerminalAfterCancellation = false
     var isSwitchingTarget = false
 
-    private var service: BridgeService?
+    private(set) var service: BridgeService?
     private var store: AuditStore?
     @ObservationIgnored private var activeRunFlags: [UUID: CancellationFlag] = [:]
     @ObservationIgnored private var discussionCancellationFlags: [UUID: CancellationFlag] = [:]
@@ -142,8 +122,7 @@ final class AppModel {
     private var activeTerminalSessionID: UUID?
     private var activeUsageProvider: AgentProvider?
     private var savedLocalModelSettings: LocalModelSettings?
-    @ObservationIgnored private var setupWizardAuthRequestID: UUID?
-    @ObservationIgnored private var loadedUsageControlsScopeKey: String?
+    @ObservationIgnored var loadedUsageControlsScopeKey: String?
     @ObservationIgnored private var refreshedUsageStatisticsScopeKey: String?
     @ObservationIgnored private var lastUsageStatisticsRefresh: Date?
     @ObservationIgnored private var refreshedLocalModelUsageScopeKey: String?
@@ -151,16 +130,8 @@ final class AppModel {
     @ObservationIgnored private var refreshedAPIReconciliationScopeKey: String?
     @ObservationIgnored private var lastAPIReconciliationRefresh: Date?
 
-    private static let setupWizardStartedPreferenceKey = "setupWizard.started"
-    private static let setupWizardCompletedPreferenceKey = "setupWizard.completed"
-    private static let setupWizardStepPreferenceKey = "setupWizard.step"
-    private static let setupWizardProviderPreferenceKey = "setupWizard.provider"
-    private static let setupWizardProfileNamePreferenceKey = "setupWizard.profileName"
     private static let newDiscussionProviderPreferenceKey = "discussion.newProvider"
     private static let discussionProfilePreferencesKey = "discussion.profilePreferences"
-    private static func setupWizardCLIPathPreferenceKey(for provider: AgentProvider) -> String {
-        "setupWizard.cliPath.\(provider.rawValue)"
-    }
 
     var terminalSessionIDForView: UUID? { activeTerminalSessionID }
 
@@ -203,50 +174,6 @@ final class AppModel {
             && !isChangingWorkspaceRoot
     }
 
-    var setupWizardSelectedProfile: AccountProfile? {
-        guard let id = selectedProfileIDs[setupWizardProvider] else { return nil }
-        return accountProfiles[setupWizardProvider]?.first(where: { $0.id == id })
-    }
-
-    var setupWizardAuthentication: AuthAssessment? {
-        guard setupWizardProvider != .local else { return nil }
-        guard let profile = setupWizardSelectedProfile else { return nil }
-        return authStatus[profile.id]
-    }
-
-    var setupWizardResolvedCLIPath: String? {
-        guard setupWizardProvider != .local else { return nil }
-        let configuredPath = setupWizardCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        return try? RuntimeEnvironment.resolveExecutable(
-            provider: setupWizardProvider,
-            configuredPath: configuredPath.isEmpty ? nil : configuredPath
-        ).path
-    }
-
-    var setupWizardSavedCLIPath: String? {
-        guard setupWizardProvider != .local else { return nil }
-        return try? RuntimeEnvironment.resolveExecutable(
-            provider: setupWizardProvider,
-            configuredPath: settings.binaryPath(for: setupWizardProvider)
-        ).path
-    }
-
-    var setupWizardCLISettingIsDirty: Bool {
-        guard setupWizardProvider != .local else { return false }
-        let draft = setupWizardCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        let saved = settings.binaryPath(for: setupWizardProvider)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return draft != saved
-    }
-
-    var setupWizardReadiness: SetupWizardReadiness {
-        SetupWizardReadiness(
-            workspaceConfigured: workspaceRootIsConfigured,
-            commandLineAvailable: setupWizardProvider == .local || setupWizardSavedCLIPath != nil,
-            commandLineSettingSaved: setupWizardProvider == .local || !setupWizardCLISettingIsDirty,
-            subscriptionLoginConfirmed: setupWizardProvider == .local || setupWizardAuthentication?.confirmedSubscription == true
-        )
-    }
-
     func localized(_ source: String) -> String {
         AppLocalization.display(source, language: appLanguage)
     }
@@ -264,6 +191,7 @@ final class AppModel {
 
     init() {
         appLanguage = AppLanguage.saved
+        setupWizard.attach(to: self)
         if let savedProvider = UserDefaults.standard.string(forKey: Self.newDiscussionProviderPreferenceKey)
             .flatMap(AgentProvider.init(rawValue:)) {
             newDiscussionProvider = savedProvider
@@ -279,7 +207,7 @@ final class AppModel {
         do {
             guard try RuntimePaths.workspaceRootConfiguration() != nil else {
                 status = "請選擇工作區資料根目錄以開始。"
-                initializeSetupWizard(workspaceRootConfigured: false)
+                setupWizard.initialize(workspaceRootConfigured: false)
                 return
             }
             let root = try RuntimePaths.requireWorkspaceRoot()
@@ -289,430 +217,17 @@ final class AppModel {
             self.service = service
             workspaceRootPath = root.path
             refresh()
-            initializeSetupWizard(workspaceRootConfigured: true)
+            setupWizard.initialize(workspaceRootConfigured: true)
         } catch {
             if let root = try? RuntimePaths.requireWorkspaceRoot() { workspaceRootPath = root.path }
             errorMessage = error.localizedDescription
-            initializeSetupWizard(workspaceRootConfigured: workspaceRootIsConfigured)
-        }
-    }
-
-    private func initializeSetupWizard(workspaceRootConfigured: Bool) {
-        let defaults = UserDefaults.standard
-        if let savedProvider = defaults.string(forKey: Self.setupWizardProviderPreferenceKey)
-            .flatMap(AgentProvider.init(rawValue:)) {
-            setupWizardProvider = savedProvider
-        } else {
-            setupWizardProvider = settings.defaultProvider
-        }
-        setupWizardCLIPath = setupWizardProvider == .local ? "" : (defaults.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
-            ?? settings.binaryPath(for: setupWizardProvider)
-            ?? "")
-        let savedStep = defaults.string(forKey: Self.setupWizardStepPreferenceKey)
-            .flatMap(SetupWizardStep.init(rawValue:))
-        setupWizardProfileName = defaults.string(forKey: Self.setupWizardProfileNamePreferenceKey) ?? ""
-        setupWizardStep = SetupWizardFlow.startingStep(
-            savedStep: savedStep,
-            workspaceRootConfigured: workspaceRootConfigured
-        )
-        let hasStarted = defaults.bool(forKey: Self.setupWizardStartedPreferenceKey)
-        let hasCompleted = defaults.bool(forKey: Self.setupWizardCompletedPreferenceKey)
-        isSetupWizardPresented = SetupWizardFlow.shouldPresentAutomatically(
-            workspaceRootConfigured: workspaceRootConfigured,
-            hasStarted: hasStarted,
-            hasCompleted: hasCompleted
-        )
-        if isSetupWizardPresented {
-            defaults.set(true, forKey: Self.setupWizardStartedPreferenceKey)
-            if let errorMessage {
-                setupWizardError = errorMessage
-                self.errorMessage = nil
-            }
-        }
-    }
-
-    func openSetupWizard() {
-        guard canPresentSetupWizard else { return }
-        let hasCompleted = UserDefaults.standard.bool(forKey: Self.setupWizardCompletedPreferenceKey)
-        setupWizardStep = SetupWizardFlow.reopeningStep(
-            savedStep: setupWizardStep,
-            hasCompleted: hasCompleted,
-            workspaceRootConfigured: workspaceRootIsConfigured
-        )
-        UserDefaults.standard.set(true, forKey: Self.setupWizardStartedPreferenceKey)
-        setupWizardCLIPath = hasCompleted
-            ? (settings.binaryPath(for: setupWizardProvider) ?? "")
-            : (UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
-                ?? settings.binaryPath(for: setupWizardProvider)
-                ?? "")
-        setupWizardError = nil
-        setupWizardStatus = ""
-        errorMessage = nil
-        isSetupWizardPresented = true
-    }
-
-    func dismissSetupWizardForNow() {
-        guard SetupWizardFlow.canDismiss(workspaceRootConfigured: workspaceRootIsConfigured),
-              !isChangingWorkspaceRoot, !terminalRunning, terminalLaunch == nil,
-              !hasActiveDiscussionOperation else { return }
-        isSetupWizardPresented = false
-        errorMessage = nil
-    }
-
-    func finishSetupWizard() {
-        guard SetupWizardFlow.canDismiss(workspaceRootConfigured: workspaceRootIsConfigured),
-              !isChangingWorkspaceRoot, !terminalRunning, terminalLaunch == nil,
-              !hasActiveDiscussionOperation else { return }
-        UserDefaults.standard.set(true, forKey: Self.setupWizardCompletedPreferenceKey)
-        setupWizardStep = .welcome
-        isSetupWizardPresented = false
-        errorMessage = nil
-    }
-
-    func moveSetupWizard(to step: SetupWizardStep) {
-        guard !isChangingWorkspaceRoot else { return }
-        if let currentIndex = SetupWizardStep.allCases.firstIndex(of: setupWizardStep),
-           let targetIndex = SetupWizardStep.allCases.firstIndex(of: step),
-           targetIndex > currentIndex,
-           !SetupWizardFlow.canAdvance(from: setupWizardStep, workspaceRootConfigured: workspaceRootIsConfigured) {
-            return
-        }
-        setupWizardStep = step
-        setupWizardError = nil
-        if step == .commandLine {
-            if setupWizardProvider == .local {
-                setupWizardCLIPath = ""
-                setupWizardCLIStatus = ""
-            } else {
-                setupWizardCLIPath = UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
-                    ?? settings.binaryPath(for: setupWizardProvider)
-                    ?? ""
-                checkSetupWizardCLIAvailability()
-            }
-        } else if step == .usage {
-            loadSetupWizardUsageControls()
-        }
-    }
-
-    func selectSetupWizardProvider(_ provider: AgentProvider) {
-        guard setupWizardProvider != provider else { return }
-        setupWizardProvider = provider
-        setupWizardCLIPath = provider == .local ? "" : (UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: provider))
-            ?? settings.binaryPath(for: provider)
-            ?? "")
-        setupWizardCLIStatus = ""
-        setupWizardUsageStatus = ""
-        if setupWizardStep == .usage { loadSetupWizardUsageControls() }
-    }
-
-    func chooseSetupWizardCLIPath() {
-        guard setupWizardProvider != .local else { return }
-        let panel = NSOpenPanel()
-        panel.title = localized("Choose the official CLI executable")
-        panel.message = localized("Select the installed codex or claude executable. AgentBridge will only save this path.")
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        setupWizardCLIPath = url.path
-        checkSetupWizardCLIAvailability()
-    }
-
-    func checkSetupWizardCLIAvailability() {
-        guard setupWizardProvider != .local else {
-            setupWizardCLIStatus = localized("Local models do not require a command-line app.")
-            return
-        }
-        let path = setupWizardCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        do {
-            let executable = try RuntimeEnvironment.resolveExecutable(
-                provider: setupWizardProvider,
-                configuredPath: path.isEmpty ? nil : path
-            )
-            setupWizardCLIStatus = setupWizardCLISettingIsDirty
-                ? String(format: localized("Draft executable found: %@. Save this path before finishing setup."), executable.path)
-                : String(format: localized("Found executable: %@"), executable.path)
-        } catch {
-            setupWizardCLIStatus = localized("CLI not found. Choose an executable or follow the official install guide.")
-        }
-    }
-
-    func saveSetupWizardCLIPath() {
-        guard setupWizardProvider != .local else {
-            setupWizardCLIStatus = localized("Local models do not require a command-line app.")
-            return
-        }
-        guard let service else {
-            setupWizardError = localized("Choose a workspace folder before saving CLI settings.")
-            return
-        }
-        let path = setupWizardCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !path.isEmpty {
-            do {
-                _ = try RuntimeEnvironment.resolveExecutable(provider: setupWizardProvider, configuredPath: path)
-            } catch {
-                setupWizardError = error.localizedDescription
-                setupWizardCLIStatus = localized("The selected path is not an executable for this provider.")
-                return
-            }
-        }
-        let previousSettings = settings
-        let previousPath = settings.binaryPath(for: setupWizardProvider)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        settings.setBinaryPath(path.isEmpty ? nil : path, for: setupWizardProvider)
-        do {
-            try service.saveSettings(settings)
-            if previousPath != path {
-                for profile in accountProfiles[setupWizardProvider] ?? [] {
-                    authStatus.removeValue(forKey: profile.id)
-                }
-            }
-            setupWizardError = nil
-            checkSetupWizardCLIAvailability()
-            setupWizardStatus = localized("CLI setting saved.")
-        } catch {
-            settings = previousSettings
-            setupWizardError = error.localizedDescription
-        }
-    }
-
-    func selectSetupWizardDefaultProvider() {
-        guard let service else {
-            setupWizardError = localized("Choose a workspace folder before saving provider settings.")
-            return
-        }
-        let previous = settings
-        settings.defaultProvider = setupWizardProvider
-        if setupWizardProvider == .codex { settings.usageMode = .subscription }
-        if setupWizardProvider == .local { requestedAccessMode = .readOnly }
-        do {
-            try service.saveSettings(settings)
-            if previous.defaultProvider != settings.defaultProvider || previous.usageMode != settings.usageMode {
-                clearAPIAuthorization()
-            }
-            providerUsageReport = nil
-            loadedUsageControlsScopeKey = nil
-            refresh(forceUsageStatistics: true)
-            if let anchor = selectedSession { selectOrCreateSession(for: setupWizardProvider, anchoredTo: anchor) }
-            setupWizardStatus = setupWizardProvider == .local
-                ? localized("Local model is now the default. Cloud provider settings remain saved separately.")
-                : settings.usageMode == .subscription
-                    ? localized("Default provider and subscription sign-in saved.")
-                    : localized("Default provider saved; the existing Claude API mode was preserved.")
-            setupWizardError = nil
-        } catch {
-            settings = previous
-            setupWizardError = error.localizedDescription
-        }
-    }
-
-    func selectSetupWizardSubscriptionMode() {
-        guard setupWizardProvider == .claude, settings.defaultProvider == .claude,
-              settings.usageMode != .subscription else { return }
-        selectUsageMode(.subscription)
-    }
-
-    func selectSetupWizardProfile(_ profileID: UUID) {
-        guard let service, selectedProfileIDs[setupWizardProvider] != profileID else { return }
-        do {
-            try service.selectAccountProfile(id: profileID, provider: setupWizardProvider)
-            selectedProfileIDs[setupWizardProvider] = profileID
-            accountProfiles[setupWizardProvider] = try service.accountProfiles(provider: setupWizardProvider)
-            loadedUsageControlsScopeKey = nil
-            providerUsageReport = nil
-            authStatus.removeValue(forKey: profileID)
-            setupWizardStatus = setupWizardProvider == .local
-                ? localized("Local memory account selected. No sign-in is needed.")
-                : localized("Account selected. Sign-in remains managed by the provider CLI.")
-            setupWizardError = nil
-            if settings.defaultProvider == setupWizardProvider, let anchor = selectedSession {
-                selectOrCreateSession(for: setupWizardProvider, anchoredTo: anchor)
-            }
-            if setupWizardStep == .usage { loadSetupWizardUsageControls() }
-        } catch {
-            setupWizardError = error.localizedDescription
-        }
-    }
-
-    func createSetupWizardProfile(name: String) -> Bool {
-        guard let service else {
-            setupWizardError = localized("Choose a workspace folder before creating an account.")
-            return false
-        }
-        let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !displayName.isEmpty else {
-            setupWizardError = localized("Enter a display name for the new account.")
-            return false
-        }
-        do {
-            let profile = try service.createAccountProfile(name: displayName, provider: setupWizardProvider, allowsSharedMemory: true)
-            try service.selectAccountProfile(id: profile.id, provider: setupWizardProvider)
-            selectedProfileIDs[setupWizardProvider] = profile.id
-            accountProfiles[setupWizardProvider] = try service.accountProfiles(provider: setupWizardProvider)
-            loadedUsageControlsScopeKey = nil
-            authStatus.removeValue(forKey: profile.id)
-            setupWizardProfileName = ""
-            setupWizardStatus = setupWizardProvider == .local
-                ? localized("Separate local memory account created. No sign-in is needed.")
-                : localized("Isolated account created. Sign in when you are ready.")
-            setupWizardError = nil
-            if settings.defaultProvider == setupWizardProvider, let anchor = selectedSession {
-                selectOrCreateSession(for: setupWizardProvider, anchoredTo: anchor)
-            }
-            return true
-        } catch {
-            setupWizardError = error.localizedDescription
-            return false
-        }
-    }
-
-    func setSetupWizardMemorySharing(_ allowed: Bool) {
-        guard let service, let profile = setupWizardSelectedProfile else { return }
-        do {
-            try service.setAccountSharedMemoryAllowed(id: profile.id, allowed: allowed)
-            accountProfiles[setupWizardProvider] = try service.accountProfiles(provider: setupWizardProvider)
-            if let session = selectedSession,
-               (session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)) == profile.id {
-                refreshSelectedEvents()
-            }
-            setupWizardStatus = allowed
-                ? localized("This account may load and save shared project memory.")
-                : localized("This account will not load or save shared project memory.")
-            setupWizardError = nil
-        } catch {
-            setupWizardError = error.localizedDescription
-        }
-    }
-
-    func checkSetupWizardAuthentication() {
-        guard setupWizardProvider != .local else {
-            setupWizardStatus = localized("Local models do not use CLI sign-in.")
-            return
-        }
-        guard let profile = setupWizardSelectedProfile else {
-            setupWizardError = localized("No account profile is available for this provider.")
-            return
-        }
-        let profileID = profile.id
-        let requestID = UUID()
-        setupWizardAuthRequestID = requestID
-        setupWizardAuthCheckInProgress = true
-        setupWizardStatus = localized("Checking official CLI sign-in…")
-        checkAuthentication(for: profile) { [weak self] assessment, error in
-            guard let self, self.setupWizardAuthRequestID == requestID else { return }
-            self.setupWizardAuthCheckInProgress = false
-            self.setupWizardAuthRequestID = nil
-            guard self.setupWizardSelectedProfile?.id == profileID else { return }
-            if let assessment {
-                self.setupWizardStatus = assessment.message
-                self.setupWizardError = nil
-            } else if let error {
-                self.setupWizardError = error.localizedDescription
-            }
-        }
-    }
-
-    func openSetupWizardProfileLogin() {
-        guard setupWizardProvider != .local else {
-            setupWizardError = localized("Local models do not use CLI sign-in.")
-            return
-        }
-        guard let profile = setupWizardSelectedProfile else {
-            setupWizardError = localized("No account profile is available for this provider.")
-            return
-        }
-        openProfileLoginTerminal(for: profile)
-    }
-
-    func loadSetupWizardUsageControls() {
-        setupWizardUsageControls = UsageControlSettings()
-        if setupWizardProvider == .local {
-            setupWizardUsageStatus = localized("Local models do not use subscription quota or API billing controls.")
-            return
-        }
-        guard let service, let profile = setupWizardSelectedProfile else { return }
-        do {
-            setupWizardUsageControls = try service.usageControlSettings(provider: profile.provider, profileID: profile.id)
-            setupWizardUsageStatus = ""
-        } catch {
-            setupWizardUsageStatus = error.localizedDescription
-        }
-    }
-
-    func updateSetupWizardUsageControls(_ update: (inout UsageControlSettings) -> Void) {
-        update(&setupWizardUsageControls)
-    }
-
-    func saveSetupWizardUsageControls() {
-        guard setupWizardProvider != .local else {
-            setupWizardUsageStatus = localized("Local models do not use subscription quota or API billing controls.")
-            return
-        }
-        guard let service, let profile = setupWizardSelectedProfile else {
-            setupWizardUsageStatus = localized("Choose a workspace folder before saving usage settings.")
-            return
-        }
-        do {
-            try service.saveUsageControlSettings(setupWizardUsageControls, provider: profile.provider, profileID: profile.id)
-            setupWizardUsageStatus = localized("Local usage settings saved.")
-            if settings.defaultProvider == profile.provider,
-               selectedProfileIDs[profile.provider] == profile.id {
-                usageControls = setupWizardUsageControls
-                loadedUsageControlsScopeKey = "\(profile.provider.rawValue):\(profile.id.uuidString.lowercased())"
-            }
-        } catch {
-            setupWizardUsageStatus = error.localizedDescription
-        }
-    }
-
-    func setSetupWizardNotificationsEnabled(_ enabled: Bool) {
-        guard let service, let profile = setupWizardSelectedProfile else { return }
-        if !enabled {
-            persistSetupWizardNotificationPreference(false, service: service, profile: profile)
-            return
-        }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.persistSetupWizardNotificationPreference(granted, service: service, profile: profile)
-                if self.setupWizardProvider == profile.provider,
-                   self.setupWizardSelectedProfile?.id == profile.id,
-                   let error {
-                    self.setupWizardUsageStatus = String(format: self.localized("Could not enable macOS notifications: %@"), error.localizedDescription)
-                } else if self.setupWizardProvider == profile.provider,
-                          self.setupWizardSelectedProfile?.id == profile.id,
-                          !granted {
-                    self.setupWizardUsageStatus = self.localized("macOS permission was not granted; in-app reminders still work.")
-                }
-            }
-        }
-    }
-
-    private func persistSetupWizardNotificationPreference(_ enabled: Bool, service: BridgeService, profile: AccountProfile) {
-        do {
-            var updated = try service.usageControlSettings(provider: profile.provider, profileID: profile.id)
-            updated.macOSNotificationsEnabled = enabled
-            try service.saveUsageControlSettings(updated, provider: profile.provider, profileID: profile.id)
-            if setupWizardProvider == profile.provider, setupWizardSelectedProfile?.id == profile.id {
-                setupWizardUsageControls.macOSNotificationsEnabled = enabled
-                setupWizardUsageStatus = enabled
-                    ? localized("macOS usage notifications are enabled.")
-                    : localized("macOS notifications are off; in-app reminders remain available.")
-            }
-            if settings.defaultProvider == profile.provider,
-               selectedProfileIDs[profile.provider] == profile.id {
-                usageControls = updated
-                loadedUsageControlsScopeKey = "\(profile.provider.rawValue):\(profile.id.uuidString.lowercased())"
-            }
-        } catch {
-            if setupWizardProvider == profile.provider, setupWizardSelectedProfile?.id == profile.id {
-                setupWizardUsageStatus = error.localizedDescription
-            }
+            setupWizard.initialize(workspaceRootConfigured: workspaceRootIsConfigured)
         }
     }
 
     private func reportOperationError(_ message: String) {
-        if isSetupWizardPresented {
-            setupWizardError = message
+        if setupWizard.isPresented {
+            setupWizard.errorMessage = message
             errorMessage = nil
         } else {
             errorMessage = message
@@ -1593,7 +1108,7 @@ final class AppModel {
         }
     }
 
-    private func clearAPIAuthorization() {
+    func clearAPIAuthorization() {
         apiBudget = ""
         apiKey = ""
         confirmAPIRun = false
@@ -1634,12 +1149,12 @@ final class AppModel {
                 self.service = service
                 workspaceRootPath = selected.path
                 errorMessage = nil
-                setupWizardError = nil
+                setupWizard.errorMessage = nil
                 status = localized("工作區資料根目錄已更新；舊資料仍保留在原位置。")
                 refresh(forceUsageStatistics: true)
-                if setupWizardCLIPath.isEmpty {
-                    setupWizardCLIPath = UserDefaults.standard.string(forKey: Self.setupWizardCLIPathPreferenceKey(for: setupWizardProvider))
-                        ?? settings.binaryPath(for: setupWizardProvider)
+                if setupWizard.cliPath.isEmpty {
+                    setupWizard.cliPath = UserDefaults.standard.string(forKey: SetupWizardModel.cliPathPreferenceKey(for: setupWizard.provider))
+                        ?? settings.binaryPath(for: setupWizard.provider)
                         ?? ""
                 }
             } catch {
@@ -1686,7 +1201,7 @@ final class AppModel {
         checkAuthentication(for: profile, completion: nil)
     }
 
-    private func checkAuthentication(
+    func checkAuthentication(
         for profile: AccountProfile,
         completion: ((AuthAssessment?, Error?) -> Void)?
     ) {
@@ -2891,7 +2406,7 @@ final class AppModel {
         terminalLaunch = spec
         terminalRunning = true
         status = "已在 App 內開啟官方 CLI 登入流程。登入由你在終端機完成。"
-        setupWizardError = nil
+        setupWizard.errorMessage = nil
     }
 
     func openLocalShell() {
@@ -2995,7 +2510,7 @@ final class AppModel {
         return FileManager.default.isExecutableFile(atPath: sibling.path) ? sibling : nil
     }
 
-    private func selectOrCreateSession(for provider: AgentProvider, anchoredTo anchor: SessionRecord) {
+    func selectOrCreateSession(for provider: AgentProvider, anchoredTo anchor: SessionRecord) {
         guard isProjectConversationActive else { return }
         guard let profileID = selectedProfileIDs[provider], let service else { return }
         let access: AccessMode

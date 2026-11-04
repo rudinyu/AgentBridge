@@ -27,7 +27,7 @@ extension MainWindowView {
                 ContentUnavailableView("選擇或建立工作階段", systemImage: "bubble.left.and.bubble.right", description: Text("先選擇 Git 儲存庫，再開始一段固定版本的專案對話。"))
                     .frame(maxWidth: .infinity, maxHeight: model.terminalLaunch == nil ? .infinity : 110)
             }
-            if !model.isSetupWizardPresented, let launch = model.terminalLaunch {
+            if !model.setupWizard.isPresented, let launch = model.terminalLaunch {
                 EmbeddedTerminalPanel(model: model, launch: launch)
             }
         }

@@ -3,8 +3,9 @@ import SwiftUI
 
 struct SetupWizardView: View {
     @Bindable var model: AppModel
+    @Bindable var wizard: SetupWizardModel
 
-    private var stepIndex: Int { SetupWizardStep.allCases.firstIndex(of: model.setupWizardStep) ?? 0 }
+    private var stepIndex: Int { SetupWizardStep.allCases.firstIndex(of: wizard.currentStep) ?? 0 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,8 +32,8 @@ struct SetupWizardView: View {
                 .interactiveDismissDisabled(model.terminalRunning)
         }
         .onAppear {
-            if model.setupWizardStep == .commandLine && model.setupWizardProvider != .local { model.checkSetupWizardCLIAvailability() }
-            if model.setupWizardStep == .usage { model.loadSetupWizardUsageControls() }
+            if wizard.currentStep == .commandLine && wizard.provider != .local { wizard.checkCLIAvailability() }
+            if wizard.currentStep == .usage { wizard.loadUsageControls() }
         }
     }
 
@@ -57,7 +58,7 @@ struct SetupWizardView: View {
             }
             .pickerStyle(.menu)
             if model.workspaceRootIsConfigured {
-                Button(model.localized("Close for now")) { model.dismissSetupWizardForNow() }
+                Button(model.localized("Close for now")) { wizard.dismissForNow() }
                     .disabled(model.isChangingWorkspaceRoot || model.terminalLaunch != nil)
             }
         }
@@ -66,10 +67,10 @@ struct SetupWizardView: View {
     }
 
     private var stepTitle: String {
-        switch model.setupWizardStep {
+        switch wizard.currentStep {
         case .welcome: "Welcome"
         case .workspace: "Workspace folder"
-        case .commandLine: model.setupWizardProvider == .local ? "Local model" : "CLI"
+        case .commandLine: wizard.provider == .local ? "Local model" : "CLI"
         case .account: "Account and memory"
         case .usage: "Usage settings"
         case .review: "Review"
@@ -78,7 +79,7 @@ struct SetupWizardView: View {
 
     @ViewBuilder
     private var stepContent: some View {
-        switch model.setupWizardStep {
+        switch wizard.currentStep {
         case .welcome: welcomeStep
         case .workspace: workspaceStep
         case .commandLine: commandLineStep
@@ -99,8 +100,8 @@ struct SetupWizardView: View {
             GroupBox(model.localized("Provider for this setup")) {
                 VStack(alignment: .leading, spacing: 10) {
                     Picker(model.localized("Provider"), selection: Binding(
-                        get: { model.setupWizardProvider },
-                        set: { model.selectSetupWizardProvider($0) }
+                        get: { wizard.provider },
+                        set: { wizard.selectProvider($0) }
                     )) {
                         Text("Codex").tag(AgentProvider.codex)
                         Text("Claude").tag(AgentProvider.claude)
@@ -114,7 +115,7 @@ struct SetupWizardView: View {
                 .padding(.vertical, 4)
             }
             Label(model.localized("Official CLI subscription login is the default setup path. Codex is subscription-only."), systemImage: "checkmark.shield")
-            if model.setupWizardProvider == .claude {
+            if wizard.provider == .claude {
                 Label(model.localized("Claude API setup is not part of this wizard. Existing usage settings stay unchanged unless you explicitly switch them."), systemImage: "lock.shield")
                     .foregroundStyle(.secondary)
             }
@@ -175,7 +176,7 @@ struct SetupWizardView: View {
 
     @ViewBuilder
     private var commandLineStep: some View {
-        if model.setupWizardProvider == .local {
+        if wizard.provider == .local {
             VStack(alignment: .leading, spacing: 18) {
                 Text(model.localized("Configure a local model"))
                     .font(.largeTitle.weight(.semibold))
@@ -191,7 +192,7 @@ struct SetupWizardView: View {
 
     private var cloudCommandLineStep: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(String(format: model.localized("Set up the %@ CLI"), model.setupWizardProvider.rawValue.capitalized))
+            Text(String(format: model.localized("Set up the %@ CLI"), wizard.provider.rawValue.capitalized))
                 .font(.largeTitle.weight(.semibold))
             Text(model.localized("AgentBridge uses the provider's official command-line app and its own sign-in flow. It never installs or updates the CLI for you."))
                 .foregroundStyle(.secondary)
@@ -199,20 +200,20 @@ struct SetupWizardView: View {
             GroupBox(model.localized("Executable path")) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
-                        TextField(model.localized("Leave blank to search the standard install locations"), text: $model.setupWizardCLIPath)
+                        TextField(model.localized("Leave blank to search the standard install locations"), text: $wizard.cliPath)
                             .textFieldStyle(.roundedBorder)
-                            .onChange(of: model.setupWizardCLIPath) { _, _ in model.checkSetupWizardCLIAvailability() }
-                        Button(model.localized("Choose…")) { model.chooseSetupWizardCLIPath() }
+                            .onChange(of: wizard.cliPath) { _, _ in wizard.checkCLIAvailability() }
+                        Button(model.localized("Choose…")) { wizard.chooseCLIPath() }
                     }
                     HStack(spacing: 8) {
-                        Button(model.localized("Check path")) { model.checkSetupWizardCLIAvailability() }
-                        Button(model.localized("Save CLI path")) { model.saveSetupWizardCLIPath() }
+                        Button(model.localized("Check path")) { wizard.checkCLIAvailability() }
+                        Button(model.localized("Save CLI path")) { wizard.saveCLIPath() }
                             .buttonStyle(.borderedProminent)
                     }
-                    if !model.setupWizardCLIStatus.isEmpty {
-                        Label(model.localized(model.setupWizardCLIStatus), systemImage: model.setupWizardResolvedCLIPath == nil ? "exclamationmark.triangle" : "checkmark.circle")
+                    if !wizard.cliStatus.isEmpty {
+                        Label(model.localized(wizard.cliStatus), systemImage: wizard.resolvedCLIPath == nil ? "exclamationmark.triangle" : "checkmark.circle")
                             .font(.callout)
-                            .foregroundStyle(model.setupWizardResolvedCLIPath == nil ? .orange : .secondary)
+                            .foregroundStyle(wizard.resolvedCLIPath == nil ? .orange : .secondary)
                             .textSelection(.enabled)
                     }
                 }
@@ -234,38 +235,38 @@ struct SetupWizardView: View {
 
     private var accountStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(model.localized(model.setupWizardProvider == .local
+            Text(model.localized(wizard.provider == .local
                 ? "Choose a local account and review memory consent"
                 : "Choose an account and review memory consent"))
                 .font(.largeTitle.weight(.semibold))
-            Text(model.localized(model.setupWizardProvider == .local
+            Text(model.localized(wizard.provider == .local
                 ? "This local account only scopes memory consent. It has no provider login, credential folder, subscription, or API billing."
                 : "Provider credentials remain in the official CLI's existing login or a separate account profile. Built-in login details are never copied or replaced."))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            GroupBox(model.localized(model.setupWizardProvider == .local ? "Local memory account" : "Official CLI account")) {
+            GroupBox(model.localized(wizard.provider == .local ? "Local memory account" : "Official CLI account")) {
                 VStack(alignment: .leading, spacing: 12) {
-                    let profiles = model.accountProfiles[model.setupWizardProvider] ?? []
+                    let profiles = model.accountProfiles[wizard.provider] ?? []
                     if profiles.isEmpty {
                         Text(model.localized("Choose a workspace folder to load account profiles."))
                             .foregroundStyle(.secondary)
                     } else {
                         Picker(model.localized("Selected account"), selection: Binding<UUID?>(
-                            get: { model.setupWizardSelectedProfile?.id },
-                            set: { if let id = $0 { model.selectSetupWizardProfile(id) } }
+                            get: { wizard.selectedProfile?.id },
+                            set: { if let id = $0 { wizard.selectProfile(id) } }
                         )) {
                             ForEach(profiles) { profile in
                                 Text(profile.name).tag(Optional(profile.id))
                             }
                         }
 
-                        if let profile = model.setupWizardSelectedProfile {
-                            if model.setupWizardProvider == .local {
+                        if let profile = wizard.selectedProfile {
+                            if wizard.provider == .local {
                                 Label(model.localized("Local account selected. No sign-in check is needed."), systemImage: "checkmark.circle")
                                     .foregroundStyle(.secondary)
                             } else {
-                                if let assessment = model.setupWizardAuthentication {
+                                if let assessment = wizard.authentication {
                                     Label(model.localized(assessment.message), systemImage: assessment.confirmedSubscription ? "checkmark.seal" : "exclamationmark.shield")
                                         .foregroundStyle(assessment.confirmedSubscription ? Color.secondary : Color.orange)
                                         .fixedSize(horizontal: false, vertical: true)
@@ -274,11 +275,11 @@ struct SetupWizardView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 HStack(spacing: 10) {
-                                    Button(model.localized("Check subscription sign-in")) { model.checkSetupWizardAuthentication() }
-                                        .disabled(model.setupWizardAuthCheckInProgress || model.setupWizardSavedCLIPath == nil || model.setupWizardCLISettingIsDirty)
+                                    Button(model.localized("Check subscription sign-in")) { wizard.checkAuthentication() }
+                                        .disabled(wizard.authCheckInProgress || wizard.savedCLIPath == nil || wizard.cliSettingIsDirty)
                                     if !profile.usesExistingLogin {
-                                        Button(model.localized("Open sign-in in AgentBridge")) { model.openSetupWizardProfileLogin() }
-                                            .disabled(model.terminalRunning || model.setupWizardSavedCLIPath == nil || model.setupWizardCLISettingIsDirty)
+                                        Button(model.localized("Open sign-in in AgentBridge")) { wizard.openProfileLogin() }
+                                            .disabled(model.terminalRunning || wizard.savedCLIPath == nil || wizard.cliSettingIsDirty)
                                     }
                                 }
                                 if profile.usesExistingLogin {
@@ -288,10 +289,10 @@ struct SetupWizardView: View {
                                 }
                             }
                             Toggle(model.localized("Allow this account to load and save shared project memory"), isOn: Binding(
-                                get: { model.setupWizardSelectedProfile?.allowsSharedMemory ?? false },
-                                set: { model.setSetupWizardMemorySharing($0) }
+                                get: { wizard.selectedProfile?.allowsSharedMemory ?? false },
+                                set: { wizard.setMemorySharing($0) }
                             ))
-                            .disabled(model.setupWizardSelectedProfile == nil)
+                            .disabled(wizard.selectedProfile == nil)
                             Text(model.localized("Existing memory choices are preserved. New isolated accounts start with sharing enabled and can be changed here."))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -302,18 +303,18 @@ struct SetupWizardView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox(model.localized(model.setupWizardProvider == .local
+            GroupBox(model.localized(wizard.provider == .local
                 ? "Add a separate local memory account"
                 : "Add a separate account")) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        TextField(model.localized("Display name"), text: $model.setupWizardProfileName)
-                        Button(model.localized(model.setupWizardProvider == .local ? "Add local memory account" : "Add isolated account")) {
-                            _ = model.createSetupWizardProfile(name: model.setupWizardProfileName)
+                        TextField(model.localized("Display name"), text: $wizard.profileName)
+                        Button(model.localized(wizard.provider == .local ? "Add local memory account" : "Add isolated account")) {
+                            _ = wizard.createProfile(name: wizard.profileName)
                         }
-                        .disabled(model.setupWizardProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(wizard.profileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    Text(model.localized(model.setupWizardProvider == .local
+                    Text(model.localized(wizard.provider == .local
                         ? "The new local account has its own memory-consent setting. It does not create a credential folder or start a sign-in flow."
                         : "The new profile uses a separate CLI configuration folder and starts with shared memory enabled. Sign-in starts only when you press the button above for that profile."))
                         .font(.caption)
@@ -326,7 +327,7 @@ struct SetupWizardView: View {
 
     @ViewBuilder
     private var usageStep: some View {
-        if model.setupWizardProvider == .local {
+        if wizard.provider == .local {
             localUsageStep
         } else {
             cloudUsageStep
@@ -353,7 +354,7 @@ struct SetupWizardView: View {
             GroupBox(model.localized("Default for new sessions")) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(String(format: model.localized("Current app default: %@"), model.settings.defaultProvider.rawValue.capitalized))
-                    if model.setupWizardProvider == .codex {
+                    if wizard.provider == .codex {
                         Text(model.localized("Codex uses official CLI subscription sign-in."))
                             .foregroundStyle(.secondary)
                     } else if model.settings.defaultProvider == .claude && model.settings.usageMode == .api {
@@ -363,22 +364,22 @@ struct SetupWizardView: View {
                         Text(model.localized("Claude uses official CLI subscription sign-in by default."))
                             .foregroundStyle(.secondary)
                     }
-                    if model.settings.defaultProvider != model.setupWizardProvider {
-                        if model.settings.usageMode == .api && model.setupWizardProvider == .codex {
+                    if model.settings.defaultProvider != wizard.provider {
+                        if model.settings.usageMode == .api && wizard.provider == .codex {
                             Label(model.localized("Saving this provider as the default also sets new sessions to subscription mode. Existing sessions keep their saved provider settings."), systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        Button(String(format: model.localized("Save %@ as the default subscription provider"), model.setupWizardProvider.rawValue.capitalized)) {
-                            model.selectSetupWizardDefaultProvider()
+                        Button(String(format: model.localized("Save %@ as the default subscription provider"), wizard.provider.rawValue.capitalized)) {
+                            wizard.selectDefaultProvider()
                         }
                         .buttonStyle(.borderedProminent)
-                    } else if model.setupWizardProvider == .claude && model.settings.usageMode == .api {
+                    } else if wizard.provider == .claude && model.settings.usageMode == .api {
                         Label(model.localized("Claude API is already selected. This wizard will not change that mode, enter an API key, or send a paid request."), systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.orange)
                             .fixedSize(horizontal: false, vertical: true)
                         Button(model.localized("Use subscription sign-in for new Claude sessions")) {
-                            model.selectSetupWizardSubscriptionMode()
+                            wizard.selectSubscriptionMode()
                         }
                     } else {
                         Label(model.localized("New sessions use official CLI subscription sign-in by default."), systemImage: "checkmark.shield")
@@ -396,16 +397,16 @@ struct SetupWizardView: View {
                     usageLimitRow(model.localized("Runs in rolling 7 days"), keyPath: \.subscriptionWeeklyRunLimit)
                     usageLimitRow(model.localized("Runs in current AgentBridge session"), keyPath: \.subscriptionSessionRunLimit)
                     Toggle(model.localized("Request macOS threshold notifications"), isOn: Binding(
-                        get: { model.setupWizardUsageControls.macOSNotificationsEnabled },
-                        set: { model.setSetupWizardNotificationsEnabled($0) }
+                        get: { wizard.usageControls.macOSNotificationsEnabled },
+                        set: { wizard.setNotificationsEnabled($0) }
                     ))
                     Text(model.localized("A missing cap means unlimited. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button(model.localized("Save local usage settings")) { model.saveSetupWizardUsageControls() }
+                    Button(model.localized("Save local usage settings")) { wizard.saveUsageControls() }
                         .buttonStyle(.borderedProminent)
-                    if !model.setupWizardUsageStatus.isEmpty {
-                        Text(model.localized(model.setupWizardUsageStatus))
+                    if !wizard.usageStatus.isEmpty {
+                        Text(model.localized(wizard.usageStatus))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -420,7 +421,7 @@ struct SetupWizardView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text(model.localized("Review setup"))
                 .font(.largeTitle.weight(.semibold))
-            Text(model.localized(model.setupWizardProvider == .local
+            Text(model.localized(wizard.provider == .local
                 ? "Saving settings does not contact a model. Connection checks run only after you select Test connection."
                 : "Saving account or default settings can prepare a local session; this does not run the provider or send a model request. Sign-in and status checks start the official CLI only after you click them."))
                 .foregroundStyle(.secondary)
@@ -429,10 +430,10 @@ struct SetupWizardView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     readinessRow(
                         model.localized("Workspace folder"),
-                        complete: model.setupWizardReadiness.workspaceConfigured,
+                        complete: wizard.readiness.workspaceConfigured,
                         detail: model.workspaceRootPath.isEmpty ? model.localized("Required. Choose a usable data folder.") : model.workspaceRootPath
                     )
-                    if model.setupWizardProvider == .local {
+                    if wizard.provider == .local {
                         let local = model.settings.localModel
                         let isConfigured = !local.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             && !model.localModelSettingsAreDirty
@@ -448,18 +449,18 @@ struct SetupWizardView: View {
                     } else {
                         readinessRow(
                             model.localized("Official CLI"),
-                            complete: model.setupWizardReadiness.commandLineAvailable && !model.setupWizardCLISettingIsDirty,
-                            detail: model.setupWizardCLISettingIsDirty
+                            complete: wizard.readiness.commandLineAvailable && !wizard.cliSettingIsDirty,
+                            detail: wizard.cliSettingIsDirty
                                 ? model.localized("The CLI path has edits that are not saved yet.")
-                                : (model.setupWizardSavedCLIPath ?? model.localized("Not found. Install the official CLI or save its executable path."))
+                                : (wizard.savedCLIPath ?? model.localized("Not found. Install the official CLI or save its executable path."))
                         )
                         readinessRow(
                             model.localized("Subscription sign-in"),
-                            complete: model.setupWizardAuthentication?.confirmedSubscription == true,
-                            detail: model.setupWizardAuthentication.map { model.localized($0.message) }
+                            complete: wizard.authentication?.confirmedSubscription == true,
+                            detail: wizard.authentication.map { model.localized($0.message) }
                                 ?? model.localized("Not checked. Check sign-in in the Account step.")
                         )
-                        if model.setupWizardReadiness.subscriptionSetupReady {
+                        if wizard.readiness.subscriptionSetupReady {
                             Label(model.localized("Setup requirements are confirmed."), systemImage: "checkmark.seal.fill")
                                 .foregroundStyle(.green)
                         } else {
@@ -472,7 +473,7 @@ struct SetupWizardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
             }
-            if model.setupWizardProvider == .claude,
+            if wizard.provider == .claude,
                model.settings.defaultProvider == .claude,
                model.settings.usageMode == .api {
                 Label(model.localized("Existing Claude API settings are preserved. This review did not enable a key or make a paid request."), systemImage: "lock.shield")
@@ -487,31 +488,31 @@ struct SetupWizardView: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let error = model.setupWizardError, !error.isEmpty {
+            if let error = wizard.errorMessage, !error.isEmpty {
                 Label(model.localized(error), systemImage: "exclamationmark.triangle.fill")
                     .font(.callout)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if !model.setupWizardStatus.isEmpty {
-                Text(model.localized(model.setupWizardStatus))
+            } else if !wizard.status.isEmpty {
+                Text(model.localized(wizard.status))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             HStack {
-                if let previous = model.setupWizardStep.previous {
-                    Button(model.localized("Back")) { model.moveSetupWizard(to: previous) }
+                if let previous = wizard.currentStep.previous {
+                    Button(model.localized("Back")) { wizard.move(to: previous) }
                         .disabled(model.isChangingWorkspaceRoot)
                 }
                 Spacer()
-                if let next = model.setupWizardStep.next {
-                    Button(model.localized("Continue")) { model.moveSetupWizard(to: next) }
+                if let next = wizard.currentStep.next {
+                    Button(model.localized("Continue")) { wizard.move(to: next) }
                         .buttonStyle(.borderedProminent)
                         .disabled(model.isChangingWorkspaceRoot || !SetupWizardFlow.canAdvance(
-                            from: model.setupWizardStep,
+                            from: wizard.currentStep,
                             workspaceRootConfigured: model.workspaceRootIsConfigured
                         ))
                 } else {
-                    Button(model.localized("Finish setup")) { model.finishSetupWizard() }
+                    Button(model.localized("Finish setup")) { wizard.finish() }
                         .buttonStyle(.borderedProminent)
                         .disabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminalLaunch != nil)
                 }
@@ -522,15 +523,15 @@ struct SetupWizardView: View {
     }
 
     private var officialQuickStartURL: URL? {
-        guard model.setupWizardProvider != .local else { return nil }
-        return URL(string: model.setupWizardProvider == .codex
+        guard wizard.provider != .local else { return nil }
+        return URL(string: wizard.provider == .codex
             ? "https://developers.openai.com/codex/cli"
             : "https://code.claude.com/docs/en/quickstart")
     }
 
     private var officialAuthenticationURL: URL? {
-        guard model.setupWizardProvider != .local else { return nil }
-        return URL(string: model.setupWizardProvider == .codex
+        guard wizard.provider != .local else { return nil }
+        return URL(string: wizard.provider == .codex
             ? "https://developers.openai.com/codex/auth"
             : "https://code.claude.com/docs/en/authentication")
     }
@@ -546,9 +547,9 @@ struct SetupWizardView: View {
 
     private func usageLimitBinding(_ keyPath: WritableKeyPath<UsageControlSettings, Int?>) -> Binding<Int> {
         Binding(
-            get: { model.setupWizardUsageControls[keyPath: keyPath] ?? 0 },
+            get: { wizard.usageControls[keyPath: keyPath] ?? 0 },
             set: { value in
-                model.updateSetupWizardUsageControls { controls in
+                wizard.updateUsageControls { controls in
                     controls[keyPath: keyPath] = value == 0 ? nil : value
                 }
             }
