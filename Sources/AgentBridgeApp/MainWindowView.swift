@@ -64,16 +64,16 @@ struct MainWindowView: View {
             Text("這會刪除此來源儲存庫與固定提交版本的對話記憶與備註。provider 原生工作階段不會被修改。")
         }
         .fileImporter(
-            isPresented: $model.isImportingExtensionDescriptor,
+            isPresented: Bindable(model.extensions).isImportingExtensionDescriptor,
             allowedContentTypes: [.json],
             allowsMultipleSelection: false,
-            onCompletion: model.importExtensionDescriptor
+            onCompletion: model.extensions.importExtensionDescriptor
         )
         .onChange(of: model.selectedSessionID) { _, _ in model.selectedSessionDidChange() }
         .onChange(of: model.isLocalProviderContext) { _, isLocal in
             if isLocal && (mainArea == .autonomous || mainArea == .extensions) { mainArea = .chats }
         }
-        .onChange(of: model.selectedExtensionID) { _, _ in model.selectedExtensionDidChange() }
+        .onChange(of: model.extensions.selectedExtensionID) { _, _ in model.extensions.selectedExtensionDidChange() }
         .onChange(of: model.setupWizard.isPresented) { _, isPresented in
             if !isPresented { model.errorMessage = nil }
         }

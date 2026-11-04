@@ -290,11 +290,11 @@ struct AutonomousWorkflowView: View {
                 Text("Planner extensions are disabled for the planning request.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-            } else if !model.activeExtensionConfigurations.isEmpty {
+            } else if !model.extensions.activeExtensionConfigurations.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Approved Skills / MCP for this role")
                         .font(.caption2.weight(.semibold))
-                    ForEach(model.activeExtensionConfigurations) { configuration in
+                    ForEach(model.extensions.activeExtensionConfigurations) { configuration in
                         Toggle(isOn: extensionBinding(role: role, id: configuration.id)) {
                             Text("\(configuration.kind.rawValue.uppercased()) · \(configuration.name)")
                                 .font(.caption2)
@@ -890,13 +890,13 @@ struct AutonomousWorkflowView: View {
 
     private var hasControlExtensionSelected: Bool {
         let selected = selectedExtensionIDs[.implementer, default: []]
-        return model.activeExtensionConfigurations.contains { selected.contains($0.id) && $0.macControlAccessMode == .control }
+        return model.extensions.activeExtensionConfigurations.contains { selected.contains($0.id) && $0.macControlAccessMode == .control }
     }
 
     private var hasControlExtensionSelectedOutsideImplementer: Bool {
         [WorkflowRoleSelection.planner, .researcher, .reviewer].contains { role in
             let selected = selectedExtensionIDs[role, default: []]
-            return model.activeExtensionConfigurations.contains { selected.contains($0.id) && $0.macControlAccessMode == .control }
+            return model.extensions.activeExtensionConfigurations.contains { selected.contains($0.id) && $0.macControlAccessMode == .control }
         }
     }
 

@@ -242,22 +242,22 @@ extension MainWindowView {
             VStack(alignment: .leading, spacing: 7) {
                 Text("Imports are inert descriptors. Grants are narrow per-project policy metadata only; they do not activate or execute provider extensions. Import never runs scripts.")
                     .font(.caption2).foregroundStyle(.orange)
-                Button("Import descriptor JSON…") { model.isImportingExtensionDescriptor = true }
-                if model.extensionDescriptors.isEmpty {
+                Button("Import descriptor JSON…") { model.extensions.isImportingExtensionDescriptor = true }
+                if model.extensions.extensionDescriptors.isEmpty {
                     Text("No descriptors imported.").font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Picker("Descriptor", selection: $model.selectedExtensionID) {
+                    Picker("Descriptor", selection: Bindable(model.extensions).selectedExtensionID) {
                         Text("Select descriptor").tag("")
-                        ForEach(model.extensionDescriptors) { descriptor in
+                        ForEach(model.extensions.extensionDescriptors) { descriptor in
                             Text("\(descriptor.kind.rawValue.uppercased()) · \(descriptor.name)").tag(descriptor.id)
                         }
                     }
-                    if let descriptor = model.selectedExtensionDescriptor {
+                    if let descriptor = model.extensions.selectedExtensionDescriptor {
                         Text("\(descriptor.id) · v\(descriptor.version)\n\(descriptor.summary)")
                             .font(.caption2).textSelection(.enabled)
                         Text("Requested: \(descriptor.requestedPermissions.map(\.rawValue).joined(separator: ", "))")
                             .font(.system(size: 8, design: .monospaced)).foregroundStyle(.secondary)
-                        if let grant = model.selectedExtensionGrant {
+                        if let grant = model.extensions.selectedExtensionGrant {
                             Text("Current project grant: \(grant.permissions.map(\.rawValue).joined(separator: ", "))")
                                 .font(.caption2).foregroundStyle(.green)
                         } else {
@@ -265,10 +265,10 @@ extension MainWindowView {
                         }
                         ForEach(ExtensionPermission.allCases, id: \.self) { permission in
                             Toggle(permission.rawValue, isOn: Binding(
-                                get: { model.selectedExtensionPermissions.contains(permission) },
+                                get: { model.extensions.selectedExtensionPermissions.contains(permission) },
                                 set: { enabled in
-                                    if enabled { model.selectedExtensionPermissions.insert(permission) }
-                                    else { model.selectedExtensionPermissions.remove(permission) }
+                                    if enabled { model.extensions.selectedExtensionPermissions.insert(permission) }
+                                    else { model.extensions.selectedExtensionPermissions.remove(permission) }
                                 }
                             ))
                             .font(.caption2)
@@ -276,13 +276,13 @@ extension MainWindowView {
                         }
                         Text("Allowed relative paths · one normalized path per line")
                             .font(.caption2)
-                        TextEditor(text: $model.extensionPathScopesText).frame(minHeight: 38, maxHeight: 70)
+                        TextEditor(text: Bindable(model.extensions).extensionPathScopesText).frame(minHeight: 38, maxHeight: 70)
                         Text("Allowed exact hostnames · one per line")
                             .font(.caption2)
-                        TextEditor(text: $model.extensionHostScopesText).frame(minHeight: 38, maxHeight: 70)
+                        TextEditor(text: Bindable(model.extensions).extensionHostScopesText).frame(minHeight: 38, maxHeight: 70)
                         HStack {
-                            Button("Grant selected scopes") { model.grantSelectedExtension() }
-                            Button("Revoke for this project", role: .destructive) { model.revokeSelectedExtension() }
+                            Button("Grant selected scopes") { model.extensions.grantSelectedExtension() }
+                            Button("Revoke for this project", role: .destructive) { model.extensions.revokeSelectedExtension() }
                         }
                     }
                 }

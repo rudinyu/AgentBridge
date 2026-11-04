@@ -48,7 +48,7 @@ struct ActiveExtensionsView: View {
                     refreshScopeState()
                 }
             )
-            if let error = localError ?? model.activeExtensionError {
+            if let error = localError ?? model.extensions.activeExtensionError {
                 Label(model.localized(error), systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
                     .font(.callout)
@@ -57,8 +57,8 @@ struct ActiveExtensionsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             }
-            if !localStatus.isEmpty || !model.activeExtensionStatus.isEmpty {
-                Label(model.localized(localStatus.isEmpty ? model.activeExtensionStatus : localStatus), systemImage: "info.circle")
+            if !localStatus.isEmpty || !model.extensions.activeExtensionStatus.isEmpty {
+                Label(model.localized(localStatus.isEmpty ? model.extensions.activeExtensionStatus : localStatus), systemImage: "info.circle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -106,7 +106,7 @@ struct ActiveExtensionsView: View {
         }
         .onAppear {
             synchronizeTargetProfile()
-            model.refreshActiveExtensionConfigurations()
+            model.extensions.refreshActiveExtensionConfigurations()
             model.refresh()
         }
         .onChange(of: model.accountProfiles) { _, _ in synchronizeTargetProfile() }
@@ -172,11 +172,11 @@ struct ActiveExtensionsView: View {
                     Button("Import MCP JSON…") { isImportingMCP = true }
                         .disabled(!model.canStartAutonomousWorkflow)
                     Spacer()
-                    Button("Refresh configurations") { model.refreshActiveExtensionConfigurations() }
+                    Button("Refresh configurations") { model.extensions.refreshActiveExtensionConfigurations() }
                 }
-                if !model.activeExtensionConfigurations.isEmpty {
+                if !model.extensions.activeExtensionConfigurations.isEmpty {
                     HStack(spacing: 12) {
-                        Text("\(model.activeExtensionConfigurations.count) runtime configuration(s) imported")
+                        Text("\(model.extensions.activeExtensionConfigurations.count) runtime configuration(s) imported")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -194,19 +194,19 @@ struct ActiveExtensionsView: View {
     private var configurationPanel: some View {
         GroupBox("Imported runtime configurations") {
             VStack(alignment: .leading, spacing: 8) {
-                if model.activeExtensionConfigurations.isEmpty {
+                if model.extensions.activeExtensionConfigurations.isEmpty {
                     Text("No active runtime configurations imported yet.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
                     Picker("Configuration", selection: $selectedExtensionID) {
                         Text("Choose a Skill, MCP, or Mac Control preset").tag("")
-                        ForEach(model.activeExtensionConfigurations) { configuration in
+                        ForEach(model.extensions.activeExtensionConfigurations) { configuration in
                             Text("\(configuration.kind.rawValue.uppercased()) · \(configuration.name)")
                                 .tag(configuration.id)
                         }
                     }
-                    ForEach(model.activeExtensionConfigurations) { configuration in
+                    ForEach(model.extensions.activeExtensionConfigurations) { configuration in
                         if selectedExtensionID.isEmpty || selectedExtensionID == configuration.id {
                             configurationSummary(configuration)
                         }
@@ -336,7 +336,7 @@ struct ActiveExtensionsView: View {
                         Text("Selected scope: \(scopeSession.provider.rawValue) · \(model.profileName(for: scopeSession)) · session \(scopeSession.id.uuidString.lowercased())")
                             .font(.system(size: 9, design: .monospaced))
                             .textSelection(.enabled)
-                        if let projectID = try? model.extensionProjectID(sessionID: scopeSession.id) {
+                        if let projectID = try? model.extensions.extensionProjectID(sessionID: scopeSession.id) {
                             Text("Project ID: \(projectID)")
                                 .font(.system(size: 9, design: .monospaced))
                                 .textSelection(.enabled)
@@ -515,7 +515,7 @@ struct ActiveExtensionsView: View {
     }
 
     private var selectedConfiguration: ActiveExtensionConfigurationSummary? {
-        model.activeExtensionConfigurations.first(where: { $0.id == selectedExtensionID })
+        model.extensions.activeExtensionConfigurations.first(where: { $0.id == selectedExtensionID })
     }
 
     private var targetProfile: AccountProfile? {
@@ -557,7 +557,7 @@ struct ActiveExtensionsView: View {
     private func refreshScopeState() {
         guard let scopeSession, !selectedExtensionID.isEmpty else { return }
         do {
-            let invocation = try model.activeExtensionsForSession(sessionID: scopeSession.id)
+            let invocation = try model.extensions.activeExtensionsForSession(sessionID: scopeSession.id)
             isCurrentlyEnabled = invocation.skills.contains(where: { $0.extensionID == selectedExtensionID })
                 || invocation.mcpServers.contains(where: { $0.extensionID == selectedExtensionID })
         } catch {
@@ -572,7 +572,7 @@ struct ActiveExtensionsView: View {
         Task { @MainActor in
             defer { isCreatingTarget = false }
             do {
-                let session = try await model.createExtensionTargetSession(sourcePath: model.repositoryPath, provider: targetProvider, profileID: profile.id)
+                let session = try await model.extensions.createExtensionTargetSession(sourcePath: model.repositoryPath, provider: targetProvider, profileID: profile.id)
                 model.refresh()
                 targetSessionID = session.id
                 localStatus = model.localized("A read-only scope session was created. No provider model was started.")
@@ -602,7 +602,7 @@ struct ActiveExtensionsView: View {
                 version: "1",
                 summary: skillSummary.trimmingCharacters(in: .whitespacesAndNewlines)
             )
-            let snapshot = try model.importSkillRuntime(descriptor: descriptor, sourceReference: url.path, skillFileURL: url)
+            let snapshot = try model.extensions.importSkillRuntime(descriptor: descriptor, sourceReference: url.path, skillFileURL: url)
             selectedExtensionID = snapshot.extensionID
             skillID = ""
             skillName = ""
@@ -621,7 +621,7 @@ struct ActiveExtensionsView: View {
             guard let url = try result.get().first else { return }
             let access = url.startAccessingSecurityScopedResource()
             defer { if access { url.stopAccessingSecurityScopedResource() } }
-            let configuration = try model.importMCPRuntimeManifest(at: url)
+            let configuration = try model.extensions.importMCPRuntimeManifest(at: url)
             selectedExtensionID = configuration.extensionID
             inspection = nil
             review = nil
@@ -640,7 +640,7 @@ struct ActiveExtensionsView: View {
         Task { @MainActor in
             defer { isTesting = false }
             do {
-                let result = try await model.testMCPRuntime(extensionID: configuration.id)
+                let result = try await model.extensions.testMCPRuntime(extensionID: configuration.id)
                 inspection = result
                 review = nil
                 executionConsent = false
@@ -655,7 +655,7 @@ struct ActiveExtensionsView: View {
     private func previewSelectedExtension() {
         guard let scopeSession, let configuration = selectedConfiguration else { return }
         do {
-            review = try model.previewExtensionActivation(extensionID: configuration.id, sessionID: scopeSession.id)
+            review = try model.extensions.previewExtensionActivation(extensionID: configuration.id, sessionID: scopeSession.id)
             executionConsent = false
             localError = nil
             refreshScopeState()
@@ -668,7 +668,7 @@ struct ActiveExtensionsView: View {
     private func enableSelectedExtension() {
         guard let review, let scopeSession else { return }
         do {
-            let grant = try model.enableExtensionRuntime(
+            let grant = try model.extensions.enableExtensionRuntime(
                 extensionID: review.extensionID,
                 sessionID: scopeSession.id,
                 reviewedDigest: review.reviewedDigest,
@@ -687,7 +687,7 @@ struct ActiveExtensionsView: View {
     private func disableSelectedExtension() {
         guard let activationReview = review, let scopeSession else { return }
         do {
-            _ = try model.disableExtensionRuntime(extensionID: activationReview.extensionID, sessionID: scopeSession.id)
+            _ = try model.extensions.disableExtensionRuntime(extensionID: activationReview.extensionID, sessionID: scopeSession.id)
             isCurrentlyEnabled = false
             self.review = nil
             executionConsent = false
@@ -733,16 +733,16 @@ private struct MacControlPresetView: View {
                 HStack(spacing: 8) {
                     TextField("Target app bundle ID", text: $targetBundleID)
                         .textFieldStyle(.roundedBorder)
-                        .disabled(model.hasActiveAutonomousWorkflow || model.isTestingMCPRuntime || isTestingConnection)
+                        .disabled(model.hasActiveAutonomousWorkflow || model.extensions.isTestingMCPRuntime || isTestingConnection)
                     Button("Choose app…", action: chooseTargetApp)
-                        .disabled(model.hasActiveAutonomousWorkflow || model.isTestingMCPRuntime || isTestingConnection)
+                        .disabled(model.hasActiveAutonomousWorkflow || model.extensions.isTestingMCPRuntime || isTestingConnection)
                 }
                 Picker("Access mode", selection: $accessMode) {
                     Text("Observe").tag(MacControlAccessMode.observe)
                     Text("Control").tag(MacControlAccessMode.control)
                 }
                 .pickerStyle(.segmented)
-                .disabled(model.hasActiveAutonomousWorkflow || model.isTestingMCPRuntime || isTestingConnection)
+                .disabled(model.hasActiveAutonomousWorkflow || model.extensions.isTestingMCPRuntime || isTestingConnection)
                 Text(accessMode == .observe
                     ? "Observe allows only the built-in observation actions."
                     : "Control adds input actions for the selected app and requires its own explicit consent.")
@@ -751,7 +751,7 @@ private struct MacControlPresetView: View {
 
                 HStack {
                     Button("Check installed helper") {
-                        model.refreshMacControlPresetStatus(
+                        model.extensions.refreshMacControlPresetStatus(
                             targetBundleID: trimmedTargetBundleID.isEmpty ? nil : trimmedTargetBundleID,
                             accessMode: accessMode
                         )
@@ -760,7 +760,7 @@ private struct MacControlPresetView: View {
                     Button {
                         checkPermissionReadiness()
                     } label: {
-                        if model.isCheckingMacControlPermissions { ProgressView().controlSize(.small) }
+                        if model.extensions.isCheckingMacControlPermissions { ProgressView().controlSize(.small) }
                         else { Label("Test permission readiness", systemImage: "checkmark.shield") }
                     }
                     .disabled(!canTestPermissionReadiness)
@@ -772,7 +772,7 @@ private struct MacControlPresetView: View {
                     .disabled(!canImportPreset)
                 }
 
-                if let status = model.detectedMacControlPresetStatus {
+                if let status = model.extensions.detectedMacControlPresetStatus {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(model.localized(status.message))
                             .font(.caption2)
@@ -803,7 +803,7 @@ private struct MacControlPresetView: View {
                     .background(.quaternary.opacity(0.23), in: RoundedRectangle(cornerRadius: 6))
                 }
 
-                if let readiness = model.macControlPermissionReadiness,
+                if let readiness = model.extensions.macControlPermissionReadiness,
                    readiness.targetBundleID == trimmedTargetBundleID {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Permission readiness · \(readiness.checkedAt.formatted(date: .abbreviated, time: .standard))")
@@ -832,7 +832,7 @@ private struct MacControlPresetView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if let error = localError ?? model.macControlStatusError {
+                if let error = localError ?? model.extensions.macControlStatusError {
                     Label(model.localized(error), systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.red)
@@ -853,7 +853,7 @@ private struct MacControlPresetView: View {
             localStatus = ""
             synchronizeSelectedConfiguration()
         }
-        .onChange(of: model.activeExtensionConfigurations) { _, _ in
+        .onChange(of: model.extensions.activeExtensionConfigurations) { _, _ in
             if let review, review.configurationDigest != selectedConfiguration?.configurationDigest {
                 self.review = nil
                 resetConsents()
@@ -892,7 +892,7 @@ private struct MacControlPresetView: View {
 
     private var selectedConfiguration: ActiveExtensionConfigurationSummary? {
         guard let selectedConfigurationID else { return nil }
-        return model.activeExtensionConfigurations.first(where: {
+        return model.extensions.activeExtensionConfigurations.first(where: {
             $0.id == selectedConfigurationID && $0.macControlTargetBundleID != nil
         })
     }
@@ -900,15 +900,15 @@ private struct MacControlPresetView: View {
     private var canTestPermissionReadiness: Bool {
         model.canStartAutonomousWorkflow
             && !isTestingConnection
-            && !model.isTestingMCPRuntime
+            && !model.extensions.isTestingMCPRuntime
             && MacControlActionPolicy.isAllowedTarget(trimmedTargetBundleID)
     }
 
     private func canTestConnection(_ configuration: ActiveExtensionConfigurationSummary) -> Bool {
         model.canStartAutonomousWorkflow
             && !isTestingConnection
-            && !model.isTestingMCPRuntime
-            && !model.isCheckingMacControlPermissions
+            && !model.extensions.isTestingMCPRuntime
+            && !model.extensions.isCheckingMacControlPermissions
             && selectedConfiguration?.id == configuration.id
             && configuration.macControlTargetBundleID == trimmedTargetBundleID
             && configuration.macControlAccessMode == accessMode
@@ -917,12 +917,12 @@ private struct MacControlPresetView: View {
     private var canImportPreset: Bool {
         model.canStartAutonomousWorkflow
             && !isTestingConnection
-            && !model.isTestingMCPRuntime
+            && !model.extensions.isTestingMCPRuntime
             && MacControlActionPolicy.isAllowedTarget(trimmedTargetBundleID)
-            && model.detectedMacControlPresetStatus?.targetBundleID == trimmedTargetBundleID
-            && model.detectedMacControlPresetStatus?.accessMode == accessMode
-            && model.detectedMacControlPresetStatus?.helperAvailable == true
-            && model.detectedMacControlPresetStatus?.proxyAvailable == true
+            && model.extensions.detectedMacControlPresetStatus?.targetBundleID == trimmedTargetBundleID
+            && model.extensions.detectedMacControlPresetStatus?.accessMode == accessMode
+            && model.extensions.detectedMacControlPresetStatus?.helperAvailable == true
+            && model.extensions.detectedMacControlPresetStatus?.proxyAvailable == true
     }
 
     private func synchronizeSelectedConfiguration() {
@@ -930,7 +930,7 @@ private struct MacControlPresetView: View {
             targetBundleID = target
             accessMode = configuration.macControlAccessMode ?? .observe
         }
-        model.refreshMacControlPresetStatus(
+        model.extensions.refreshMacControlPresetStatus(
             targetBundleID: trimmedTargetBundleID.isEmpty ? nil : trimmedTargetBundleID,
             accessMode: accessMode
         )
@@ -954,14 +954,14 @@ private struct MacControlPresetView: View {
         resetConsents()
         localError = nil
         localStatus = model.localizedFormat("Selected target %@ (%@).", url.lastPathComponent, bundleID)
-        model.refreshMacControlPresetStatus(targetBundleID: bundleID, accessMode: accessMode)
+        model.extensions.refreshMacControlPresetStatus(targetBundleID: bundleID, accessMode: accessMode)
     }
 
     private func importPreset() {
         localError = nil
         localStatus = ""
         do {
-            let configuration = try model.importMacControlPreset(
+            let configuration = try model.extensions.importMacControlPreset(
                 targetBundleID: trimmedTargetBundleID,
                 accessMode: accessMode
             )
@@ -979,11 +979,11 @@ private struct MacControlPresetView: View {
         localStatus = "Checking only the permission status reported by the installed helper…"
         Task { @MainActor in
             do {
-                let result = try await model.testMacControlPermissions(targetBundleID: trimmedTargetBundleID)
+                let result = try await model.extensions.testMacControlPermissions(targetBundleID: trimmedTargetBundleID)
                 _ = result
                 localStatus = model.localized("Permission readiness checked. This status-only test did not capture the screen, send input, or request macOS permission.")
             } catch {
-                model.macControlStatusError = error.localizedDescription
+                model.extensions.macControlStatusError = error.localizedDescription
                 localStatus = ""
             }
         }
@@ -995,7 +995,7 @@ private struct MacControlPresetView: View {
               selectedConfiguration.macControlAccessMode == accessMode,
               let scopeSessionID else { return }
         do {
-            review = try model.previewExtensionActivation(extensionID: selectedConfiguration.id, sessionID: scopeSessionID)
+            review = try model.extensions.previewExtensionActivation(extensionID: selectedConfiguration.id, sessionID: scopeSessionID)
             resetConsents()
             localError = nil
             localStatus = "Review the exact target, actions, screenshot disclosure, scope, and digest before enabling."
@@ -1016,7 +1016,7 @@ private struct MacControlPresetView: View {
         Task { @MainActor in
             defer { isTestingConnection = false }
             do {
-                let result = try await model.testMCPRuntime(extensionID: configuration.id)
+                let result = try await model.extensions.testMCPRuntime(extensionID: configuration.id)
                 guard selectedConfiguration?.id == configuration.id,
                       selectedConfiguration?.configurationDigest == configuration.configurationDigest,
                       configuration.macControlTargetBundleID == trimmedTargetBundleID,
@@ -1048,7 +1048,7 @@ private struct MacControlPresetView: View {
     private func enableSelectedPreset() {
         guard let review, let scopeSessionID else { return }
         do {
-            let grant = try model.enableExtensionRuntime(
+            let grant = try model.extensions.enableExtensionRuntime(
                 extensionID: review.extensionID,
                 sessionID: scopeSessionID,
                 reviewedDigest: review.reviewedDigest,
@@ -1068,7 +1068,7 @@ private struct MacControlPresetView: View {
     private func stopControl(sessionID: UUID) {
         guard let selectedConfiguration else { return }
         do {
-            let cancelled = try model.stopMacControl(extensionID: selectedConfiguration.id, sessionID: sessionID)
+            let cancelled = try model.extensions.stopMacControl(extensionID: selectedConfiguration.id, sessionID: sessionID)
             isEnabled = false
             enabledControlSessions = []
             review = nil
@@ -1089,7 +1089,7 @@ private struct MacControlPresetView: View {
             return
         }
         enabledControlSessions = model.sessions.filter { session in
-            guard let invocation = try? model.activeExtensionsForSession(sessionID: session.id) else { return false }
+            guard let invocation = try? model.extensions.activeExtensionsForSession(sessionID: session.id) else { return false }
             return invocation.mcpServers.contains { $0.extensionID == selectedConfiguration.id }
         }
         guard let scopeSessionID else {
@@ -1097,7 +1097,7 @@ private struct MacControlPresetView: View {
             return
         }
         do {
-            let invocation = try model.activeExtensionsForSession(sessionID: scopeSessionID)
+            let invocation = try model.extensions.activeExtensionsForSession(sessionID: scopeSessionID)
             isEnabled = invocation.mcpServers.contains(where: { $0.extensionID == selectedConfiguration.id })
         } catch {
             localError = error.localizedDescription
@@ -1153,7 +1153,7 @@ private struct MacControlPresetView: View {
                 Button("Preview exact scope and consent") { previewSelectedPreset() }
                     .disabled(scopeSessionID == nil
                         || isTestingConnection
-                        || model.isTestingMCPRuntime
+                        || model.extensions.isTestingMCPRuntime
                         || configuration.macControlTargetBundleID != trimmedTargetBundleID
                         || configuration.macControlAccessMode != accessMode)
                 if isEnabled {
@@ -1306,7 +1306,7 @@ private struct MacControlPresetView: View {
     private func disableObserve() {
         guard let selectedConfiguration, let scopeSessionID else { return }
         do {
-            _ = try model.disableExtensionRuntime(extensionID: selectedConfiguration.id, sessionID: scopeSessionID)
+            _ = try model.extensions.disableExtensionRuntime(extensionID: selectedConfiguration.id, sessionID: scopeSessionID)
             isEnabled = false
             review = nil
             localStatus = "Observe access was disabled for the selected scope."
