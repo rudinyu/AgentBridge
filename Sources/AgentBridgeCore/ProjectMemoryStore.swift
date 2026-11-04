@@ -310,26 +310,18 @@ public final class ProjectMemoryStore: @unchecked Sendable {
             throw Self.persistenceError("Project-memory storage directory failed integrity checks.")
         }
 
-        let lockDescriptor = Self.lockFileName.withCString {
-            openat(directoryDescriptor, $0, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
-        }
-        guard lockDescriptor >= 0 else {
-            throw Self.persistenceError("Could not safely open the project-memory lock.")
-        }
-        defer { _ = close(lockDescriptor) }
-        var lockInfo = stat()
-        guard fstat(lockDescriptor, &lockInfo) == 0,
-              (lockInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
-              lockInfo.st_uid == getuid(),
-              lockInfo.st_nlink == 1,
-              fchmod(lockDescriptor, mode_t(0o600)) == 0 else {
-            throw Self.persistenceError("Project-memory lock failed integrity checks.")
-        }
-        guard flock(lockDescriptor, LOCK_EX) == 0 else {
-            throw Self.persistenceError("Could not lock project-memory storage.")
-        }
-        defer { _ = flock(lockDescriptor, LOCK_UN) }
-        return try operation(directoryDescriptor)
+        return try PrivateLockFile.withLock(
+            named: Self.lockFileName,
+            in: directoryDescriptor,
+            create: false,
+            error: { failure in
+                switch failure {
+                case .unavailable: Self.persistenceError("Could not safely open the project-memory lock.")
+                case .notPrivateFile: Self.persistenceError("Project-memory lock failed integrity checks.")
+                case .lockFailed: Self.persistenceError("Could not lock project-memory storage.")
+                }
+            }
+        ) { try operation(directoryDescriptor) }
     }
 
     private func readDocument(directoryDescriptor: Int32) throws -> StoreDocument {

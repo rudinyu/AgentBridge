@@ -299,22 +299,13 @@ public final class BudgetLedger: @unchecked Sendable {
     private func withLedgerLock<T>(_ operation: () throws -> T) throws -> T {
         instanceLock.lock()
         defer { instanceLock.unlock() }
-
-        let descriptor = open(lockURL.path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
-        guard descriptor >= 0 else { throw BudgetLedgerError.persistence("無法開啟鎖定檔。") }
-        defer { _ = close(descriptor) }
-
-        var metadata = stat()
-        guard fstat(descriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
-              fchmod(descriptor, mode_t(0o600)) == 0 else {
-            throw BudgetLedgerError.persistence("鎖定檔不是安全的私有一般檔案。")
-        }
-        while flock(descriptor, LOCK_EX) != 0 {
-            if errno == EINTR { continue }
-            throw BudgetLedgerError.persistence("無法鎖定預算紀錄。")
-        }
-        defer { _ = flock(descriptor, LOCK_UN) }
-        return try operation()
+        return try PrivateLockFile.withLock(at: lockURL, error: { failure in
+            switch failure {
+            case .unavailable: BudgetLedgerError.persistence("無法開啟鎖定檔。")
+            case .notPrivateFile: BudgetLedgerError.persistence("鎖定檔不是安全的私有一般檔案。")
+            case .lockFailed: BudgetLedgerError.persistence("無法鎖定預算紀錄。")
+            }
+        }, operation)
     }
 
     private func readDocument(allowMissing: Bool = false) throws -> LedgerDocument {

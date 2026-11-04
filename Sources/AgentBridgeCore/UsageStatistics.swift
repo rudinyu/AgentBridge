@@ -421,20 +421,13 @@ public final class UsageControlStore: @unchecked Sendable {
     private func withLock<T>(_ operation: () throws -> T) throws -> T {
         instanceLock.lock()
         defer { instanceLock.unlock() }
-        let descriptor = open(lockURL.path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
-        guard descriptor >= 0 else { throw UsageControlError.persistence("無法開啟鎖定檔。") }
-        defer { _ = close(descriptor) }
-        var metadata = stat()
-        guard fstat(descriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
-              fchmod(descriptor, mode_t(0o600)) == 0 else {
-            throw UsageControlError.persistence("鎖定檔不是安全的一般檔案。")
-        }
-        while flock(descriptor, LOCK_EX) != 0 {
-            if errno == EINTR { continue }
-            throw UsageControlError.persistence("無法鎖定本機用量設定。")
-        }
-        defer { _ = flock(descriptor, LOCK_UN) }
-        return try operation()
+        return try PrivateLockFile.withLock(at: lockURL, error: { failure in
+            switch failure {
+            case .unavailable: UsageControlError.persistence("無法開啟鎖定檔。")
+            case .notPrivateFile: UsageControlError.persistence("鎖定檔不是安全的一般檔案。")
+            case .lockFailed: UsageControlError.persistence("無法鎖定本機用量設定。")
+            }
+        }, operation)
     }
 
     private func readDocument() throws -> UsageControlDocument {
@@ -953,20 +946,13 @@ public final class APICostControlLedger: @unchecked Sendable {
     private func withLock<T>(_ operation: () throws -> T) throws -> T {
         instanceLock.lock()
         defer { instanceLock.unlock() }
-        let descriptor = open(lockURL.path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
-        guard descriptor >= 0 else { throw APICostLedgerError.persistence("無法開啟鎖定檔。") }
-        defer { _ = close(descriptor) }
-        var metadata = stat()
-        guard fstat(descriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
-              fchmod(descriptor, mode_t(0o600)) == 0 else {
-            throw APICostLedgerError.persistence("鎖定檔不是安全的一般檔案。")
-        }
-        while flock(descriptor, LOCK_EX) != 0 {
-            if errno == EINTR { continue }
-            throw APICostLedgerError.persistence("無法鎖定本機 USD 帳本。")
-        }
-        defer { _ = flock(descriptor, LOCK_UN) }
-        return try operation()
+        return try PrivateLockFile.withLock(at: lockURL, error: { failure in
+            switch failure {
+            case .unavailable: APICostLedgerError.persistence("無法開啟鎖定檔。")
+            case .notPrivateFile: APICostLedgerError.persistence("鎖定檔不是安全的一般檔案。")
+            case .lockFailed: APICostLedgerError.persistence("無法鎖定本機 USD 帳本。")
+            }
+        }, operation)
     }
 
     private func readDocument() throws -> APICostLedgerDocument {

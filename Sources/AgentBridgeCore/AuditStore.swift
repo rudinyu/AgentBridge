@@ -256,19 +256,13 @@ public final class AuditStore: @unchecked Sendable {
     private func withStoreLock<T>(exclusive: Bool, _ operation: () throws -> T) throws -> T {
         lock.lock()
         defer { lock.unlock() }
-        let descriptor = open(storeLockURL.path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
-        guard descriptor >= 0 else { throw AgentBridgeError.persistence("無法開啟資料鎖定檔。") }
-        defer { _ = close(descriptor) }
-        var metadata = stat()
-        guard fstat(descriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
-              fchmod(descriptor, mode_t(0o600)) == 0 else {
-            throw AgentBridgeError.persistence("資料鎖定檔不是安全的一般檔案。")
-        }
-        guard flock(descriptor, exclusive ? LOCK_EX : LOCK_SH) == 0 else {
-            throw AgentBridgeError.persistence("無法鎖定資料檔案。")
-        }
-        defer { _ = flock(descriptor, LOCK_UN) }
-        return try operation()
+        return try PrivateLockFile.withLock(at: storeLockURL, exclusive: exclusive, error: { failure in
+            switch failure {
+            case .unavailable: AgentBridgeError.persistence("無法開啟資料鎖定檔。")
+            case .notPrivateFile: AgentBridgeError.persistence("資料鎖定檔不是安全的一般檔案。")
+            case .lockFailed: AgentBridgeError.persistence("無法鎖定資料檔案。")
+            }
+        }, operation)
     }
 
     private static func requireDirectory(_ url: URL) throws {

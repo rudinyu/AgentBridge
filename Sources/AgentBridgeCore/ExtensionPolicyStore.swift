@@ -627,26 +627,13 @@ enum AgentBridgePrivateJSONDocument {
             throw AgentBridgeError.persistence("Coordination storage failed private-directory checks.")
         }
 
-        let lockDescriptor = lockFileName.withCString {
-            openat(directoryDescriptor, $0, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
-        }
-        guard lockDescriptor >= 0 else {
-            throw AgentBridgeError.persistence("Could not safely open the coordination lock.")
-        }
-        defer { _ = close(lockDescriptor) }
-        var lockInfo = stat()
-        guard fstat(lockDescriptor, &lockInfo) == 0,
-              (lockInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
-              lockInfo.st_uid == getuid(), lockInfo.st_nlink == 1,
-              fchmod(lockDescriptor, mode_t(0o600)) == 0 else {
-            throw AgentBridgeError.persistence("The coordination lock is not a private regular file.")
-        }
-        while flock(lockDescriptor, LOCK_EX) != 0 {
-            if errno == EINTR { continue }
-            throw AgentBridgeError.persistence("Could not lock coordination storage.")
-        }
-        defer { _ = flock(lockDescriptor, LOCK_UN) }
-        return try operation(directoryDescriptor)
+        return try PrivateLockFile.withLock(named: lockFileName, in: directoryDescriptor, create: true, error: { failure in
+            switch failure {
+            case .unavailable: AgentBridgeError.persistence("Could not safely open the coordination lock.")
+            case .notPrivateFile: AgentBridgeError.persistence("The coordination lock is not a private regular file.")
+            case .lockFailed: AgentBridgeError.persistence("Could not lock coordination storage.")
+            }
+        }) { try operation(directoryDescriptor) }
     }
 
     static func read(fileName: String, maximumBytes: Int, directoryDescriptor: Int32) throws -> Data? {
@@ -786,26 +773,24 @@ enum AgentBridgePrivateJSONDocument {
             throw AgentBridgeError.persistence("Legacy coordination storage failed ownership checks.")
         }
 
-        let lockDescriptor = lockFileName.withCString {
-            openat(directoryDescriptor, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
-        }
-        guard lockDescriptor >= 0 else {
+        var lockInfo = stat()
+        if lockFileName.withCString({ fstatat(directoryDescriptor, $0, &lockInfo, AT_SYMLINK_NOFOLLOW) }) != 0 {
             if errno == ENOENT { return nil }
             throw AgentBridgeError.persistence("Could not safely open the legacy coordination lock.")
         }
-        defer { _ = close(lockDescriptor) }
-        var lockInfo = stat()
-        guard fstat(lockDescriptor, &lockInfo) == 0,
-              (lockInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
-              lockInfo.st_uid == getuid(), lockInfo.st_nlink == 1 else {
-            throw AgentBridgeError.persistence("The legacy coordination lock is not a private regular file.")
-        }
-        while flock(lockDescriptor, LOCK_EX) != 0 {
-            if errno == EINTR { continue }
-            throw AgentBridgeError.persistence("Could not lock legacy coordination storage.")
-        }
-        defer { _ = flock(lockDescriptor, LOCK_UN) }
-        return try operation(directoryDescriptor)
+        return try PrivateLockFile.withLock(
+            named: lockFileName,
+            in: directoryDescriptor,
+            create: false,
+            securePermissions: false,
+            error: { failure in
+                switch failure {
+                case .unavailable: AgentBridgeError.persistence("Could not safely open the legacy coordination lock.")
+                case .notPrivateFile: AgentBridgeError.persistence("The legacy coordination lock is not a private regular file.")
+                case .lockFailed: AgentBridgeError.persistence("Could not lock legacy coordination storage.")
+                }
+            }
+        ) { try operation(directoryDescriptor) }
     }
 
     private static func writeAll(_ data: Data, descriptor: Int32) throws {

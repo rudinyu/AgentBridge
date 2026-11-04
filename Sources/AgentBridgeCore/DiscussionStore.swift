@@ -240,22 +240,19 @@ public final class DiscussionStore: @unchecked Sendable {
         let directoryDescriptor = Self.openDirectory(rootURL.path)
         guard directoryDescriptor >= 0 else { throw AgentBridgeError.persistence("Discussion storage is unavailable.") }
         defer { _ = close(directoryDescriptor) }
-        let lockDescriptor = Self.lockFileName.withCString {
-            openat(directoryDescriptor, $0, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
-        }
-        guard lockDescriptor >= 0 else { throw AgentBridgeError.persistence("Discussion-storage lock is unavailable.") }
-        defer { _ = close(lockDescriptor) }
-        var metadata = stat()
-        guard fstat(lockDescriptor, &metadata) == 0,
-              (metadata.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), metadata.st_uid == getuid(),
-              metadata.st_nlink == 1 else {
-            throw AgentBridgeError.persistence("Discussion-storage lock is invalid.")
-        }
-        guard flock(lockDescriptor, exclusive ? LOCK_EX : LOCK_SH) == 0 else {
-            throw AgentBridgeError.persistence("Could not lock discussion storage.")
-        }
-        defer { _ = flock(lockDescriptor, LOCK_UN) }
-        return try operation(directoryDescriptor)
+        return try PrivateLockFile.withLock(
+            named: Self.lockFileName,
+            in: directoryDescriptor,
+            create: false,
+            exclusive: exclusive,
+            error: { failure in
+                switch failure {
+                case .unavailable: AgentBridgeError.persistence("Discussion-storage lock is unavailable.")
+                case .notPrivateFile: AgentBridgeError.persistence("Discussion-storage lock is invalid.")
+                case .lockFailed: AgentBridgeError.persistence("Could not lock discussion storage.")
+                }
+            }
+        ) { try operation(directoryDescriptor) }
     }
 
     private static func normalized(_ input: DiscussionRecord) throws -> DiscussionRecord {
