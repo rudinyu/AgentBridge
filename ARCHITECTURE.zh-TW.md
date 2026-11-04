@@ -26,7 +26,7 @@ flowchart LR
     Terminal --> Claude
 ```
 
-圖示中的 provider CLI、SwiftTerm 與 AgentBridgeCore 都在使用者的 Mac 上執行。使用者自選資料夾存放隔離工作區與共用記憶；私有設定、帳戶資料、工作階段／稽核中繼資料、用量控制及 API 帳本留在 Application Support。模型請求依選定的官方 CLI 傳送至對應 provider。
+圖示中的 provider CLI、SwiftTerm 與 AgentBridgeCore 都在使用者的 Mac 上執行。使用者自選資料夾存放隔離工作區、共用記憶、討論與任務看板；私有設定、帳戶資料、工作階段／稽核中繼資料、用量控制、API 帳本、擴充功能政策與執行同意，以及自主執行狀態留在 Application Support。模型請求依選定的官方 CLI 傳送至對應 provider。
 
 ## App icon 設計
 
@@ -71,9 +71,9 @@ AgentBridge 0.10.0 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCo
 
 App 與 CLI 共用已保存的根目錄。CLI 可用 `agentbridge workspace set /absolute/path/to/folder` 設定，並以 `agentbridge workspace show` 查看；需要該資料夾的命令若發現尚未設定，會顯示可直接執行的設定指令。
 
-使用者選擇的資料夾採用 `<root>/workspaces/<小寫工作階段 UUID>/` 存放每個工作階段的獨立 Git 複本，並以 `<root>/shared-memory/` 存放 App/CLI 共用對話記憶。App 設定、帳戶設定資料、各 provider CLI 專用的 profile 資料夾（CLI 會在其中保存該 profile 的登入資料）、工作階段索引、稽核事件、用量控制及預算帳本，仍存放在私有的 `~/Library/Application Support/AgentBridge`。已選根目錄也會保存在該私有資料夾。
+使用者選擇的資料夾採用 `<root>/workspaces/<小寫工作階段 UUID>/` 存放每個工作階段的獨立 Git 複本，以 `<root>/shared-memory/` 存放 App/CLI 共用對話記憶，以 `<root>/discussions/` 存放先聊天後選專案的討論，並以 `<root>/task-board/` 存放平行任務看板。App 設定、帳戶設定資料、各 provider CLI 專用的 profile 資料夾（CLI 會在其中保存該 profile 的登入資料）、工作階段索引、稽核事件、用量控制、預算帳本、擴充功能政策授權、啟用擴充功能的執行同意及自主執行狀態，仍存放在私有的 `~/Library/Application Support/AgentBridge`，因為自選資料夾可能被同步或共享。舊版本將擴充功能政策與執行同意存放在自選資料夾；首次啟動時，若私有位置尚無文件，通過該儲存區完整性檢查的舊文件會一次性匯入私有資料。無效的舊文件會被略過，舊副本永不修改或刪除。已選根目錄也會保存在該私有資料夾。
 
-變更根目錄時，AgentBridge 會將既有工作區和共用記憶複製到新位置，再更新既有工作階段記錄以指向新副本。舊資料夾仍保持原樣。若目的地已有不同內容的工作區或記憶檔，遷移會停止且不會覆寫任一副本。新工作階段會建立在目前所選的根目錄。變更的是存放位置，不會改寫工作階段的來源 Repository 路徑或固定提交版本。
+變更根目錄時，AgentBridge 會將既有工作區、共用記憶、討論與任務看板記錄複製到新位置，再更新既有工作階段記錄以指向新副本。舊資料夾仍保持原樣。若目的地已有不同內容的工作區、記憶檔、討論或任務記錄，遷移會停止且不會覆寫任一副本。新根目錄不能位於目前或先前根目錄中任何由 AgentBridge 管理的資料夾內。新工作階段會建立在目前所選的根目錄。變更的是存放位置，不會改寫工作階段的來源 Repository 路徑或固定提交版本。
 
 ## 會話、隔離與切換
 
@@ -129,7 +129,7 @@ App 依選取帳戶動態統計 AgentBridge 管理的執行嘗試，顯示滾動
 
 ## 資料與剩餘邊界
 
-私有設定、帳戶設定資料、各 provider CLI 專用的 profile 資料夾（CLI 會在其中保存該 profile 的登入資料）、工作階段／稽核中繼資料、用量控制及預算帳本位於 `~/Library/Application Support/AgentBridge`，並由私有目錄權限與檔案鎖保護。隔離工作區及共用記憶位於使用者自選的工作區資料根目錄；已選根目錄保存在私有 Application Support，讓 App 與 CLI 使用相同位置。變更根目錄會複製既有工作區與記憶並更新工作階段路徑，不會刪除原本資料。敏感遮罩採最佳努力，無法識別所有未知秘密。內建 profile 仍使用 provider CLI 原本的登入資料夾。同一 macOS 使用者也能手動更改本機資料、用量控制及帳本；此工具不適合作為多人或遠端不受信任服務。
+私有設定、帳戶設定資料、各 provider CLI 專用的 profile 資料夾（CLI 會在其中保存該 profile 的登入資料）、工作階段／稽核中繼資料、用量控制及預算帳本位於 `~/Library/Application Support/AgentBridge`，並由私有目錄權限與檔案鎖保護。隔離工作區、共用記憶、討論與任務看板位於使用者自選的工作區資料根目錄；擴充功能同意與自主執行狀態則不在其中。已選根目錄保存在私有 Application Support，讓 App 與 CLI 使用相同位置。變更根目錄會複製既有工作區、記憶、討論與任務看板並更新工作階段路徑，不會刪除原本資料。敏感遮罩採最佳努力，無法識別所有未知秘密。內建 profile 仍使用 provider CLI 原本的登入資料夾。同一 macOS 使用者也能手動更改本機資料、用量控制及帳本；此工具不適合作為多人或遠端不受信任服務。
 
 ## 建置及驗收
 

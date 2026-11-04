@@ -99,11 +99,19 @@ public final class BridgeService: @unchecked Sendable {
         self.parallelTaskBoard = try ParallelTaskBoard(
             rootURL: userDataRoot.appendingPathComponent("task-board", isDirectory: true)
         )
+        // Extension grants and execution consent stay in private app data;
+        // earlier releases kept them in the user root, so import once.
         self.extensionPolicyStore = try ExtensionPolicyStore(
-            rootURL: userDataRoot.appendingPathComponent("extension-policy", isDirectory: true)
+            rootURL: store.rootURL.appendingPathComponent("extension-policy", isDirectory: true)
+        )
+        try extensionPolicyStore.importLegacyDocument(
+            from: userDataRoot.appendingPathComponent("extension-policy", isDirectory: true)
         )
         self.activeExtensionRuntimeStore = try ActiveExtensionRuntimeStore(
-            rootURL: userDataRoot.appendingPathComponent("extension-runtime", isDirectory: true)
+            rootURL: store.rootURL.appendingPathComponent("extension-runtime", isDirectory: true)
+        )
+        try activeExtensionRuntimeStore.importLegacyDocument(
+            from: userDataRoot.appendingPathComponent("extension-runtime", isDirectory: true)
         )
         self.usageControlStore = try UsageControlStore(rootURL: store.rootURL)
     }
@@ -1714,6 +1722,9 @@ public final class BridgeService: @unchecked Sendable {
             $0.standardizedFileURL.deletingLastPathComponent().appendingPathComponent("discussions", isDirectory: true)
         }
         try copyDiscussionRecords(from: discussionSourceRoots)
+        try copyTaskBoardRecords(from: memorySourceRoots.map {
+            $0.standardizedFileURL.deletingLastPathComponent().appendingPathComponent("task-board", isDirectory: true)
+        })
         return migratedSessions
     }
 
@@ -3622,6 +3633,31 @@ public final class BridgeService: @unchecked Sendable {
                 } else {
                     _ = try discussionStore.create(migrated)
                 }
+            }
+        }
+    }
+
+    private func copyTaskBoardRecords(from sourceRoots: [URL]) throws {
+        guard let destinationRoot = store.workspaceRootURL else {
+            throw AgentBridgeError.invalidInput("尚未設定工作區資料根目錄；無法複製任務看板。")
+        }
+        let destinationPath = destinationRoot.standardizedFileURL.appendingPathComponent("task-board", isDirectory: true).path
+        let uniqueSources = Dictionary(grouping: sourceRoots.map(\.standardizedFileURL), by: \.path)
+            .compactMap { $0.value.first }
+        for sourceRoot in uniqueSources where sourceRoot.path != destinationPath {
+            var metadata = stat()
+            if lstat(sourceRoot.path, &metadata) != 0 {
+                if errno == ENOENT { continue }
+                throw AgentBridgeError.persistence("無法安全檢查舊的任務看板資料夾；來源資料保持不變。")
+            }
+            guard (metadata.st_mode & S_IFMT) == S_IFDIR else {
+                throw AgentBridgeError.persistence("舊的任務看板資料夾不是一般資料夾；來源資料保持不變。")
+            }
+            let records = try ParallelTaskBoard(rootURL: sourceRoot).list()
+            do {
+                try parallelTaskBoard.importTasks(records)
+            } catch {
+                throw AgentBridgeError.persistence("目標資料根目錄已有不同內容的任務看板記錄；來源保持不變，請先處理衝突。")
             }
         }
     }

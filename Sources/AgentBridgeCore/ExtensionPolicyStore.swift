@@ -451,6 +451,25 @@ public final class ExtensionPolicyStore: @unchecked Sendable {
         }
     }
 
+    /// Imports a validated policy document from the legacy user-root
+    /// location when this private store has none yet.
+    @discardableResult
+    public func importLegacyDocument(from legacyRootURL: URL) throws -> Bool {
+        try AgentBridgePrivateJSONDocument.importLegacyDocument(
+            fileName: Self.fileName,
+            maximumBytes: Self.maximumStoredBytes,
+            from: legacyRootURL,
+            into: rootURL
+        ) { directoryDescriptor in
+            guard try AgentBridgePrivateJSONDocument.read(
+                fileName: Self.fileName,
+                maximumBytes: Self.maximumStoredBytes,
+                directoryDescriptor: directoryDescriptor
+            ) != nil else { return nil }
+            return try Self.encode(Self.readDocument(directoryDescriptor: directoryDescriptor))
+        }
+    }
+
     private static func readDocument(directoryDescriptor: Int32) throws -> ExtensionPolicyDocument {
         guard let data = try AgentBridgePrivateJSONDocument.read(
             fileName: Self.fileName,
@@ -704,6 +723,47 @@ enum AgentBridgePrivateJSONDocument {
         shouldRemoveTemporary = false
         guard fsync(directoryDescriptor) == 0 else {
             throw AgentBridgeError.persistence("Could not sync coordination storage.")
+        }
+    }
+
+    /// Copies a legacy document into `rootURL` once, only when `rootURL` has
+    /// no document yet. `validatedData` reads the document from a directory
+    /// fd, runs the owning store's integrity checks, and returns canonical
+    /// bytes (nil when absent). A missing or invalid legacy document is
+    /// skipped; the legacy copy is never modified or removed.
+    @discardableResult
+    static func importLegacyDocument(
+        fileName: String,
+        maximumBytes: Int,
+        from legacyRootURL: URL,
+        into rootURL: URL,
+        validatedData: (Int32) throws -> Data?
+    ) throws -> Bool {
+        let legacyRoot = legacyRootURL.standardizedFileURL
+        guard legacyRoot.path != rootURL.standardizedFileURL.path else { return false }
+        var metadata = stat()
+        if lstat(legacyRoot.path, &metadata) != 0 {
+            if errno == ENOENT { return false }
+            throw AgentBridgeError.persistence("Could not inspect legacy coordination storage.")
+        }
+        guard (metadata.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else { return false }
+
+        return try withLockedRoot(rootURL: rootURL) { directoryDescriptor in
+            var existing = stat()
+            if fileName.withCString({ fstatat(directoryDescriptor, $0, &existing, AT_SYMLINK_NOFOLLOW) }) == 0 {
+                return false
+            } else if errno != ENOENT {
+                throw AgentBridgeError.persistence("Could not inspect a coordination document path.")
+            }
+            let legacyData: Data?
+            do {
+                legacyData = try withLockedRoot(rootURL: legacyRoot) { try validatedData($0) }
+            } catch {
+                return false
+            }
+            guard let legacyData else { return false }
+            try write(legacyData, fileName: fileName, maximumBytes: maximumBytes, directoryDescriptor: directoryDescriptor)
+            return true
         }
     }
 

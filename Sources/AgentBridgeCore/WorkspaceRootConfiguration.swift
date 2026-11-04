@@ -193,6 +193,12 @@ public enum WorkspaceRootCoordinator {
         return selectedRoot
     }
 
+    /// Folders AgentBridge manages inside a data root, including the
+    /// legacy extension folders that may remain in earlier roots.
+    private static let managedStorageNames = [
+        "workspaces", "shared-memory", "discussions", "task-board", "extension-policy", "extension-runtime"
+    ]
+
     public static func validateConfiguredRoot(_ rootURL: URL, privateRootURL: URL) throws -> URL {
         let root = rootURL.standardizedFileURL
         guard root.path.hasPrefix("/"), root.path != "/" else {
@@ -253,13 +259,13 @@ public enum WorkspaceRootCoordinator {
             throw AgentBridgeError.invalidInput("工作區資料根目錄不能是磁碟根目錄或 AgentBridge 私人設定資料夾。")
         }
         let isInsideManagedStorage = managedWorkspaceRoots.contains { root in
-            ["workspaces", "shared-memory"].contains { name in
+            managedStorageNames.contains { name in
                 let storage = root.standardizedFileURL.appendingPathComponent(name, isDirectory: true).path
                 return canonical.path == storage || canonical.path.hasPrefix(storage + "/")
             }
         }
         guard !isInsideManagedStorage else {
-            throw AgentBridgeError.invalidInput("工作區資料根目錄不能位於 AgentBridge 管理的工作區或共用記憶資料夾內。")
+            throw AgentBridgeError.invalidInput("工作區資料根目錄不能位於 AgentBridge 管理的工作區、共用記憶、討論或任務看板資料夾內。")
         }
         var canonicalMetadata = stat()
         guard lstat(canonical.path, &canonicalMetadata) == 0,

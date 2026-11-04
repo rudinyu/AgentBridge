@@ -163,6 +163,28 @@ public final class ParallelTaskBoard: @unchecked Sendable {
         }
     }
 
+    /// Merges records copied from another board during a data-root change.
+    /// Identical records are skipped; a different record with the same ID
+    /// stops the merge before anything is written.
+    public func importTasks(_ records: [ParallelTaskRecord]) throws {
+        try withDocument { document in
+            var merged = document.tasks
+            for record in records {
+                if let existing = merged.first(where: { $0.id == record.id }) {
+                    guard existing == record else {
+                        throw AgentBridgeError.persistence("The destination task board already has a different task \(record.id.uuidString.lowercased()).")
+                    }
+                } else {
+                    merged.append(record)
+                }
+            }
+            guard merged.count <= Self.maximumTasks else {
+                throw AgentBridgeError.persistence("The parallel task board has reached its task limit.")
+            }
+            document.tasks = merged
+        }
+    }
+
     public func task(id: UUID) throws -> ParallelTaskRecord? {
         try withDocument { document in document.tasks.first { $0.id == id } }
     }

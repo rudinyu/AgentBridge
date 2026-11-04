@@ -1263,6 +1263,23 @@ public struct ActiveExtensionRuntimeStore: Sendable {
         }
     }
 
+    /// Imports a validated runtime document from the legacy user-root
+    /// location when this private store has none yet.
+    @discardableResult
+    public func importLegacyDocument(from legacyRootURL: URL) throws -> Bool {
+        try AgentBridgePrivateJSONDocument.importLegacyDocument(
+            fileName: Self.fileName,
+            maximumBytes: Self.maximumStoredBytes,
+            from: legacyRootURL,
+            into: rootURL
+        ) { directoryDescriptor in
+            guard try AgentBridgePrivateJSONDocument.read(fileName: Self.fileName, maximumBytes: Self.maximumStoredBytes, directoryDescriptor: directoryDescriptor) != nil else {
+                return nil
+            }
+            return try Self.encode(Self.readDocument(directoryDescriptor: directoryDescriptor))
+        }
+    }
+
     private static func readDocument(directoryDescriptor: Int32) throws -> ActiveExtensionRuntimeDocument {
         guard let data = try AgentBridgePrivateJSONDocument.read(fileName: Self.fileName, maximumBytes: Self.maximumStoredBytes, directoryDescriptor: directoryDescriptor) else {
             return ActiveExtensionRuntimeDocument()

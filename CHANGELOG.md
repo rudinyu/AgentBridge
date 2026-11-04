@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Moved extension policy grants and active-extension execution consent from the selected workspace folder to private Application Support, importing a valid legacy document once without modifying the legacy copy.
+- Workspace-root changes now carry task-board records, stopping without overwriting when a destination task differs.
+- Rejected new workspace roots placed inside discussion, task-board, or legacy extension folders of a current or prior root.
+
 ## 0.10.0 — 2026-11-03
 
 - Added the MIT License and project copyright notice, included in packaged Apps alongside the existing third-party notices.
