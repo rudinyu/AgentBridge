@@ -757,7 +757,7 @@ enum AgentBridgePrivateJSONDocument {
             }
             let legacyData: Data?
             do {
-                legacyData = try withLockedRoot(rootURL: legacyRoot) { try validatedData($0) }
+                legacyData = try withExistingLockedRoot(rootURL: legacyRoot) { try validatedData($0) } ?? nil
             } catch {
                 return false
             }
@@ -765,6 +765,47 @@ enum AgentBridgePrivateJSONDocument {
             try write(legacyData, fileName: fileName, maximumBytes: maximumBytes, directoryDescriptor: directoryDescriptor)
             return true
         }
+    }
+
+    /// Takes the writers' lock on an existing root without creating the
+    /// directory or lock file and without changing permissions. Returns nil
+    /// when no store has ever locked that root.
+    private static func withExistingLockedRoot<T>(rootURL: URL, _ operation: (Int32) throws -> T) throws -> T? {
+        let directoryDescriptor = rootURL.path.withCString {
+            open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+        }
+        guard directoryDescriptor >= 0 else {
+            if errno == ENOENT { return nil }
+            throw AgentBridgeError.persistence("Legacy coordination storage is unavailable or is a symbolic link.")
+        }
+        defer { _ = close(directoryDescriptor) }
+        var directoryInfo = stat()
+        guard fstat(directoryDescriptor, &directoryInfo) == 0,
+              (directoryInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
+              directoryInfo.st_uid == getuid() else {
+            throw AgentBridgeError.persistence("Legacy coordination storage failed ownership checks.")
+        }
+
+        let lockDescriptor = lockFileName.withCString {
+            openat(directoryDescriptor, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        }
+        guard lockDescriptor >= 0 else {
+            if errno == ENOENT { return nil }
+            throw AgentBridgeError.persistence("Could not safely open the legacy coordination lock.")
+        }
+        defer { _ = close(lockDescriptor) }
+        var lockInfo = stat()
+        guard fstat(lockDescriptor, &lockInfo) == 0,
+              (lockInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              lockInfo.st_uid == getuid(), lockInfo.st_nlink == 1 else {
+            throw AgentBridgeError.persistence("The legacy coordination lock is not a private regular file.")
+        }
+        while flock(lockDescriptor, LOCK_EX) != 0 {
+            if errno == EINTR { continue }
+            throw AgentBridgeError.persistence("Could not lock legacy coordination storage.")
+        }
+        defer { _ = flock(lockDescriptor, LOCK_UN) }
+        return try operation(directoryDescriptor)
     }
 
     private static func writeAll(_ data: Data, descriptor: Int32) throws {

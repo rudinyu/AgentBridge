@@ -38,8 +38,9 @@ final class PrivateStorageBoundaryTests: XCTestCase {
         let userRoot = testRoot.appendingPathComponent("workspace", isDirectory: true)
         let legacyPolicyRoot = userRoot.appendingPathComponent("extension-policy", isDirectory: true)
         let legacyRuntimeRoot = userRoot.appendingPathComponent("extension-runtime", isDirectory: true)
-        try fileManager.createDirectory(at: legacyPolicyRoot, withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: legacyRuntimeRoot, withIntermediateDirectories: true)
+        // Opening the stores creates their coordination locks, as earlier releases did.
+        _ = try ExtensionPolicyStore(rootURL: legacyPolicyRoot)
+        _ = try ActiveExtensionRuntimeStore(rootURL: legacyRuntimeRoot).configurations()
         try Data("{ malformed".utf8).write(to: legacyPolicyRoot.appendingPathComponent("extension-policy.json"))
         try Data("{ malformed".utf8).write(to: legacyRuntimeRoot.appendingPathComponent("active-extensions.json"))
 
@@ -52,6 +53,21 @@ final class PrivateStorageBoundaryTests: XCTestCase {
             try Data(contentsOf: legacyRuntimeRoot.appendingPathComponent("active-extensions.json")),
             Data("{ malformed".utf8)
         )
+    }
+
+    func testLegacyImportDoesNotCreateFilesInAnUnlockedLegacyFolder() throws {
+        let fileManager = FileManager.default
+        let testRoot = try makeTemporaryDirectory()
+        defer { try? fileManager.removeItem(at: testRoot) }
+        let privateRoot = testRoot.appendingPathComponent("private", isDirectory: true)
+        let userRoot = testRoot.appendingPathComponent("workspace", isDirectory: true)
+        let legacyPolicyRoot = userRoot.appendingPathComponent("extension-policy", isDirectory: true)
+        try fileManager.createDirectory(at: legacyPolicyRoot, withIntermediateDirectories: true)
+
+        _ = try BridgeService(store: AuditStore(rootURL: privateRoot, workspaceRootURL: userRoot, managedWorkspaceRoots: []))
+
+        XCTAssertEqual(try fileManager.contentsOfDirectory(atPath: legacyPolicyRoot.path), [])
+        XCTAssertFalse(fileManager.fileExists(atPath: userRoot.appendingPathComponent("extension-runtime").path))
     }
 
     func testChangeRootMergesTaskBoardWithoutRemovingSource() async throws {
