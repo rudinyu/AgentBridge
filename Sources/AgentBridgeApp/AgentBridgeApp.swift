@@ -177,6 +177,17 @@ final class AppModel: ObservableObject {
 
     var terminalSessionIDForView: UUID? { activeTerminalSessionID }
 
+    /// Warning text when the data root is inside a cloud-synced folder.
+    var workspaceRootSyncWarning: String? {
+        guard !workspaceRootPath.isEmpty,
+              let service = WorkspaceRootSyncCheck.syncedServiceName(for: URL(fileURLWithPath: workspaceRootPath, isDirectory: true)) else {
+            return nil
+        }
+        return localizedFormat(Self.syncedRootWarningFormat, service)
+    }
+
+    static let syncedRootWarningFormat = "This folder is inside %@. Discussion transcripts, shared memory and workspace copies will leave this Mac, and file locks only protect this Mac. Choose a local folder that doesn't sync."
+
     var workspaceRootIsConfigured: Bool { !workspaceRootPath.isEmpty && service != nil && store != nil }
 
     var canPresentSetupWizard: Bool {
@@ -1356,6 +1367,24 @@ final class AppModel: ObservableObject {
 
     var selectedAPIReconciliationCandidate: APIReconciliationCandidate? {
         apiReconciliationCandidates.first(where: { $0.session.id == apiReconciliationSessionID })
+    }
+
+    /// Fills the amount with the selected call's full reservation, a
+    /// conservative settlement for when the bill is not yet available.
+    func useReservedAmountForSelectedAPICost() {
+        guard let candidate = selectedAPIReconciliationCandidate else {
+            apiReconciliationStatus = "請選擇此 Claude 帳戶中尚未結算的 API 工作階段。"
+            return
+        }
+        apiReconciliationActualUSD = String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), candidate.reservedUSD)
+        apiReconciliationStatus = ""
+    }
+
+    /// The amount a paid call would reserve for the budget being typed.
+    var apiReservationPreviewUSD: Double? {
+        guard let budget = Double(apiBudget.trimmingCharacters(in: .whitespacesAndNewlines)),
+              budget.isFinite, budget > 0 else { return nil }
+        return budget * 2
     }
 
     func reconcileSelectedAPICost() {
@@ -3656,7 +3685,13 @@ struct ContentView: View {
                         TextField("例如 1.25", text: $model.apiReconciliationActualUSD)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 105)
+                        Button("使用預留金額") { model.useReservedAmountForSelectedAPICost() }
+                            .controlSize(.small)
+                            .disabled(model.selectedAPIReconciliationCandidate == nil)
                     }
+                    Text("帳單尚未顯示時，可用完整預留金額保守結算，立即恢復 API 執行。結算後不能改為其他金額，本機帳本可能高估這次費用。")
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Toggle("我已對照 Anthropic provider 帳單，確認這是所選工作階段的實際費用。", isOn: $model.apiReconciliationConfirmed)
                         .font(.caption2)
                     Button("結算已確認的費用") { model.reconcileSelectedAPICost() }
@@ -4036,6 +4071,11 @@ struct ContentView: View {
                             .textSelection(.enabled)
                             .lineLimit(2)
                             .truncationMode(.middle)
+                        if let warning = model.workspaceRootSyncWarning {
+                            Label(warning, systemImage: "icloud.and.arrow.up")
+                                .font(.caption2).foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer(minLength: 0)
                     Button("變更…") { model.chooseWorkspaceRoot() }
@@ -4624,6 +4664,10 @@ struct ContentView: View {
                     TextField("本次預算（USD）", text: $model.apiBudget).frame(width: 160)
                     SecureField("Anthropic API key（只保留在記憶體）", text: $model.apiKey)
                     Toggle("確認這次付費呼叫", isOn: $model.confirmAPIRun).toggleStyle(.checkbox)
+                }
+                if let reservedUSD = model.apiReservationPreviewUSD {
+                    Text(String(format: model.localized("執行前會預留 US$%.2f（本次預算的兩倍）；結算實際費用後釋放差額。"), reservedUSD))
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
                 Text("取消執行無法撤回已產生的 Anthropic 費用。")
                     .font(.caption2).foregroundStyle(.orange)

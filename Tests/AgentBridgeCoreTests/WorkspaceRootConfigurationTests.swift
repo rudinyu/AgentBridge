@@ -3,6 +3,22 @@ import XCTest
 @testable import AgentBridgeCore
 
 final class WorkspaceRootConfigurationTests: XCTestCase {
+    func testSyncCheckRecognizesCloudFoldersAndIgnoresLocalOnes() {
+        let home = URL(fileURLWithPath: "/Users/example", isDirectory: true)
+        func service(_ relativePath: String) -> String? {
+            WorkspaceRootSyncCheck.syncedServiceName(for: home.appendingPathComponent(relativePath, isDirectory: true), homeDirectory: home)
+        }
+        XCTAssertEqual(service("Library/Mobile Documents/com~apple~CloudDocs/AgentBridge"), "iCloud Drive")
+        XCTAssertEqual(service("Library/CloudStorage/Dropbox/AgentBridge"), "Dropbox")
+        XCTAssertEqual(service("Library/CloudStorage/OneDrive-Personal/Data"), "OneDrive")
+        XCTAssertEqual(service("Library/CloudStorage/GoogleDrive-me@example.com/My Drive/Data"), "Google Drive")
+        XCTAssertEqual(service("Dropbox/AgentBridge"), "Dropbox")
+        XCTAssertEqual(service("OneDrive - Example Corp/AgentBridge"), "OneDrive")
+        XCTAssertNil(service("AgentBridgeData"))
+        XCTAssertNil(service("DropboxBackup/AgentBridge"))
+        XCTAssertNil(service("Library/CloudStorage"))
+    }
+
     func testChangeRootRejectsGitRepositoryAndMissingNestedRootBeforeCreatingIt() async throws {
         let fileManager = FileManager.default
         let testRoot = try makeTemporaryDirectory()
@@ -136,6 +152,46 @@ final class WorkspaceRootConfigurationTests: XCTestCase {
         XCTAssertTrue(fileManager.fileExists(atPath: oldRoot.appendingPathComponent("discussions/\(discussion.id.uuidString.lowercased()).json").path))
     }
 
+    func testSelectingTheSameRootAgainFinishesAnInterruptedSessionRepoint() async throws {
+        let fileManager = FileManager.default
+        let testRoot = try makeTemporaryDirectory()
+        defer { try? fileManager.removeItem(at: testRoot) }
+        let privateRoot = testRoot.appendingPathComponent("private", isDirectory: true)
+        let oldRoot = testRoot.appendingPathComponent("old-workspace", isDirectory: true)
+        let newRoot = testRoot.appendingPathComponent("new-workspace", isDirectory: true)
+        let repository = testRoot.appendingPathComponent("repository", isDirectory: true)
+        try fileManager.createDirectory(at: oldRoot, withIntermediateDirectories: true)
+        try makeGitRepository(at: repository)
+        try WorkspaceRootConfigurationStore.save(selectedRootURL: oldRoot, priorRootURLs: [], privateRootURL: privateRoot)
+
+        let oldStore = try AuditStore(rootURL: privateRoot, workspaceRootURL: oldRoot, managedWorkspaceRoots: [])
+        let session = try await BridgeService(store: oldStore).createSession(sourcePath: repository.path, provider: .codex)
+        XCTAssertTrue(session.workspacePath.hasPrefix(oldRoot.path + "/"))
+
+        _ = try await WorkspaceRootCoordinator.changeRoot(to: newRoot, privateRootURL: privateRoot)
+        let newStore = try AuditStore(rootURL: privateRoot, workspaceRootURL: newRoot, managedWorkspaceRoots: [oldRoot])
+        let migrated = try XCTUnwrap(newStore.session(id: session.id))
+        XCTAssertTrue(migrated.workspacePath.hasPrefix(newRoot.path + "/"))
+
+        // Simulate a stop after the root was saved but before the session
+        // record was repointed: the latest record still names the old copy.
+        var stale = session
+        stale.updatedAt = Date().addingTimeInterval(1)
+        try newStore.saveSession(stale)
+        XCTAssertEqual(try newStore.session(id: session.id)?.workspacePath, session.workspacePath)
+
+        let selected = try await WorkspaceRootCoordinator.changeRoot(to: newRoot, privateRootURL: privateRoot)
+        XCTAssertEqual(selected.path, newRoot.resolvingSymlinksInPath().standardizedFileURL.path)
+        XCTAssertEqual(try newStore.session(id: session.id)?.workspacePath, migrated.workspacePath)
+        XCTAssertTrue(fileManager.fileExists(atPath: session.workspacePath), "The prior copy is kept.")
+
+        // With nothing left over, selecting the root again changes nothing.
+        let sessionsFile = privateRoot.appendingPathComponent("sessions.jsonl")
+        let before = try? Data(contentsOf: sessionsFile)
+        _ = try await WorkspaceRootCoordinator.changeRoot(to: newRoot, privateRootURL: privateRoot)
+        XCTAssertEqual(try? Data(contentsOf: sessionsFile), before)
+    }
+
     func testChangeRootBlocksWhenASourceDiscussionIsInFlight() async throws {
         let fileManager = FileManager.default
         let testRoot = try makeTemporaryDirectory()
@@ -175,6 +231,28 @@ final class WorkspaceRootConfigurationTests: XCTestCase {
         )
         XCTAssertFalse(fileManager.fileExists(atPath: newRoot.appendingPathComponent("discussions/\(discussion.id.uuidString.lowercased()).json").path))
         XCTAssertEqual(try discussionStore.record(id: discussion.id)?.status, .running)
+    }
+
+    private func makeGitRepository(at url: URL) throws {
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try Data("fixture\n".utf8).write(to: url.appendingPathComponent("README.md"))
+        for arguments in [
+            ["-c", "init.defaultBranch=main", "init", "--quiet", "--", url.path],
+            ["-C", url.path, "add", "README.md"],
+            ["-C", url.path, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+             "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "initial"]
+        ] {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = arguments
+            process.environment = [
+                "HOME": NSTemporaryDirectory(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"
+            ]
+            try process.run()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, "git \(arguments.joined(separator: " ")) failed")
+        }
     }
 
     private func makeTemporaryDirectory() throws -> URL {

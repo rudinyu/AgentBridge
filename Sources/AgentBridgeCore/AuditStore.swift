@@ -102,6 +102,26 @@ public final class AuditStore: @unchecked Sendable {
         }
     }
 
+    /// Appends several session records in one write, so a root migration
+    /// repoints its sessions together or not at all.
+    public func saveSessions(_ sessions: [SessionRecord]) throws {
+        guard !sessions.isEmpty else { return }
+        try withStoreLock(exclusive: true) {
+            do {
+                var data = Data()
+                for (index, session) in sessions.enumerated() {
+                    if index > 0 { data.append(0x0A) }
+                    data.append(try encoder.encode(session))
+                }
+                try Self.appendJSONLine(data, to: sessionsURL, fileManager: fileManager, maximumSize: maxFileSize)
+            } catch let error as AgentBridgeError {
+                throw error
+            } catch {
+                throw AgentBridgeError.persistence("無法寫入工作階段索引。")
+            }
+        }
+    }
+
     public func loadSessions() throws -> [SessionRecord] {
         try withStoreLock(exclusive: false) {
             try Self.requireRegularFile(sessionsURL)
@@ -249,8 +269,7 @@ public final class AuditStore: @unchecked Sendable {
         let handle = try FileHandle(forWritingTo: url)
         defer { try? handle.close() }
         try handle.seekToEnd()
-        try handle.write(contentsOf: data)
-        try handle.write(contentsOf: Data([0x0A]))
+        try handle.write(contentsOf: data + Data([0x0A]))
     }
 
     private func withStoreLock<T>(exclusive: Bool, _ operation: () throws -> T) throws -> T {

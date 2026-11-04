@@ -22,6 +22,45 @@ public struct WorkspaceRootConfiguration: Equatable, Sendable {
     }
 }
 
+/// Recognizes data roots inside folders that a cloud service syncs. Such a
+/// root still works, but its transcripts, shared memory and workspace copies
+/// leave this Mac, and `flock` only coordinates processes on one Mac, so the
+/// App and CLI warn instead of refusing it.
+public enum WorkspaceRootSyncCheck {
+    private static let homeFolders = [
+        ("Dropbox", "Dropbox"), ("Google Drive", "Google Drive"), ("OneDrive", "OneDrive"), ("Box", "Box")
+    ]
+
+    /// The name of the service syncing `rootURL`, or nil for a local folder.
+    public static func syncedServiceName(
+        for rootURL: URL,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> String? {
+        let path = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let home = homeDirectory.standardizedFileURL.resolvingSymlinksInPath().path
+        func isInside(_ folder: String) -> Bool { path == folder || path.hasPrefix(folder + "/") }
+
+        if isInside(home + "/Library/Mobile Documents") { return "iCloud Drive" }
+        let cloudStorage = home + "/Library/CloudStorage"
+        if path.hasPrefix(cloudStorage + "/"),
+           let folder = path.dropFirst(cloudStorage.count + 1).split(separator: "/").first {
+            // File Provider folders are named like "Dropbox" or "OneDrive-Personal".
+            let service = folder.split(separator: "-").first.map(String.init) ?? String(folder)
+            return service == "GoogleDrive" ? "Google Drive" : service
+        }
+        if let first = path.hasPrefix(home + "/") ? path.dropFirst(home.count + 1).split(separator: "/").first : nil {
+            for (prefix, name) in homeFolders where first == prefix || first.hasPrefix(prefix + " ") {
+                return name
+            }
+        }
+        // iCloud "Desktop & Documents Folders" keeps the usual paths.
+        if (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem == true {
+            return "iCloud Drive"
+        }
+        return nil
+    }
+}
+
 private struct WorkspaceRootFile: Codable {
     let version: Int
     let selectedRootPath: String
@@ -170,7 +209,7 @@ public enum WorkspaceRootCoordinator {
             managedWorkspaceRoots: priorRoots + [privateRoot],
             fileManager: fileManager
         )
-        if existing?.selectedRootURL.path == selectedRoot.path { return selectedRoot }
+        let isResuming = existing?.selectedRootURL.path == selectedRoot.path
 
         let migrationStore = try AuditStore(
             rootURL: privateRoot,
@@ -178,18 +217,36 @@ public enum WorkspaceRootCoordinator {
             managedWorkspaceRoots: priorRoots + [privateRoot],
             fileManager: fileManager
         )
+        if isResuming {
+            // Selecting the current root again finishes a migration that
+            // stopped after saving the root but before repointing every
+            // session; with nothing left over it changes nothing.
+            let workspaces = migrationStore.workspacesURL.standardizedFileURL.path + "/"
+            let leftover = try migrationStore.loadSessions().contains { session in
+                let path = URL(fileURLWithPath: session.workspacePath).standardizedFileURL.path
+                return !path.hasPrefix(workspaces) && FileManager.default.fileExists(atPath: path)
+            }
+            guard leftover else { return selectedRoot }
+        }
         let migrationService = try BridgeService(store: migrationStore)
-        let sourceMemoryRoot = (existing?.selectedRootURL ?? privateRoot)
-            .appendingPathComponent("shared-memory", isDirectory: true)
-        let migratedSessions = try await migrationService.prepareWorkspaceRootMigration(memorySourceRoots: [sourceMemoryRoot])
+        // Memory, discussions and the task board are copied before the root
+        // is saved, so a resumed migration only has workspaces left to copy.
+        let sourceMemoryRoots = isResuming ? [] : [
+            (existing?.selectedRootURL ?? privateRoot).appendingPathComponent("shared-memory", isDirectory: true)
+        ]
+        let migratedSessions = try await migrationService.prepareWorkspaceRootMigration(memorySourceRoots: sourceMemoryRoots)
 
-        _ = try WorkspaceRootConfigurationStore.save(
-            selectedRootURL: selectedRoot,
-            priorRootURLs: priorRoots,
-            privateRootURL: privateRoot,
-            fileManager: fileManager
-        )
-        for session in migratedSessions { try migrationStore.saveSession(session) }
+        // The root is saved first: until the sessions are repointed they keep
+        // using their intact copies in the prior root, which stays managed.
+        if !isResuming {
+            _ = try WorkspaceRootConfigurationStore.save(
+                selectedRootURL: selectedRoot,
+                priorRootURLs: priorRoots,
+                privateRootURL: privateRoot,
+                fileManager: fileManager
+            )
+        }
+        try migrationStore.saveSessions(migratedSessions)
         return selectedRoot
     }
 

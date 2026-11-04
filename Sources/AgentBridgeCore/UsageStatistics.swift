@@ -650,7 +650,7 @@ public enum APICostLedgerError: Error, LocalizedError, Equatable {
         case .invalidAmount:
             "Claude API 本機 USD 預算必須是有限且大於零的金額。"
         case .unresolvedCall:
-            "前一次 Claude API 執行的費用尚未確認；為避免累積未知支出，請先在官方帳單確認後再執行。"
+            "前一次 Claude API 執行的費用尚未確認；為避免累積未知支出，請先在用量面板的「手動結算」或 `agentbridge budget reconcile` 結算後再執行。帳單尚未顯示時，可用完整預留金額保守結算。"
         case .dollarLimitReached(let scope, let limitUSD, let committedUSD):
             String(format: "Claude API 本機%@上限不足：US$%.2f / US$%.2f（包含新執行的預留金額）。本次不會呼叫模型服務。", scope, committedUSD, limitUSD)
         }

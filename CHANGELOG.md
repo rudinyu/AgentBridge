@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A Claude API session can now make several paid calls, each with its own reservation, so the work-session USD cap counts every call in the session instead of only ever covering one. Manual settlement by session settles that session's unresolved call.
+- Added **Use reserved amount** in the App and `budget reconcile --settle-at-reserved` in the CLI to settle an unconfirmed API call conservatively at its full reservation when the bill is not available yet. The blocked-call message now says where to settle, and the App and CLI show the amount a paid call reserves before it runs.
+- The App and CLI warn when the workspace-data root is inside iCloud Drive, Dropbox, OneDrive, Google Drive or Box, because its transcripts, memory and workspace copies would leave the Mac and file locks only coordinate one Mac.
+- A root change now repoints all sessions in one write, and selecting the same root again finishes a change that stopped before every session was repointed.
+
 - Moved extension policy grants and active-extension execution consent from the selected workspace folder to private Application Support, importing a valid legacy document once without modifying the legacy copy.
 - Workspace-root changes now carry task-board records, stopping without overwriting when a destination task differs.
 - Rejected new workspace roots placed inside discussion, task-board, or legacy extension folders of a current or prior root.

@@ -223,7 +223,7 @@
 "AgentBridge 本機 Claude API 月上限已用完；本次不會呼叫模型服務。" = "The AgentBridge local Claude API monthly limit has been used. No model service was called.";
 "手動結算前必須明確確認金額已對照 Anthropic provider 帳單。" = "Before manual settlement, explicitly confirm that the amount was checked against the Anthropic bill.";
 "Claude API 本機 USD 預算必須是有限且大於零的金額。" = "A Claude API local USD budget must be a finite amount greater than zero.";
-"前一次 Claude API 執行的費用尚未確認；為避免累積未知支出，請先在官方帳單確認後再執行。" = "The previous Claude API run has an unconfirmed charge. Check the official bill before running again to avoid accumulating unknown charges.";
+"前一次 Claude API 執行的費用尚未確認；為避免累積未知支出，請先在用量面板的「手動結算」或 `agentbridge budget reconcile` 結算後再執行。帳單尚未顯示時，可用完整預留金額保守結算。" = "The previous Claude API run has an unconfirmed charge. To avoid accumulating unknown charges, settle it under Manual settlement in the usage panel or with `agentbridge budget reconcile` before running again. If the bill isn't available yet, you can settle conservatively at the full reserved amount.";
 "每月 API 預算上限必須是有限且大於零的金額。" = "The monthly API budget limit must be a finite amount greater than zero.";
 "這次 API 執行的預算必須是有限且大於零的金額。" = "The budget for this API run must be a finite amount greater than zero.";
 "呼叫 API 前必須明確授權這次執行及其預算。" = "Explicitly authorize this run and its budget before calling the API.";
@@ -465,7 +465,6 @@
 "預算不足：本次需預留 " = "Insufficient budget: this run requires a reservation of ";
 "，目前可用 " = ", available now: ";
 "工作階段 " = "Session ";
-" 已有預算紀錄，請建立新的工作階段。" = " already has a budget record. Create a new session.";
 "找不到預算預留紀錄 " = "Could not find budget reservation ";
 " 已使用不同費用完成結算。" = " was settled with a different amount.";
 " 已使用不同費用完成結算，請使用相同金額重試。" = " was settled with a different amount. Retry with the same amount.";
@@ -1544,3 +1543,7 @@
 "工作區資料根目錄必須是一般資料夾。" = "The workspace data root must be a regular folder.";
 "無法安全檢查所選工作區資料根目錄的 Git 狀態。" = "Could not safely check the Git status of the selected workspace data root.";
 "目前工作階段上限不足：US$" = "current session cap is insufficient: US$";
+"使用預留金額" = "Use reserved amount";
+"帳單尚未顯示時，可用完整預留金額保守結算，立即恢復 API 執行。結算後不能改為其他金額，本機帳本可能高估這次費用。" = "If the bill isn't available yet, settle at the full reserved amount to resume API runs now. The amount can't be changed afterwards, and the local ledger may overstate this call's cost.";
+"執行前會預留 US$%.2f（本次預算的兩倍）；結算實際費用後釋放差額。" = "Reserves US$%.2f (twice this run's budget) before launch; the difference is released when the actual cost is settled.";
+"This folder is inside %@. Discussion transcripts, shared memory and workspace copies will leave this Mac, and file locks only protect this Mac. Choose a local folder that doesn't sync." = "This folder is inside %@. Discussion transcripts, shared memory and workspace copies will leave this Mac, and file locks only protect this Mac. Choose a local folder that doesn't sync.";

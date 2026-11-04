@@ -745,17 +745,14 @@ esac
         XCTAssertNil(try store.session(id: apiSession.id)?.providerSessionID)
         XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: apiSession.workspacePath).appendingPathComponent(".api-call-count"), encoding: .utf8), "api-call\n")
 
-        do {
-            _ = try await service.runReadOnly(
-                sessionID: apiSession.id,
-                prompt: "api-prompt-marker",
-                apiRequest: APIUsageRequest(requestedBudgetUSD: 0.25, explicitlyAuthorized: true, apiKey: "fixture-api-key")
-            )
-            XCTFail("A session accepted a second API reservation.")
-        } catch let error as BudgetLedgerError {
-            XCTAssertEqual(error, .duplicateSession(apiSession.id))
-        }
-        XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: apiSession.workspacePath).appendingPathComponent(".api-call-count"), encoding: .utf8), "api-call\n")
+        // A second paid call in the same session gets its own reservation.
+        _ = try await service.runReadOnly(
+            sessionID: apiSession.id,
+            prompt: "api-prompt-marker",
+            apiRequest: APIUsageRequest(requestedBudgetUSD: 0.25, explicitlyAuthorized: true, apiKey: "fixture-api-key")
+        )
+        XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: apiSession.workspacePath).appendingPathComponent(".api-call-count"), encoding: .utf8), "api-call\napi-call\n")
+        XCTAssertNil(try store.session(id: apiSession.id)?.providerSessionID)
 
         let events = try store.events(sessionID: apiSession.id)
         let storedText = events.map(\.message).joined(separator: "\n")
@@ -769,7 +766,7 @@ esac
         XCTAssertFalse(settingsContents.contains("fixture-api-key"))
         XCTAssertFalse(budgetContents.contains("fixture-api-key"))
         let budget = try service.budgetSnapshot()
-        XCTAssertEqual(budget.usedUSD, 0.02, accuracy: 0.000_001)
+        XCTAssertEqual(budget.usedUSD, 0.04, accuracy: 0.000_001)
         XCTAssertEqual(budget.reservedUSD, 0, accuracy: 0.000_001)
         let memory = try service.sharedMemory(sessionID: apiSession.id)
         XCTAssertTrue(memory.turns.contains(where: { $0.userText.contains("api-prompt-marker") }))

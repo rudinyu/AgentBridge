@@ -55,20 +55,56 @@ final class APISpendLedgerTests: XCTestCase {
         }
     }
 
-    func testAReservationCannotBeDuplicatedForTheSameSession() throws {
+    func testASessionCanMakeSeveralCallsAndItsCapCountsAllOfThem() throws {
         let root = try makeTemporaryRoot()
         defer { removeTemporaryRoot(root) }
         let ledger = try APISpendLedger(rootURL: root)
         let sessionID = UUID()
-        let reservation = try ledger.reserve(sessionID: sessionID, requestedUSD: 1, explicitlyAuthorized: true, limits: monthly(140))
-        try ledger.reconcile(reservationID: reservation.id, actualUSD: 0.5)
+        let limits = APISpendLimits(monthlyUSD: 140, sessionUSD: 4)
+        let first = try ledger.reserve(sessionID: sessionID, requestedUSD: 1, explicitlyAuthorized: true, limits: limits)
+        try ledger.reconcile(reservationID: first.id, actualUSD: 0.5)
 
-        XCTAssertThrowsError(try ledger.reserve(sessionID: sessionID, requestedUSD: 1, explicitlyAuthorized: true, limits: monthly(140))) {
-            XCTAssertEqual($0 as? BudgetLedgerError, .duplicateSession(sessionID))
+        // A second call in the same session is allowed: 0.5 used + 2 reserved <= 4.
+        let second = try ledger.reserve(sessionID: sessionID, requestedUSD: 1, explicitlyAuthorized: true, limits: limits)
+        XCTAssertNotEqual(first.id, second.id)
+        try ledger.reconcile(reservationID: second.id, actualUSD: 1.5)
+
+        // 2.0 used + 2.0 reserved fits the 4.0 cap; 2.0 + 4.0 does not.
+        XCTAssertNoThrow(try ledger.checkReservation(sessionID: sessionID, requestedUSD: 1, limits: limits))
+        XCTAssertThrowsError(try ledger.checkReservation(sessionID: sessionID, requestedUSD: 2, limits: limits)) {
+            guard case .dollarLimitReached = $0 as? APICostLedgerError else {
+                return XCTFail("Expected the session cap to count earlier calls, got \($0)")
+            }
         }
-        XCTAssertThrowsError(try ledger.checkReservation(sessionID: sessionID, requestedUSD: 1, limits: monthly(140))) {
-            XCTAssertEqual($0 as? BudgetLedgerError, .duplicateSession(sessionID))
+        let snapshot = try ledger.costControlSnapshot(sessionID: sessionID, dailyLimitUSD: nil, sessionLimitUSD: 4)
+        XCTAssertEqual(snapshot.sessionUsedUSD, 2, accuracy: 0.000_001)
+        XCTAssertEqual(snapshot.sessionReservedUSD, 0, accuracy: 0.000_001)
+    }
+
+    func testManualSessionSettlementTargetsTheUnresolvedCallAndRetriesSafely() throws {
+        let root = try makeTemporaryRoot()
+        defer { removeTemporaryRoot(root) }
+        let ledger = try APISpendLedger(rootURL: root)
+        let sessionID = UUID()
+        let first = try ledger.reserve(sessionID: sessionID, requestedUSD: 1, explicitlyAuthorized: true, limits: monthly(140))
+        try ledger.reconcile(reservationID: first.id, actualUSD: 0.25)
+        _ = try ledger.reserve(sessionID: sessionID, requestedUSD: 1, explicitlyAuthorized: true, limits: monthly(140))
+        try ledger.reconcile(reservationID: try XCTUnwrap(ledger.unresolvedReservations().first).id, actualUSD: nil)
+
+        // The unresolved second call is settled, not the already-settled first one.
+        XCTAssertTrue(try ledger.validateSessionReconciliation(sessionID: sessionID, actualUSD: 0.75))
+        XCTAssertTrue(try ledger.reconcile(sessionID: sessionID, actualUSD: 0.75))
+        XCTAssertTrue(try ledger.unresolvedReservations().isEmpty)
+        XCTAssertEqual(try ledger.budgetSnapshot(monthlyLimitUSD: 140).usedUSD, 1, accuracy: 0.000_001)
+
+        // A retry with the same amount is idempotent; a different amount is refused.
+        XCTAssertTrue(try ledger.reconcile(sessionID: sessionID, actualUSD: 0.75))
+        XCTAssertThrowsError(try ledger.reconcile(sessionID: sessionID, actualUSD: 0.8)) {
+            guard case .conflictingReconciliation = $0 as? BudgetLedgerError else {
+                return XCTFail("Unexpected error: \($0)")
+            }
         }
+        XCTAssertEqual(try ledger.budgetSnapshot(monthlyLimitUSD: 140).usedUSD, 1, accuracy: 0.000_001)
     }
 
     func testOverspendIsRecordedAndBlocksFurtherRuns() throws {

@@ -36,7 +36,8 @@ public struct APISpendLimits: Equatable, Sendable {
     }
 }
 
-/// A durable authorization reservation for one fresh API session.
+/// A durable authorization reservation for one paid API call. A session may
+/// hold several, settled one at a time.
 public struct APISpendReservation: Codable, Equatable, Sendable {
     public let id: UUID
     public let sessionID: UUID
@@ -60,7 +61,6 @@ public enum BudgetLedgerError: Error, LocalizedError, Equatable {
     case invalidRequestedBudget
     case authorizationRequired
     case insufficientBudget(requiredUSD: Double, availableUSD: Double)
-    case duplicateSession(UUID)
     case reservationNotFound(UUID)
     case invalidActualCost
     case conflictingReconciliation(UUID)
@@ -77,8 +77,6 @@ public enum BudgetLedgerError: Error, LocalizedError, Equatable {
             "呼叫 API 前必須明確授權這次執行及其預算。"
         case .insufficientBudget(let requiredUSD, let availableUSD):
             String(format: "預算不足：本次需預留 US$%.6f，目前可用 US$%.6f。", requiredUSD, availableUSD)
-        case .duplicateSession(let id):
-            "工作階段 \(id.uuidString) 已有預算紀錄，請建立新的工作階段。"
         case .reservationNotFound(let id):
             "找不到預算預留紀錄 \(id.uuidString)。"
         case .invalidActualCost:
@@ -96,7 +94,8 @@ public enum BudgetLedgerError: Error, LocalizedError, Equatable {
 /// One private, cross-process-safe ledger per Claude account for explicit API
 /// run budgets. Each reservation is checked against the account's monthly cap
 /// and its optional UTC-day and AgentBridge-session caps in a single write, so
-/// there is one record to settle per paid call.
+/// there is one record to settle per paid call. A session can make several
+/// paid calls; the session cap counts all of them.
 ///
 /// The requested run budget is only a soft provider-side estimate, so twice
 /// the requested amount is reserved. A canceled, interrupted, or otherwise
@@ -275,9 +274,8 @@ public final class APISpendLedger: @unchecked Sendable {
     public func validateSessionReconciliation(sessionID: UUID, actualUSD: Double) throws -> Bool {
         let actual = try Self.actualMicros(actualUSD)
         return try withDocument { document in
-            guard let reservation = document.reservations.first(where: { $0.sessionID == sessionID }) else {
-                return false
-            }
+            guard let index = Self.reconciliationIndex(in: document, sessionID: sessionID) else { return false }
+            let reservation = document.reservations[index]
             if let existing = reservation.actualMicros, existing != actual {
                 throw BudgetLedgerError.conflictingReconciliation(reservation.id)
             }
@@ -285,17 +283,16 @@ public final class APISpendLedger: @unchecked Sendable {
         }
     }
 
-    /// Manually settles the reservation for a specific session using an actual
+    /// Manually settles the session's unresolved reservation using an actual
     /// amount verified by the user against the provider bill. Returns false if
-    /// the ledger has no reservation for the session. Repeating the same
-    /// amount is idempotent; a different amount is rejected.
+    /// the ledger has no reservation for the session. When the session has
+    /// nothing unresolved, repeating the amount of its latest settlement is
+    /// idempotent and a different amount is rejected.
     @discardableResult
     public func reconcile(sessionID: UUID, actualUSD: Double, now: Date = Date()) throws -> Bool {
         let actual = try Self.actualMicros(actualUSD)
         return try withDocument { document in
-            guard let index = document.reservations.firstIndex(where: { $0.sessionID == sessionID }) else {
-                return false
-            }
+            guard let index = Self.reconciliationIndex(in: document, sessionID: sessionID) else { return false }
             return try Self.settle(&document.reservations[index], actual: actual, now: now)
         }
     }
@@ -319,6 +316,13 @@ public final class APISpendLedger: @unchecked Sendable {
         }
     }
 
+    /// The session's unresolved reservation, or else its most recent one, so a
+    /// retried manual settlement finds the call it already settled.
+    private static func reconciliationIndex(in document: SpendDocument, sessionID: UUID) -> Int? {
+        document.reservations.firstIndex { $0.sessionID == sessionID && $0.actualMicros == nil }
+            ?? document.reservations.lastIndex { $0.sessionID == sessionID }
+    }
+
     private static func checkCaps(
         _ document: SpendDocument,
         sessionID: UUID,
@@ -326,9 +330,6 @@ public final class APISpendLedger: @unchecked Sendable {
         caps: Caps,
         now: Date
     ) throws {
-        guard !document.reservations.contains(where: { $0.sessionID == sessionID }) else {
-            throw BudgetLedgerError.duplicateSession(sessionID)
-        }
         guard !document.reservations.contains(where: { $0.actualMicros == nil }) else {
             throw APICostLedgerError.unresolvedCall
         }
@@ -559,15 +560,13 @@ public final class APISpendLedger: @unchecked Sendable {
             throw BudgetLedgerError.invalidLedger
         }
         var reservationIDs = Set<UUID>()
-        var sessionIDs = Set<UUID>()
         for reservation in document.reservations {
             guard reservation.requestedMicros > 0,
                   reservation.requestedMicros <= Int64.max / 2,
                   reservation.reservedMicros == reservation.requestedMicros * 2,
                   isMonthKey(reservation.month),
                   isUTCDayKey(reservation.utcDay),
-                  reservationIDs.insert(reservation.id).inserted,
-                  sessionIDs.insert(reservation.sessionID).inserted else {
+                  reservationIDs.insert(reservation.id).inserted else {
                 throw BudgetLedgerError.invalidLedger
             }
             switch (reservation.actualMicros, reservation.reconciledAt, reservation.chargedMonth) {

@@ -149,6 +149,11 @@ struct SetupWizardView: View {
                             .font(.callout.monospaced())
                             .textSelection(.enabled)
                             .lineLimit(2)
+                        if let warning = model.workspaceRootSyncWarning {
+                            Label(warning, systemImage: "icloud.and.arrow.up")
+                                .font(.caption).foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Button(model.localized(model.workspaceRootPath.isEmpty ? "Choose or create a folder…" : "Change folder…")) {
                         model.chooseWorkspaceRoot()

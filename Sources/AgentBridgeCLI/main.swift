@@ -144,6 +144,7 @@ enum AgentBridgeCLI {
             let privateRoot = try RuntimePaths.applicationSupportRoot()
             if let configuration = try WorkspaceRootConfigurationStore.load(privateRootURL: privateRoot) {
                 print(configuration.selectedRootURL.path)
+                printSyncedRootWarning(configuration.selectedRootURL)
             } else {
                 print("尚未設定工作區資料根目錄。請在 App 選擇資料夾，或執行：agentbridge workspace set /absolute/path/to/root")
             }
@@ -158,9 +159,15 @@ enum AgentBridgeCLI {
             let privateRoot = try RuntimePaths.applicationSupportRoot()
             let selected = try await WorkspaceRootCoordinator.changeRoot(to: requested, privateRootURL: privateRoot)
             print("已設定工作區資料根目錄：\(selected.path)")
+            printSyncedRootWarning(selected)
         default:
             throw AgentBridgeError.invalidInput("不認識的 workspace 子命令；用法：agentbridge workspace show|set /absolute/path/to/root")
         }
+    }
+
+    private static func printSyncedRootWarning(_ root: URL) {
+        guard let service = WorkspaceRootSyncCheck.syncedServiceName(for: root) else { return }
+        FileHandle.standardError.write(Data("注意：此資料夾位於 \(service) 同步位置。討論逐字稿、共享記憶與工作區副本會離開這台 Mac；檔案鎖只保護本機，多台 Mac 同時使用可能產生衝突。建議選擇不同步的本機資料夾。\n".utf8))
     }
 
     private static func chatCommand(_ arguments: [String], service: BridgeService) async throws {
@@ -772,6 +779,7 @@ enum AgentBridgeCLI {
                 throw AgentBridgeError.invalidInput("找不到 ANTHROPIC_API_KEY；金鑰值不會作為命令列參數傳入。")
             }
             apiRequest = APIUsageRequest(requestedBudgetUSD: budget, explicitlyAuthorized: true, apiKey: key)
+            FileHandle.standardError.write(Data(String(format: "• 執行前會預留 US$%.2f（本次預算的兩倍）；結算實際費用後釋放差額。\n", budget * 2).utf8))
         } else {
             apiRequest = nil
         }
@@ -1887,29 +1895,48 @@ enum AgentBridgeCLI {
     private static func budgetCommand(_ arguments: [String], service: BridgeService) throws {
         guard arguments.first == "reconcile" else {
             guard arguments.isEmpty else {
-                throw AgentBridgeError.invalidInput("用法：agentbridge budget reconcile SESSION-ID --profile PROFILE-ID --actual-usd USD --confirm")
+                throw AgentBridgeError.invalidInput("用法：agentbridge budget reconcile SESSION-ID --profile PROFILE-ID (--actual-usd USD | --settle-at-reserved) --confirm")
             }
             try showBudget(service: service)
             return
         }
-        guard arguments.count == 7,
+        let settlesAtReserved = arguments.count == 6 && arguments[4] == "--settle-at-reserved"
+        guard arguments.count == 7 || settlesAtReserved,
               let sessionID = UUID(uuidString: arguments[1]),
               arguments[2] == "--profile",
               let profileID = UUID(uuidString: arguments[3]),
-              arguments[4] == "--actual-usd",
-              let actualUSD = Double(arguments[5]),
-              arguments[6] == "--confirm" else {
-            throw AgentBridgeError.invalidInput("用法：agentbridge budget reconcile SESSION-ID --profile PROFILE-ID --actual-usd USD --confirm")
+              settlesAtReserved || arguments[4] == "--actual-usd",
+              arguments.last == "--confirm" else {
+            throw AgentBridgeError.invalidInput("用法：agentbridge budget reconcile SESSION-ID --profile PROFILE-ID (--actual-usd USD | --settle-at-reserved) --confirm")
         }
         let profile = try service.accountProfile(id: profileID)
         guard profile.provider == .claude else { throw AgentBridgeError.unsupportedAPIUsage }
+        let actualUSD: Double
+        if settlesAtReserved {
+            // The full reservation is a conservative stand-in for a bill that
+            // is not available yet; it cannot be changed afterwards.
+            guard let candidate = try service.unresolvedAPICalls(profileID: profileID)
+                .first(where: { $0.session.id == sessionID }) else {
+                throw UsageControlError.apiReconciliationNotFound(sessionID)
+            }
+            actualUSD = candidate.reservedUSD
+        } else {
+            guard let amount = Double(arguments[5]) else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge budget reconcile SESSION-ID --profile PROFILE-ID (--actual-usd USD | --settle-at-reserved) --confirm")
+            }
+            actualUSD = amount
+        }
         try service.reconcileAPIUsageFromProviderBill(
             profileID: profileID,
             sessionID: sessionID,
             actualUSD: actualUSD,
             explicitlyConfirmed: true
         )
-        print(String(format: "已依使用者確認的 Anthropic 帳單金額 US$%.6f 手動結算。", actualUSD))
+        if settlesAtReserved {
+            print(String(format: "已用完整預留金額 US$%.6f 保守結算；之後不能改為其他金額。", actualUSD))
+        } else {
+            print(String(format: "已依使用者確認的 Anthropic 帳單金額 US$%.6f 手動結算。", actualUSD))
+        }
         print("Claude 帳戶：\(profile.name)（\(profile.id.uuidString.lowercased())）")
         print("工作階段：\(sessionID.uuidString.lowercased())")
     }
@@ -2037,6 +2064,7 @@ enum AgentBridgeCLI {
           agentbridge events SESSION-ID
           agentbridge budget
           agentbridge budget reconcile SESSION-ID --profile PROFILE-ID --actual-usd USD --confirm
+          agentbridge budget reconcile SESSION-ID --profile PROFILE-ID --settle-at-reserved --confirm
 
         `run` 從標準輸入讀取最多 256 KiB 的提示文字，不會把提示放在程序參數或稽核檔。
         Local model 只支援討論與唯讀專案聊天；local session 不提供 autonomy、編輯工具、互動 Terminal、Skills 或 MCP。Local 不使用 API 金鑰、官方 CLI 登入或雲端回退。
@@ -2047,7 +2075,7 @@ enum AgentBridgeCLI {
         `--save-summary-to-memory --memory-destination PROFILE-ID` 是獨立明確同意；目的設定檔必須是此次計畫綁定且已允許共用記憶的帳戶。未提供時不會保存結果摘要。
         範例：`agentbridge autonomous plan --source /work/repo --planner codex:00000000-0000-0000-0000-000000000001 --researcher claude:00000000-0000-0000-0000-000000000002 --implementer codex:00000000-0000-0000-0000-000000000001 --reviewer claude:00000000-0000-0000-0000-000000000002 --share-diff-with-reviewer --verification projectCI < goal.txt`
         `autonomous status --json` 只輸出 AgentBridge 保存的執行狀態，不會呼叫模型或延續已中斷的工作。
-        `budget reconcile` 只手動結算停止中的 Claude API 工作階段；先對照 Anthropic 帳單，再輸入實際美元金額並明確指定 `--confirm`。不會呼叫 provider；兩本帳本皆可按同一金額安全重試。
+        `budget reconcile` 只手動結算停止中的 Claude API 工作階段；先對照 Anthropic 帳單，再輸入實際美元金額並明確指定 `--confirm`。不會呼叫 provider；可按同一金額安全重試。帳單尚未顯示時，可改用 `--settle-at-reserved` 以完整預留金額保守結算，之後不能改為其他金額。
         API 模式需先選擇 usage api，並在每次執行提供上限、環境變數名稱與明確確認。
         usage-tui 只在目前選取的 provider 帳戶為訂閱登入時啟動其原生 CLI；等待登入完成並看到可輸入提示符後，再由 App 的固定按鈕送出 /usage。此畫面不會被解析或存入 AgentBridge。
         自訂帳戶有各自的供應商設定資料夾；請建立設定後在互動 Terminal 執行 profile-login。
