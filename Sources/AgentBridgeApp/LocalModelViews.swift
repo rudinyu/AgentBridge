@@ -43,7 +43,7 @@ struct LocalModelSettingsSection: View {
 
                 GroupBox(model.localized("Local run limits")) {
                     VStack(alignment: .leading, spacing: 4) {
-                        if let usage = model.localModelUsageStatistics {
+                        if let usage = model.usage.localModelUsageStatistics {
                             Text(model.localizedFormat(
                                 "Runs in the last rolling 24 hours: %d of %d",
                                 usage.localDailyRuns,

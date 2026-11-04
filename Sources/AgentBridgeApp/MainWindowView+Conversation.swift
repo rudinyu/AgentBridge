@@ -373,7 +373,7 @@ extension MainWindowView {
                         submitProjectPrompt(session)
                     }
                         .buttonStyle(.borderedProminent)
-                        .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || isLoadingContextPreview || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.settings.usageMode == .api && session.provider != .local && (!model.isClaudeAPIRunContext || model.budgetSnapshot == nil)) || (model.isClaudeAPIRunContext && model.usageControls.disableFutureAPI) || (session.provider == .local && model.localModelSettingsAreDirty))
+                        .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || isLoadingContextPreview || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.settings.usageMode == .api && session.provider != .local && (!model.isClaudeAPIRunContext || model.usage.budgetSnapshot == nil)) || (model.isClaudeAPIRunContext && model.usage.usageControls.disableFutureAPI) || (session.provider == .local && model.localModelSettingsAreDirty))
                     if model.selectedSessionIsRunning { Button("取消") { model.cancelRun() } }
                 }
             }

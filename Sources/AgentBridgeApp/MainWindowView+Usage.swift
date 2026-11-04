@@ -17,19 +17,19 @@ extension MainWindowView {
                 if model.settings.defaultProvider == .claude {
                     apiReconciliationPanel
                 }
-                if let alert = model.usageAlerts.first {
+                if let alert = model.usage.usageAlerts.first {
                     Label(model.localized(alert), systemImage: "bell.badge")
                         .font(.caption2)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Toggle("macOS 門檻通知（需允許通知）", isOn: Binding(
-                    get: { model.usageControls.macOSNotificationsEnabled },
-                    set: { model.setMacOSUsageNotificationsEnabled($0) }
+                    get: { model.usage.usageControls.macOSNotificationsEnabled },
+                    set: { model.usage.setMacOSUsageNotificationsEnabled($0) }
                 ))
                 .font(.caption2)
-                if !model.usageControlStatus.isEmpty {
-                    Text(model.localized(model.usageControlStatus))
+                if !model.usage.usageControlStatus.isEmpty {
+                    Text(model.localized(model.usage.usageControlStatus))
                         .font(.caption2).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -40,7 +40,7 @@ extension MainWindowView {
 
     @ViewBuilder
     var apiReconciliationPanel: some View {
-        if !model.apiReconciliationCandidates.isEmpty {
+        if !model.usage.apiReconciliationCandidates.isEmpty {
             GroupBox("手動結算未確認的 Claude API 費用") {
                 VStack(alignment: .leading, spacing: 7) {
                     Text("選擇此帳戶綁定的工作階段，並依 Anthropic 帳單輸入實際費用。這只更新本機帳本，不會呼叫 provider；只有帳單明確顯示零費用時才輸入 0。若狀態仍是執行中，系統會先確認沒有作用中的執行鎖；只有中斷後殘留的狀態才會標記失敗並結算。若一個帳本先完成，使用相同金額重試即可。")
@@ -48,13 +48,13 @@ extension MainWindowView {
                         .fixedSize(horizontal: false, vertical: true)
                     Text(String(format: model.localized("帳戶：%@"), model.selectedAccountProfile?.name ?? "Claude"))
                         .font(.caption2.weight(.semibold))
-                    ForEach(model.apiReconciliationCandidates) { candidate in
+                    ForEach(model.usage.apiReconciliationCandidates) { candidate in
                         Button {
-                            model.apiReconciliationSessionID = candidate.session.id
+                            model.usage.apiReconciliationSessionID = candidate.session.id
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
-                                    Image(systemName: candidate.session.id == model.apiReconciliationSessionID ? "largecircle.fill.circle" : "circle")
+                                    Image(systemName: candidate.session.id == model.usage.apiReconciliationSessionID ? "largecircle.fill.circle" : "circle")
                                     Text(URL(fileURLWithPath: candidate.session.sourceRepositoryPath).lastPathComponent)
                                         .fontWeight(.medium)
                                     Spacer()
@@ -72,32 +72,32 @@ extension MainWindowView {
                     }
                     HStack {
                         Text("帳單實際費用（USD）").font(.caption2)
-                        TextField("例如 1.25", text: $model.apiReconciliationActualUSD)
+                        TextField("例如 1.25", text: Bindable(model.usage).apiReconciliationActualUSD)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 105)
-                        Button("使用預留金額") { model.useReservedAmountForSelectedAPICost() }
+                        Button("使用預留金額") { model.usage.useReservedAmountForSelectedAPICost() }
                             .controlSize(.small)
-                            .disabled(model.selectedAPIReconciliationCandidate == nil)
+                            .disabled(model.usage.selectedAPIReconciliationCandidate == nil)
                     }
                     Text("帳單尚未顯示時，可用完整預留金額保守結算，立即恢復 API 執行。結算後不能改為其他金額，本機帳本可能高估這次費用。")
                         .font(.caption2).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Toggle("我已對照 Anthropic provider 帳單，確認這是所選工作階段的實際費用。", isOn: $model.apiReconciliationConfirmed)
+                    Toggle("我已對照 Anthropic provider 帳單，確認這是所選工作階段的實際費用。", isOn: Bindable(model.usage).apiReconciliationConfirmed)
                         .font(.caption2)
-                    Button("結算已確認的費用") { model.reconcileSelectedAPICost() }
+                    Button("結算已確認的費用") { model.usage.reconcileSelectedAPICost() }
                         .controlSize(.small)
-                        .disabled(model.selectedAPIReconciliationCandidate == nil
-                            || !model.apiReconciliationConfirmed)
-                    if !model.apiReconciliationStatus.isEmpty {
-                        Text(model.localized(model.apiReconciliationStatus))
+                        .disabled(model.usage.selectedAPIReconciliationCandidate == nil
+                            || !model.usage.apiReconciliationConfirmed)
+                    if !model.usage.apiReconciliationStatus.isEmpty {
+                        Text(model.localized(model.usage.apiReconciliationStatus))
                             .font(.caption2)
-                            .foregroundStyle(model.apiReconciliationStatus.contains("已手動結算") ? Color.secondary : Color.orange)
+                            .foregroundStyle(model.usage.apiReconciliationStatus.contains("已手動結算") ? Color.secondary : Color.orange)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(.vertical, 2)
             }
-        } else if (model.budgetSnapshot?.reservedUSD ?? 0) > 0 {
+        } else if (model.usage.budgetSnapshot?.reservedUSD ?? 0) > 0 {
             Label("月度帳本包含無法安全歸屬到目前 Claude 帳戶的舊預留；為避免把費用分配給錯誤帳戶，這些預留目前不能由此處結算。", systemImage: "exclamationmark.triangle")
                 .font(.caption2).foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
@@ -106,7 +106,7 @@ extension MainWindowView {
 
     var subscriptionUsageDashboard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let activity = model.usageStatistics {
+            if let activity = model.usage.usageStatistics {
                 HStack(spacing: 6) {
                     usageMetric("近 5 小時", value: "\(activity.subscriptionFiveHourRuns)", detail: "次本機啟動")
                     usageMetric("近 7 天", value: "\(activity.subscriptionSevenDayRuns)", detail: "次本機啟動")
@@ -166,7 +166,7 @@ extension MainWindowView {
                     usageLimitRow("近 24 小時", keyPath: \.subscriptionDailyRunLimit)
                     usageLimitRow("近 7 天", keyPath: \.subscriptionWeeklyRunLimit)
                     usageLimitRow("目前工作階段", keyPath: \.subscriptionSessionRunLimit)
-                    Button("儲存本機上限") { model.saveUsageControlSettings() }
+                    Button("儲存本機上限") { model.usage.saveUsageControlSettings() }
                         .controlSize(.small)
                 }
                 .padding(.top, 4)
@@ -176,7 +176,7 @@ extension MainWindowView {
 
     var apiUsageDashboard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let budget = model.budgetSnapshot {
+            if let budget = model.usage.budgetSnapshot {
                 let committed = budget.usedUSD + budget.reservedUSD
                 HStack(spacing: 5) {
                     usageMetric("本月已用", value: String(format: "$%.2f", budget.usedUSD), detail: "本機帳本")
@@ -205,7 +205,7 @@ extension MainWindowView {
                     .font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let activity = model.usageStatistics {
+            if let activity = model.usage.usageStatistics {
                 Text(String(format: model.localized("此帳戶近 24 小時 API 啟動：%@ 次 · 目前工作階段：%@ 次"),
                             String(activity.apiDailyRuns),
                             String(activity.apiSessionRuns)))
@@ -214,7 +214,7 @@ extension MainWindowView {
                             activity.generatedAt.formatted(Date.FormatStyle(time: .shortened).locale(model.appLanguage.locale))))
                     .font(.system(size: 8)).foregroundStyle(.tertiary)
             }
-            if let costs = model.apiCostSnapshot {
+            if let costs = model.usage.apiCostSnapshot {
                 if let limit = costs.dailyLimitUSD {
                     apiDollarCapRow(
                         title: "UTC 今日 API 費用上限",
@@ -244,30 +244,30 @@ extension MainWindowView {
                     } else {
                         HStack {
                             Text("本機月上限（USD）")
-                            TextField("例如 25", text: $model.apiMonthlyLimitInput)
+                            TextField("例如 25", text: Bindable(model.usage).apiMonthlyLimitInput)
                                 .textFieldStyle(.roundedBorder)
-                                .disabled(model.usageControls.apiMonthlyLimitUSD != nil)
+                                .disabled(model.usage.usageControls.apiMonthlyLimitUSD != nil)
                                 .frame(width: 95)
                         }
-                        if model.usageControls.apiMonthlyLimitUSD != nil {
+                        if model.usage.usageControls.apiMonthlyLimitUSD != nil {
                             Text("此帳戶月帳本已建立；為保留既有支出，月上限不能再變更。")
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
                     }
                     Text("美元上限（預留金額按單次預算的兩倍計算）")
                         .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                    apiDollarLimitInputRow("UTC 每日 USD 上限", text: $model.apiDailyLimitInput)
-                    apiDollarLimitInputRow("工作階段 USD 上限", text: $model.apiSessionLimitInput)
+                    apiDollarLimitInputRow("UTC 每日 USD 上限", text: Bindable(model.usage).apiDailyLimitInput)
+                    apiDollarLimitInputRow("工作階段 USD 上限", text: Bindable(model.usage).apiSessionLimitInput)
                     Text("選用 API 執行次數上限（獨立於美元上限）")
                         .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                     usageLimitRow("近 24 小時執行次數", keyPath: \.apiDailyRunLimit)
                     usageLimitRow("目前工作階段執行次數", keyPath: \.apiSessionRunLimit)
                     Toggle("停用此帳戶後續 Claude API 執行", isOn: Binding(
-                        get: { model.usageControls.disableFutureAPI },
-                        set: { value in model.updateUsageControls { $0.disableFutureAPI = value } }
+                        get: { model.usage.usageControls.disableFutureAPI },
+                        set: { value in model.usage.updateUsageControls { $0.disableFutureAPI = value } }
                     ))
                     .font(.caption2)
-                    Button("儲存本機控制") { model.saveUsageControlSettings() }
+                    Button("儲存本機控制") { model.usage.saveUsageControlSettings() }
                         .controlSize(.small)
                 }
                 .padding(.top, 4)
@@ -388,9 +388,9 @@ extension MainWindowView {
 
     func usageLimitBinding(_ keyPath: WritableKeyPath<UsageControlSettings, Int?>) -> Binding<Int> {
         Binding(
-            get: { model.usageControls[keyPath: keyPath] ?? 0 },
+            get: { model.usage.usageControls[keyPath: keyPath] ?? 0 },
             set: { value in
-                model.updateUsageControls { settings in
+                model.usage.updateUsageControls { settings in
                     settings[keyPath: keyPath] = value == 0 ? nil : value
                 }
             }

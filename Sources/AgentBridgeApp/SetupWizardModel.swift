@@ -278,7 +278,7 @@ final class SetupWizardModel {
                 app.clearAPIAuthorization()
             }
             app.providerUsageReport = nil
-            app.loadedUsageControlsScopeKey = nil
+            app.usage.loadedUsageControlsScopeKey = nil
             app.refresh(forceUsageStatistics: true)
             if let anchor = app.selectedSession { app.selectOrCreateSession(for: provider, anchoredTo: anchor) }
             status = provider == .local
@@ -305,7 +305,7 @@ final class SetupWizardModel {
             try service.selectAccountProfile(id: profileID, provider: provider)
             app.selectedProfileIDs[provider] = profileID
             app.accountProfiles[provider] = try service.accountProfiles(provider: provider)
-            app.loadedUsageControlsScopeKey = nil
+            app.usage.loadedUsageControlsScopeKey = nil
             app.providerUsageReport = nil
             app.authStatus.removeValue(forKey: profileID)
             status = provider == .local
@@ -336,7 +336,7 @@ final class SetupWizardModel {
             try service.selectAccountProfile(id: profile.id, provider: provider)
             app.selectedProfileIDs[provider] = profile.id
             app.accountProfiles[provider] = try service.accountProfiles(provider: provider)
-            app.loadedUsageControlsScopeKey = nil
+            app.usage.loadedUsageControlsScopeKey = nil
             app.authStatus.removeValue(forKey: profile.id)
             profileName = ""
             status = provider == .local
@@ -444,8 +444,8 @@ final class SetupWizardModel {
             usageStatus = app.localized("Local usage settings saved.")
             if app.settings.defaultProvider == profile.provider,
                app.selectedProfileIDs[profile.provider] == profile.id {
-                app.usageControls = usageControls
-                app.loadedUsageControlsScopeKey = "\(profile.provider.rawValue):\(profile.id.uuidString.lowercased())"
+                app.usage.usageControls = usageControls
+                app.usage.loadedUsageControlsScopeKey = "\(profile.provider.rawValue):\(profile.id.uuidString.lowercased())"
             }
         } catch {
             usageStatus = error.localizedDescription
@@ -488,8 +488,8 @@ final class SetupWizardModel {
             }
             if app.settings.defaultProvider == profile.provider,
                app.selectedProfileIDs[profile.provider] == profile.id {
-                app.usageControls = updated
-                app.loadedUsageControlsScopeKey = "\(profile.provider.rawValue):\(profile.id.uuidString.lowercased())"
+                app.usage.usageControls = updated
+                app.usage.loadedUsageControlsScopeKey = "\(profile.provider.rawValue):\(profile.id.uuidString.lowercased())"
             }
         } catch {
             if provider == profile.provider, selectedProfile?.id == profile.id {
