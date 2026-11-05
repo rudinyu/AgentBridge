@@ -459,7 +459,7 @@ final class SetupWizardModel {
             return
         }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.persistNotificationPreference(granted, service: service, profile: profile)
                 if self.provider == profile.provider,

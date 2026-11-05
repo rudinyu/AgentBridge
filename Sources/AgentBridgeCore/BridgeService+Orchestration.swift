@@ -22,7 +22,8 @@ private enum AutonomousRunControl {
     }
 
     private static let lock = NSLock()
-    private static var entries: [UUID: Entry] = [:]
+    /// Guarded by `lock`.
+    private nonisolated(unsafe) static var entries: [UUID: Entry] = [:]
 
     static func register(runID: UUID, cancellation: CancellationFlag, sessionIDs: [UUID]) {
         lock.lock()

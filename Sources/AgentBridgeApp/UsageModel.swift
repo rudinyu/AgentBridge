@@ -291,7 +291,7 @@ final class UsageModel {
         }
         let requestedSettings = usageControls
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 var updated = self.app.selectedAccountProfile?.id == profile.id ? self.usageControls : requestedSettings
                 updated.macOSNotificationsEnabled = granted

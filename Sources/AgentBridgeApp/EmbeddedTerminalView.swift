@@ -1,7 +1,7 @@
 import AppKit
 import Darwin
 import AgentBridgeCore
-import SwiftTerm
+@preconcurrency import SwiftTerm
 import SwiftUI
 
 struct TerminalLaunchSpec: Equatable, Sendable, Identifiable {
@@ -30,7 +30,7 @@ struct TerminalLaunchSpec: Equatable, Sendable, Identifiable {
 }
 
 /// A local ANSI/VT100 view. OSC 52 clipboard requests and terminal links are denied.
-private final class AgentBridgeTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
+private final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewDelegate, @preconcurrency LocalProcessDelegate {
     private var process: LocalProcess?
     private let usageCaptureLock = NSLock()
     private var usageCaptureEnabled = false
@@ -75,19 +75,20 @@ private final class AgentBridgeTerminalView: TerminalView, TerminalViewDelegate,
     func terminateWithEscalation() {
         guard let child = process, child.running else { return }
         let helperPID = child.shellPid
+        nonisolated(unsafe) let escalatingChild = child
         let foregroundGroup = child.childfd >= 0 ? tcgetpgrp(child.childfd) : -1
         if foregroundGroup > 1, foregroundGroup != helperPID {
             _ = kill(-foregroundGroup, SIGTERM)
         }
         if helperPID > 1 { _ = kill(-helperPID, SIGTERM) }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + .milliseconds(750)) {
-            guard child.running else { return }
+            guard escalatingChild.running else { return }
             if foregroundGroup > 1, foregroundGroup != helperPID,
-               child.childfd >= 0, tcgetpgrp(child.childfd) == foregroundGroup {
+               escalatingChild.childfd >= 0, tcgetpgrp(escalatingChild.childfd) == foregroundGroup {
                 _ = kill(-foregroundGroup, SIGKILL)
             }
-            if helperPID > 1, child.shellPid == helperPID { _ = kill(-helperPID, SIGKILL) }
-            child.terminate()
+            if helperPID > 1, escalatingChild.shellPid == helperPID { _ = kill(-helperPID, SIGKILL) }
+            escalatingChild.terminate()
         }
     }
 

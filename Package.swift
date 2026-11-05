@@ -1,6 +1,9 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
+// Complete concurrency checking for product code while staying in the Swift 5 language mode.
+let strictConcurrency: [SwiftSetting] = [.enableExperimentalFeature("StrictConcurrency")]
+
 let package = Package(
     name: "AgentBridge",
     defaultLocalization: "en",
@@ -14,12 +17,13 @@ let package = Package(
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.20.0")
     ],
     targets: [
-        .target(name: "AgentBridgeCore"),
-        .executableTarget(name: "AgentBridgeCLI", dependencies: ["AgentBridgeCore"]),
+        .target(name: "AgentBridgeCore", swiftSettings: strictConcurrency),
+        .executableTarget(name: "AgentBridgeCLI", dependencies: ["AgentBridgeCore"], swiftSettings: strictConcurrency),
         .executableTarget(
             name: "AgentBridgeApp",
             dependencies: ["AgentBridgeCore", .product(name: "SwiftTerm", package: "SwiftTerm")],
-            resources: [.process("Resources")]
+            resources: [.process("Resources")],
+            swiftSettings: strictConcurrency
         ),
         .testTarget(name: "AgentBridgeCoreTests", dependencies: ["AgentBridgeCore"], resources: [.process("Fixtures")])
     ],

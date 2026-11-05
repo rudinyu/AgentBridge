@@ -35,7 +35,7 @@ public final class LocalModelClient: @unchecked Sendable {
     private let sessionFactory: @Sendable () -> URLSession
 
     public init() {
-        self.sessionFactory = Self.makeSession
+        self.sessionFactory = { Self.makeSession() }
     }
 
     /// Validates persisted endpoint/settings structure without making a network request.
