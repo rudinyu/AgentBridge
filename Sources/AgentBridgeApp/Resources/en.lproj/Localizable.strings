@@ -1468,3 +1468,4 @@
 "Could not read the CLI version; AgentBridge was verified with %@." = "Could not read the CLI version; AgentBridge was verified with %@.";
 "Could not read the CLI help, so the required flags were not confirmed." = "Could not read the CLI help, so the required flags were not confirmed.";
 "The CLI help no longer lists flags AgentBridge needs: %@." = "The CLI help no longer lists flags AgentBridge needs: %@.";
+"Could not compact the audit file." = "Could not compact the audit file.";

@@ -50,7 +50,7 @@ Official CLI options and authentication behavior can change. The official refere
 | `SafeProcessRunner` | Launches an executable with argv; bounds I/O; manages process groups, timeouts, cancellation, and PTY foreground handoff |
 | `ProviderAdapters` | Builds provider arguments and environments, identifies login modes, parses events, and reads reported provider costs |
 | `WorkspaceManager` | Creates an isolated detached Git clone under the selected workspace-data root, removes its remote, disables Git hooks, and verifies the pinned commit |
-| `AuditStore` | Private Application Support settings and session/event JSONL, cross-process file locks, one-run leases, and cancellation markers |
+| `AuditStore` | Private Application Support settings and session/event JSONL, cross-process file locks, one-run leases, and cancellation markers. The session index is compacted to one line per session once it grows past 2 MiB, and a full audit file trims the text of older `run.output` events (never the events themselves) instead of failing; decoded indexes and events are reused until the file changes |
 | Workspace-root settings | Persists the selected user folder privately for both App and CLI; copies existing workspaces and memory on change without deleting source data |
 | `AccountProfileStore` | Provider account labels, selected profile, isolated CLI configuration directories, and per-account memory consent |
 | `SharedMemoryStore` | Stores cross-provider App/CLI read-only turns and user notes by canonical repository path and pinned commit |

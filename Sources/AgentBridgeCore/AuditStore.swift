@@ -16,6 +16,14 @@ public final class AuditStore: @unchecked Sendable {
     private let encoder: JSONEncoder
     private let decoder = JSONDecoder()
     private let maxFileSize = 10 * 1_024 * 1_024
+    /// Past this size the session index is compacted before the next save, once it
+    /// has also doubled since the last compaction (so data that cannot shrink is
+    /// not rewritten on every save).
+    private let sessionIndexCompactionSize = 2 * 1_024 * 1_024
+    /// Guarded by `lock`, like every other piece of state here.
+    private var compactedSessionIndexSize = 0
+    private var sessionIndexCache: (signature: AuditCompaction.FileSignature, sessions: [UUID: SessionRecord])?
+    private var eventsCache: (path: String, signature: AuditCompaction.FileSignature, events: [AuditEvent])?
 
     public convenience init(rootURL: URL, fileManager: FileManager = .default) throws {
         try self.init(
@@ -93,6 +101,7 @@ public final class AuditStore: @unchecked Sendable {
         try withStoreLock(exclusive: true) {
             do {
                 let data = try encoder.encode(session)
+                try compactSessionIndexIfNeeded(incomingBytes: data.count + 1)
                 try Self.appendJSONLine(data, to: sessionsURL, fileManager: fileManager, maximumSize: maxFileSize)
             } catch let error as AgentBridgeError {
                 throw error
@@ -113,6 +122,7 @@ public final class AuditStore: @unchecked Sendable {
                     if index > 0 { data.append(0x0A) }
                     data.append(try encoder.encode(session))
                 }
+                try compactSessionIndexIfNeeded(incomingBytes: data.count + 1)
                 try Self.appendJSONLine(data, to: sessionsURL, fileManager: fileManager, maximumSize: maxFileSize)
             } catch let error as AgentBridgeError {
                 throw error
@@ -124,25 +134,46 @@ public final class AuditStore: @unchecked Sendable {
 
     public func loadSessions() throws -> [SessionRecord] {
         try withStoreLock(exclusive: false) {
-            try Self.requireRegularFile(sessionsURL)
-            let attributes = try fileManager.attributesOfItem(atPath: sessionsURL.path)
-            guard (attributes[.size] as? NSNumber)?.intValue ?? 0 <= maxFileSize else {
-                throw AgentBridgeError.persistence("The session index exceeds the size limit.")
-            }
-            guard let data = try? Data(contentsOf: sessionsURL) else { return [] }
-            var latest: [UUID: SessionRecord] = [:]
-            for line in data.split(separator: 0x0A) {
-                guard let session = try? decoder.decode(SessionRecord.self, from: Data(line)) else { continue }
-                if (latest[session.id]?.updatedAt ?? .distantPast) <= session.updatedAt {
-                    latest[session.id] = session
-                }
-            }
-            return latest.values.sorted { $0.updatedAt > $1.updatedAt }
+            try sessionIndex().values.sorted { $0.updatedAt > $1.updatedAt }
         }
     }
 
     public func session(id: UUID) throws -> SessionRecord? {
-        try loadSessions().first(where: { $0.id == id })
+        try withStoreLock(exclusive: false) { try sessionIndex()[id] }
+    }
+
+    /// The newest record of each session. The decoded index is reused until the
+    /// file changes, which another process appending also does, so each lookup no
+    /// longer parses the whole index. Callers hold the store lock.
+    private func sessionIndex() throws -> [UUID: SessionRecord] {
+        try Self.requireRegularFile(sessionsURL)
+        guard let signature = AuditCompaction.signature(of: sessionsURL) else { return [:] }
+        guard signature.size <= maxFileSize else {
+            throw AgentBridgeError.persistence("The session index exceeds the size limit.")
+        }
+        if let cached = sessionIndexCache, cached.signature == signature { return cached.sessions }
+        guard let data = try? Data(contentsOf: sessionsURL) else { return [:] }
+        let sessions = AuditCompaction.latestSessions(in: data, decoder: decoder)
+        sessionIndexCache = (signature, sessions)
+        return sessions
+    }
+
+    /// Rewrites the index with one line per session when it has grown large. It
+    /// otherwise only ever grew, and at the size limit no session could be saved.
+    private func compactSessionIndexIfNeeded(incomingBytes: Int) throws {
+        guard let signature = AuditCompaction.signature(of: sessionsURL) else { return }
+        let wouldExceedLimit = signature.size + incomingBytes > maxFileSize
+        let grown = signature.size > sessionIndexCompactionSize && signature.size > 2 * compactedSessionIndexSize
+        guard wouldExceedLimit || grown else { return }
+        try compactSessionIndex()
+    }
+
+    func compactSessionIndex() throws {
+        guard fileManager.fileExists(atPath: sessionsURL.path) else { return }
+        try Self.requireRegularFile(sessionsURL)
+        try AuditCompaction.compactSessionIndex(at: sessionsURL, decoder: decoder, encoder: encoder)
+        compactedSessionIndexSize = AuditCompaction.signature(of: sessionsURL)?.size ?? 0
+        sessionIndexCache = nil
     }
 
     public func appendEvent(_ event: AuditEvent) throws {
@@ -150,6 +181,10 @@ public final class AuditStore: @unchecked Sendable {
             let path = eventsURL.appendingPathComponent("\(event.sessionID.uuidString.lowercased()).jsonl")
             do {
                 let data = try encoder.encode(event)
+                if let size = AuditCompaction.signature(of: path)?.size, size + data.count + 1 > maxFileSize {
+                    try Self.requireRegularFile(path)
+                    try AuditCompaction.trimOldOutputs(inEventsAt: path, decoder: decoder, encoder: encoder)
+                }
                 try Self.appendJSONLine(data, to: path, fileManager: fileManager, maximumSize: maxFileSize)
             } catch let error as AgentBridgeError {
                 throw error
@@ -164,12 +199,15 @@ public final class AuditStore: @unchecked Sendable {
             let path = eventsURL.appendingPathComponent("\(sessionID.uuidString.lowercased()).jsonl")
             guard fileManager.fileExists(atPath: path.path) else { return [] }
             try Self.requireRegularFile(path)
-            let attributes = try fileManager.attributesOfItem(atPath: path.path)
-            guard (attributes[.size] as? NSNumber)?.intValue ?? 0 <= maxFileSize else {
+            guard let signature = AuditCompaction.signature(of: path) else { return [] }
+            guard signature.size <= maxFileSize else {
                 throw AgentBridgeError.persistence("The audit file exceeds the size limit.")
             }
+            if let cached = eventsCache, cached.path == path.path, cached.signature == signature { return cached.events }
             guard let data = try? Data(contentsOf: path) else { return [] }
-            return data.split(separator: 0x0A).compactMap { try? decoder.decode(AuditEvent.self, from: Data($0)) }
+            let events = data.split(separator: 0x0A).compactMap { try? decoder.decode(AuditEvent.self, from: Data($0)) }
+            eventsCache = (path.path, signature, events)
+            return events
         }
     }
 

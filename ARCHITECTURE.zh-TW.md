@@ -50,7 +50,7 @@ AgentBridge 0.11.1 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCo
 | `SafeProcessRunner` | 以 executable 和 argv 啟動程序；有界 I/O、程序群組、逾時、取消及 PTY 前景交接 |
 | `ProviderAdapters` | 建立安全參數與環境、辨識登入方案、解析事件與供應商費用 |
 | `WorkspaceManager` | 在使用者自選的工作區資料根目錄建立獨立 detached Git clone、移除遠端、停用 Git hooks，並驗證固定提交 |
-| `AuditStore` | Application Support 中的私有設定、session/event JSONL、跨程序檔案鎖、單一執行租約及取消標記 |
+| `AuditStore` | Application Support 中的私有設定、session/event JSONL、跨程序檔案鎖、單一執行租約及取消標記。session 索引超過 2 MiB 時會壓縮成每個 session 一行；稽核檔滿時會縮短較舊的 `run.output` 事件文字（不刪除事件本身），不再直接失敗；解碼後的索引與事件在檔案未變動前會重複使用 |
 | 工作區根目錄設定 | 將使用者選擇的資料夾私下保存供 App 與 CLI 共用；變更時安全複製既有工作區與記憶，不刪除來源資料 |
 | `AccountProfileStore` | provider 帳戶標籤、選取狀態、分離 CLI 設定目錄及逐帳戶記憶同意 |
 | `SharedMemoryStore` | 依 canonical Repository 路徑及固定提交儲存跨供應商回合與使用者備註 |
