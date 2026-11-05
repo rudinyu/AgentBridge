@@ -25,7 +25,8 @@ let package = Package(
             resources: [.process("Resources")],
             swiftSettings: strictConcurrency
         ),
-        .testTarget(name: "AgentBridgeCoreTests", dependencies: ["AgentBridgeCore"], resources: [.process("Fixtures")])
+        .testTarget(name: "AgentBridgeCoreTests", dependencies: ["AgentBridgeCore"], resources: [.process("Fixtures")]),
+        .testTarget(name: "AgentBridgeAppTests", dependencies: ["AgentBridgeApp", "AgentBridgeCore"])
     ],
     swiftLanguageModes: [.v5]
 )
