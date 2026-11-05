@@ -2,6 +2,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The version and build number live in one Swift file that the CLI also uses.
+VERSION_FILE="$ROOT/Sources/AgentBridgeCore/AppVersion.swift"
+APP_VERSION="$(sed -n 's/.*marketing = "\([0-9][0-9.]*\)".*/\1/p' "$VERSION_FILE")"
+APP_BUILD="$(sed -n 's/.*build = \([0-9][0-9]*\).*/\1/p' "$VERSION_FILE")"
+if [[ -z "$APP_VERSION" || -z "$APP_BUILD" ]]; then
+  printf 'Error: could not read the version and build number from %s.\n' "$VERSION_FILE" >&2
+  exit 1
+fi
 APP_NAME="AgentBridge.app"
 APP_NAME_WAS_SET=false
 print_usage() {
@@ -146,8 +155,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>AgentBridge</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSHumanReadableCopyright</key><string>Copyright © 2026 rudin. Licensed under the MIT License.</string>
-  <key>CFBundleShortVersionString</key><string>0.11.0</string>
-  <key>CFBundleVersion</key><string>11</string>
+  <key>CFBundleShortVersionString</key><string>__APP_VERSION__</string>
+  <key>CFBundleVersion</key><string>__APP_BUILD__</string>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hant</string></array>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
@@ -159,6 +168,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+sed -i '' "s/__APP_VERSION__/$APP_VERSION/; s/__APP_BUILD__/$APP_BUILD/" "$APP/Contents/Info.plist"
 chmod 755 "$APP/Contents/MacOS/AgentBridgeApp" "$APP/Contents/Helpers/agentbridge"
 plutil -lint "$APP/Contents/Info.plist"
 test -x "$APP/Contents/MacOS/AgentBridgeApp"
