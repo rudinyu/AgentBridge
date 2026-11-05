@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 — 2026-11-05
 
 - Core, CLI and App messages are now written in English instead of Traditional Chinese. The App shows Traditional Chinese through `zh-Hant.lproj`, matching whole sentences or whole-sentence templates (captured values are translated in turn) instead of replacing fragments inside a sentence. Audit events saved before this change stay readable in English through `en.lproj/Legacy.strings`. **The CLI now prints English only**; it previously printed Chinese. A test fails if Chinese text reappears in Core sources.
 - `agentbridge doctor` now prints each provider CLI's version against the one AgentBridge was last verified with (Claude Code 2.1.311, Codex 0.166.0) and warns when a flag AgentBridge passes no longer appears in the CLI's help. The check is advisory and never blocks a run.

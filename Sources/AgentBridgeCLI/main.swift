@@ -4,7 +4,7 @@ import AgentBridgeCore
 
 @main
 enum AgentBridgeCLI {
-    private static let version = "0.10.0"
+    private static let version = "0.11.0"
 
     static func main() async {
         do {

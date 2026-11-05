@@ -12,7 +12,7 @@ Creates the app bundle under this repository's build/ directory.
 The default output is build/AgentBridge.app.
 
 Example:
-  ./scripts/package-app.sh --app-name AgentBridge-0.10.0-dev.app
+  ./scripts/package-app.sh --app-name AgentBridge-0.11.0-dev.app
 USAGE
 }
 
@@ -146,8 +146,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>AgentBridge</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSHumanReadableCopyright</key><string>Copyright © 2026 rudin. Licensed under the MIT License.</string>
-  <key>CFBundleShortVersionString</key><string>0.10.0</string>
-  <key>CFBundleVersion</key><string>9</string>
+  <key>CFBundleShortVersionString</key><string>0.11.0</string>
+  <key>CFBundleVersion</key><string>10</string>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hant</string></array>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
