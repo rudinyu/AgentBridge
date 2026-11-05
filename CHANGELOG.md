@@ -2,6 +2,8 @@
 
 ## 0.11.1 — 2026-11-05
 
+- Release record: build 12 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `4fa3a5d3-d4b2-4511-8697-7621642ab588`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `68c5e5f1540457576e60d435b66260455a6e92e61a0548eb59f91ec92473e889`. The signed build itself has not been launched or clicked through.
+
 - Code structure (no behaviour change): the largest types in `ActiveExtensionRuntime`, `AutonomousOrchestration`, `ProviderAdapters`, `ActiveExtensionsView` and `DiscussionChatView` moved into files of their own; `runReadOnly` lost four self-contained steps to helper functions (269 to 218 lines); and the long `switch` functions in the CLI now call one function per subcommand (the longest went from 244 to 135 lines). 137 CLI invocations across every command group were compared against the previous build with identical output and exit codes.
 - A new test fails when a Core message is added without a Traditional Chinese translation. 513 existing English messages without one (mostly store integrity checks) are frozen in `Tests/AgentBridgeCoreTests/Fixtures/untranslated-core-messages.txt`, so the list can only shrink; regenerate it with `UPDATE_L10N_BASELINE=1`.
 - The version and build number are now written once, in `AppVersion.swift`; the CLI reports it and `scripts/package-app.sh` reads it for the app's Info.plist. The CLI source is split into one file per command group (a pure move).
