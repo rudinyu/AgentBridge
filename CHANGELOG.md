@@ -2,6 +2,8 @@
 
 ## 0.11.0 — 2026-11-05
 
+- Release record: build 10 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `dc69a199-e249-4d9c-b7e3-d0664ffdef7e`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `b00360a67c1b2960b9a6df95366d86edbc1c9483b81f560ada55ae3c3ff2cef0`. The signed app has not been launched or clicked through; GUI acceptance is a separate check.
+
 - Core, CLI and App messages are now written in English instead of Traditional Chinese. The App shows Traditional Chinese through `zh-Hant.lproj`, matching whole sentences or whole-sentence templates (captured values are translated in turn) instead of replacing fragments inside a sentence. Audit events saved before this change stay readable in English through `en.lproj/Legacy.strings`. **The CLI now prints English only**; it previously printed Chinese. A test fails if Chinese text reappears in Core sources.
 - `agentbridge doctor` now prints each provider CLI's version against the one AgentBridge was last verified with (Claude Code 2.1.311, Codex 0.166.0) and warns when a flag AgentBridge passes no longer appears in the CLI's help. The check is advisory and never blocks a run.
 - Added `agentbridge memory relink-candidates` and `memory relink SESSION-ID KEY --confirm` for repositories that were moved or renamed: shared memory stored for the same commit under a path that no longer exists can be copied into the session's memory. Nothing is linked automatically, the original is left unchanged, a non-empty memory is never merged into, and a second clone is not offered because its old path still exists.
