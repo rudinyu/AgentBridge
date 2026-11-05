@@ -9,8 +9,7 @@ public final class BridgeService: @unchecked Sendable {
     let localModelClient = LocalModelClient()
     let baseEnvironment: [String: String]
     let monthlyAPILimitUSD: Double
-    let spendLedgerLock = NSLock()
-    var profileSpendLedgers: [UUID: APISpendLedger] = [:]
+    let spendLedgers = SpendLedgerRegistry()
     let accountProfileStore: AccountProfileStore
     let sharedMemoryStore: SharedMemoryStore
     let projectMemoryStore: ProjectMemoryStore

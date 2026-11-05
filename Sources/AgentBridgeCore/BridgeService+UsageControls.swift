@@ -362,10 +362,7 @@ extension BridgeService {
     func spendLedger(for profileID: UUID) throws -> APISpendLedger {
         let profile = try accountProfile(id: profileID)
         guard profile.provider == .claude else { throw AgentBridgeError.unsupportedAPIUsage }
-        spendLedgerLock.lock()
-        let cached = profileSpendLedgers[profileID]
-        spendLedgerLock.unlock()
-        if let cached { return cached }
+        if let cached = spendLedgers.cached(for: profileID) { return cached }
 
         let directoryName = profileID.uuidString.lowercased()
         let legacyMonthlyRoot = profileID == AccountProfile.defaultID(for: .claude)
@@ -379,10 +376,6 @@ extension BridgeService {
             legacyCostRootURL: store.rootURL.appendingPathComponent("api-cost-controls", isDirectory: true)
                 .appendingPathComponent(directoryName, isDirectory: true)
         )
-        spendLedgerLock.lock()
-        defer { spendLedgerLock.unlock() }
-        if let existing = profileSpendLedgers[profileID] { return existing }
-        profileSpendLedgers[profileID] = ledger
-        return ledger
+        return spendLedgers.register(ledger, for: profileID)
     }
 }
