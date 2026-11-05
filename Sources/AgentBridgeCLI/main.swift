@@ -93,6 +93,25 @@ enum AgentBridgeCLI {
         try await MCPServerProxy.run(ticketURL: URL(fileURLWithPath: arguments[1]))
     }
 
+    private static func printCLICompatibility(_ report: CLICompatibilityReport) {
+        switch report.versionStatus {
+        case .matchesTested:
+            print("  CLI 版本：\(report.version ?? "?")（與 AgentBridge 驗證版本相同）")
+        case .newerThanTested:
+            print("  CLI 版本：\(report.version ?? "?")（比已驗證的 \(report.testedVersion) 新；若功能異常請先回報）")
+        case .olderThanTested:
+            print("  警告：CLI 版本 \(report.version ?? "?") 比已驗證的 \(report.testedVersion) 舊；部分功能可能無法使用。")
+        case .unreadable:
+            print("  警告：無法讀取 CLI 版本；AgentBridge 驗證版本為 \(report.testedVersion)。")
+        }
+        if !report.flagsWereChecked {
+            print("  警告：無法讀取 CLI 說明，未能確認所需旗標。")
+        }
+        if !report.missingFlags.isEmpty {
+            print("  警告：CLI 說明中找不到 AgentBridge 依賴的旗標：\(report.missingFlags.joined(separator: " "))。相關執行會失敗並關閉，請更新 AgentBridge 或降回已驗證版本。")
+        }
+    }
+
     private static func doctor(service: BridgeService) async throws {
         print("AgentBridge \(version)")
         let settings = try service.settings()
@@ -117,6 +136,9 @@ enum AgentBridgeCLI {
                 if let accountLabel = assessment.accountLabel { print("  帳戶：\(accountLabel)") }
                 if let planName = assessment.planName { print("  方案：\(planName)") }
                 print("  \(assessment.message)")
+                if let report = try await service.cliCompatibility(provider: provider, profileID: profile.id) {
+                    printCLICompatibility(report)
+                }
             } catch let error as AgentBridgeError {
                 if case .missingExecutable = error { print("\(provider.rawValue): 找不到 CLI") }
                 else { print("\(provider.rawValue): \(error.localizedDescription)") }
