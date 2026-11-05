@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Code structure (no behaviour change): `runChanges` reuses the extension check that `runReadOnly` already had and lost three steps to helper functions (211 to 177 lines; the prompt text is byte-for-byte identical), and the custom verification command check moved out of `runVerification`.
+
 ## 0.11.1 — 2026-11-05
 
 - Release record: build 12 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `4fa3a5d3-d4b2-4511-8697-7621642ab588`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `68c5e5f1540457576e60d435b66260455a6e92e61a0548eb59f91ec92473e889`. The signed build itself has not been launched or clicked through.

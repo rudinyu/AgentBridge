@@ -742,6 +742,33 @@ extension BridgeService {
         return providerPrompt
     }
 
+    /// A user-approved custom verification program, checked before it is ever run:
+    /// it must be approved, an absolute path to an executable file, and its
+    /// arguments must stay within bounds.
+    private func validatedCustomVerificationExecutable(
+        _ customExecutableURL: URL,
+        arguments: [String],
+        customCommandApproved: Bool
+    ) throws -> URL {
+        guard customCommandApproved else {
+            throw AgentBridgeError.verificationCommandRejected("A custom program must first be reviewed and explicitly approved by the user.")
+        }
+        let candidate = customExecutableURL.standardizedFileURL
+        guard customExecutableURL.isFileURL,
+              candidate.path.hasPrefix("/"),
+              !candidate.path.contains("\0"),
+              !candidate.path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+              FileManager.default.isExecutableFile(atPath: candidate.path) else {
+            throw AgentBridgeError.verificationCommandRejected("Choose an executable absolute path.")
+        }
+        guard arguments.count <= 128,
+              arguments.allSatisfy({ !$0.contains("\0") && $0.utf8.count <= 8_192 }),
+              arguments.reduce(0, { $0 + $1.utf8.count }) <= 64 * 1_024 else {
+            throw AgentBridgeError.verificationCommandRejected("The custom arguments exceed the size limit or contain invalid characters.")
+        }
+        return candidate
+    }
+
     @discardableResult
     public func runVerification(
         sessionID: UUID,
@@ -761,23 +788,11 @@ extension BridgeService {
         let executableURL: URL
         let commandArguments: [String]
         if let customExecutableURL {
-            guard customCommandApproved else {
-                throw AgentBridgeError.verificationCommandRejected("A custom program must first be reviewed and explicitly approved by the user.")
-            }
-            let candidate = customExecutableURL.standardizedFileURL
-            guard customExecutableURL.isFileURL,
-                  candidate.path.hasPrefix("/"),
-                  !candidate.path.contains("\0"),
-                  !candidate.path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
-                  FileManager.default.isExecutableFile(atPath: candidate.path) else {
-                throw AgentBridgeError.verificationCommandRejected("Choose an executable absolute path.")
-            }
-            guard arguments.count <= 128,
-                  arguments.allSatisfy({ !$0.contains("\0") && $0.utf8.count <= 8_192 }),
-                  arguments.reduce(0, { $0 + $1.utf8.count }) <= 64 * 1_024 else {
-                throw AgentBridgeError.verificationCommandRejected("The custom arguments exceed the size limit or contain invalid characters.")
-            }
-            executableURL = candidate
+            executableURL = try validatedCustomVerificationExecutable(
+                customExecutableURL,
+                arguments: arguments,
+                customCommandApproved: customCommandApproved
+            )
             commandArguments = arguments
         } else {
             guard arguments.isEmpty, !customCommandApproved else {
