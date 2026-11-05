@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.1 — 2026-11-05
 
 - Code structure (no behaviour change): the largest types in `ActiveExtensionRuntime`, `AutonomousOrchestration`, `ProviderAdapters`, `ActiveExtensionsView` and `DiscussionChatView` moved into files of their own; `runReadOnly` lost four self-contained steps to helper functions (269 to 218 lines); and the long `switch` functions in the CLI now call one function per subcommand (the longest went from 244 to 135 lines). 137 CLI invocations across every command group were compared against the previous build with identical output and exit codes.
 - A new test fails when a Core message is added without a Traditional Chinese translation. 513 existing English messages without one (mostly store integrity checks) are frozen in `Tests/AgentBridgeCoreTests/Fixtures/untranslated-core-messages.txt`, so the list can only shrink; regenerate it with `UPDATE_L10N_BASELINE=1`.

@@ -3,7 +3,7 @@
 [繁體中文](FEATURE_PLAN.zh-TW.md)
 
 - **Status:** Proposed
-- **Basis:** AgentBridge 0.11.0 working tree, the 0.6.0 competitive-scan baseline, [Product Gap Study](PRODUCT_GAP_STUDY.md), and first-party CLI/API documentation
+- **Basis:** AgentBridge 0.11.1 working tree, the 0.6.0 competitive-scan baseline, [Product Gap Study](PRODUCT_GAP_STUDY.md), and first-party CLI/API documentation
 - **Last reviewed:** 2026-11-02
 
 ### Product goal
