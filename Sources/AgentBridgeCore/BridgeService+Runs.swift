@@ -114,15 +114,7 @@ extension BridgeService {
         allowSharedMemoryForRun: Bool = true,
         maximumMCPToolCallsPerServer: Int? = nil
     ) async throws -> ProviderOutput {
-        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AgentBridgeError.invalidInput("Enter content to send to the assistant.")
-        }
-        guard prompt.utf8.count <= 256_000 else {
-            throw AgentBridgeError.invalidInput("Prompts can contain up to 256 KiB.")
-        }
-        if let maximumMCPToolCallsPerServer, !(1...128).contains(maximumMCPToolCallsPerServer) {
-            throw AgentBridgeError.invalidInput("The per-run MCP tool-call cap must be between 1 and 128.")
-        }
+        try validateRunRequest(prompt: prompt, maximumMCPToolCallsPerServer: maximumMCPToolCallsPerServer)
         let initialSession = try loadSession(sessionID)
         if initialSession.provider == .local {
             guard apiRequest == nil else {
@@ -156,25 +148,7 @@ extension BridgeService {
             )
         }
         let apiMode = settings.usageMode == .api
-        guard apiMode == (apiRequest != nil) else {
-            if apiMode { throw AgentBridgeError.sessionMismatch("Each API run requires a per-run budget, an API key, and explicit confirmation.") }
-            throw AgentBridgeError.sessionMismatch("Choose API mode in Settings first, or use subscription sign-in mode.")
-        }
-        if apiMode {
-            guard session.provider == .claude else { throw AgentBridgeError.sessionMismatch("API mode currently supports Claude only.") }
-            guard session.providerSessionID == nil else { throw AgentBridgeError.sessionMismatch("API mode cannot resume a subscription-mode session.") }
-            guard let apiRequest, apiRequest.explicitlyAuthorized else {
-                throw AgentBridgeError.sessionMismatch("An API run requires explicit confirmation of its paid budget.")
-            }
-            guard apiRequest.requestedBudgetUSD.isFinite,
-                  apiRequest.requestedBudgetUSD >= 0.01,
-                  apiRequest.requestedBudgetUSD <= 140,
-                  abs(((apiRequest.requestedBudgetUSD * 100).rounded() / 100) - apiRequest.requestedBudgetUSD) < 0.000_000_1,
-                  !apiRequest.apiKey.isEmpty,
-                  !apiRequest.apiKey.contains("\0") else {
-                throw AgentBridgeError.invalidInput("API mode requires a valid API key and a per-run budget between US$0.01 and US$140 with at most two decimal places.")
-            }
-        }
+        try validateAPIRequest(apiRequest, apiMode: apiMode, session: session)
         try authorizeManagedRun(
             session: session,
             profile: profile,
@@ -194,17 +168,7 @@ extension BridgeService {
             workspacePath: session.workspacePath,
             selectedExtensionIDs: extensionIDs
         )
-        if let expectedExtensionFingerprint {
-            guard ActiveExtensionValidation.isSHA256(expectedExtensionFingerprint),
-                  extensionInvocation.fingerprint == expectedExtensionFingerprint.lowercased() else {
-                throw ActiveExtensionRuntimeError.reviewDigestMismatch
-            }
-        }
-        for mcpServer in extensionInvocation.mcpServers {
-            guard try MCPExecutableValidation.digestExecutable(at: mcpServer.executablePath) == mcpServer.executableDigest else {
-                throw ActiveExtensionRuntimeError.invalidConfiguration("The MCP executable changed after it was imported and reviewed.")
-            }
-        }
+        try verifyExtensionInvocation(extensionInvocation, expectedFingerprint: expectedExtensionFingerprint)
         let mcpControlPlane = try makeMCPRunDirectoryLease(for: extensionInvocation, session: session, providerTemporaryDirectory: temp)
         defer { mcpControlPlane?.remove() }
         let (sharedPrompt, memoryContext, compression) = try promptWithSharedMemory(
@@ -219,28 +183,13 @@ extension BridgeService {
         }
         let apiKey = apiRequest?.apiKey
         let environment = try providerEnvironment(profile: profile, privateTemporaryDirectory: temp, apiKey: apiKey)
-        var reservation: APISpendReservation?
-        if let apiRequest {
-            guard let activeSpendLedger else { throw UsageControlError.apiMonthlyLimitRequired(profile.id) }
-            do {
-                let controls = try usageControlStore.settings(provider: .claude, accountProfileID: profile.id)
-                reservation = try activeSpendLedger.reserve(
-                    sessionID: sessionID,
-                    requestedUSD: apiRequest.requestedBudgetUSD,
-                    explicitlyAuthorized: apiRequest.explicitlyAuthorized,
-                    limits: apiSpendLimits(for: profile.id, controls: controls)
-                )
-            } catch {
-                try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "usage.run.blocked", message: OutputRedactor.redact(error.localizedDescription)))
-                throw error
-            }
-        } else {
-            let assessment = try await checkAuthentication(profile: profile, executable: executable)
-            guard assessment.confirmedSubscription else {
-                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "auth.refused", message: "Subscription sign-in not confirmed; \(assessment.message)"))
-                throw AgentBridgeError.unauthenticated(session.provider, assessment.message)
-            }
-        }
+        let reservation = try await reserveBudgetOrConfirmSignIn(
+            apiRequest: apiRequest,
+            activeSpendLedger: activeSpendLedger,
+            session: session,
+            profile: profile,
+            executable: executable
+        )
 
         var activeSession = session
         // App-owned compressed context is authoritative for every managed
@@ -370,6 +319,92 @@ extension BridgeService {
         }
     }
 
+
+    private func validateRunRequest(prompt: String, maximumMCPToolCallsPerServer: Int?) throws {
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AgentBridgeError.invalidInput("Enter content to send to the assistant.")
+        }
+        guard prompt.utf8.count <= 256_000 else {
+            throw AgentBridgeError.invalidInput("Prompts can contain up to 256 KiB.")
+        }
+        if let maximumMCPToolCallsPerServer, !(1...128).contains(maximumMCPToolCallsPerServer) {
+            throw AgentBridgeError.invalidInput("The per-run MCP tool-call cap must be between 1 and 128.")
+        }
+    }
+
+    private func validateAPIRequest(_ apiRequest: APIUsageRequest?, apiMode: Bool, session: SessionRecord) throws {
+        guard apiMode == (apiRequest != nil) else {
+            if apiMode { throw AgentBridgeError.sessionMismatch("Each API run requires a per-run budget, an API key, and explicit confirmation.") }
+            throw AgentBridgeError.sessionMismatch("Choose API mode in Settings first, or use subscription sign-in mode.")
+        }
+        if apiMode {
+            guard session.provider == .claude else { throw AgentBridgeError.sessionMismatch("API mode currently supports Claude only.") }
+            guard session.providerSessionID == nil else { throw AgentBridgeError.sessionMismatch("API mode cannot resume a subscription-mode session.") }
+            guard let apiRequest, apiRequest.explicitlyAuthorized else {
+                throw AgentBridgeError.sessionMismatch("An API run requires explicit confirmation of its paid budget.")
+            }
+            guard apiRequest.requestedBudgetUSD.isFinite,
+                  apiRequest.requestedBudgetUSD >= 0.01,
+                  apiRequest.requestedBudgetUSD <= 140,
+                  abs(((apiRequest.requestedBudgetUSD * 100).rounded() / 100) - apiRequest.requestedBudgetUSD) < 0.000_000_1,
+                  !apiRequest.apiKey.isEmpty,
+                  !apiRequest.apiKey.contains("\0") else {
+                throw AgentBridgeError.invalidInput("API mode requires a valid API key and a per-run budget between US$0.01 and US$140 with at most two decimal places.")
+            }
+        }
+    }
+
+    private func verifyExtensionInvocation(
+        _ extensionInvocation: ActiveExtensionInvocation,
+        expectedFingerprint expectedExtensionFingerprint: String?
+    ) throws {
+        if let expectedExtensionFingerprint {
+            guard ActiveExtensionValidation.isSHA256(expectedExtensionFingerprint),
+                  extensionInvocation.fingerprint == expectedExtensionFingerprint.lowercased() else {
+                throw ActiveExtensionRuntimeError.reviewDigestMismatch
+            }
+        }
+        for mcpServer in extensionInvocation.mcpServers {
+            guard try MCPExecutableValidation.digestExecutable(at: mcpServer.executablePath) == mcpServer.executableDigest else {
+                throw ActiveExtensionRuntimeError.invalidConfiguration("The MCP executable changed after it was imported and reviewed.")
+            }
+        }
+    }
+
+    /// An API run reserves its budget in the ledger; a subscription run needs a
+    /// confirmed sign-in. Either way a refusal is audited before it is thrown.
+    private func reserveBudgetOrConfirmSignIn(
+        apiRequest: APIUsageRequest?,
+        activeSpendLedger: APISpendLedger?,
+        session: SessionRecord,
+        profile: AccountProfile,
+        executable: URL
+    ) async throws -> APISpendReservation? {
+        let sessionID = session.id
+        var reservation: APISpendReservation?
+        if let apiRequest {
+            guard let activeSpendLedger else { throw UsageControlError.apiMonthlyLimitRequired(profile.id) }
+            do {
+                let controls = try usageControlStore.settings(provider: .claude, accountProfileID: profile.id)
+                reservation = try activeSpendLedger.reserve(
+                    sessionID: sessionID,
+                    requestedUSD: apiRequest.requestedBudgetUSD,
+                    explicitlyAuthorized: apiRequest.explicitlyAuthorized,
+                    limits: apiSpendLimits(for: profile.id, controls: controls)
+                )
+            } catch {
+                try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "usage.run.blocked", message: OutputRedactor.redact(error.localizedDescription)))
+                throw error
+            }
+        } else {
+            let assessment = try await checkAuthentication(profile: profile, executable: executable)
+            guard assessment.confirmedSubscription else {
+                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "auth.refused", message: "Subscription sign-in not confirmed; \(assessment.message)"))
+                throw AgentBridgeError.unauthenticated(session.provider, assessment.message)
+            }
+        }
+        return reservation
+    }
     private func runLocalReadOnly(
         session: SessionRecord,
         profile: AccountProfile,
