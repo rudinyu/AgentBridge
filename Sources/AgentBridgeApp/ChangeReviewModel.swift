@@ -63,7 +63,7 @@ final class ChangeReviewModel {
         }
         guard let service = app.service, let session = app.selectedSession,
               session.policy.accessMode == .isolatedChanges else {
-            app.errorMessage = "請先建立隔離變更工作階段。"
+            app.errorMessage = "Create an isolated-changes session first."
             return
         }
         let steps = changePlanStepsText
@@ -80,7 +80,7 @@ final class ChangeReviewModel {
             changePlanTitle = plan.title
             changePlanSummary = plan.summary
             changePlanStepsText = plan.steps.joined(separator: "\n")
-            app.status = "計畫已保存為待檢視狀態；尚未授權寫入。"
+            app.status = "The plan was saved as awaiting review; writes are not authorized yet."
             app.refresh()
         } catch {
             app.errorMessage = error.localizedDescription
@@ -93,7 +93,7 @@ final class ChangeReviewModel {
             return
         }
         guard let service = app.service, let session = app.selectedSession, let plan = session.changePlan else {
-            app.errorMessage = "請先保存一份工作計畫。"
+            app.errorMessage = "Save a work plan first."
             return
         }
         guard selectedChangePlanDraftMatchesSaved else {
@@ -102,7 +102,7 @@ final class ChangeReviewModel {
         }
         do {
             _ = try service.approveChangePlan(sessionID: session.id, planID: plan.id, reviewedDigest: plan.reviewDigest)
-            app.status = "已明確核准目前顯示的計畫；現在可以執行隔離變更。"
+            app.status = "Explicitly approved the plan shown; you can now run isolated changes."
             app.refresh()
         } catch {
             app.errorMessage = error.localizedDescription
@@ -149,7 +149,7 @@ final class ChangeReviewModel {
                 panel.allowedContentTypes = [.plainText]
                 guard panel.runModal() == .OK, let url = panel.url else { return }
                 try patch.write(to: url, options: .atomic)
-                self?.app.status = "已匯出 \(patch.count) 位元組補丁。"
+                self?.app.status = "Exported a \(patch.count)-byte patch."
                 self?.app.refreshSelectedEvents()
             } catch { self?.app.errorMessage = error.localizedDescription }
         }
@@ -173,7 +173,7 @@ final class ChangeReviewModel {
         Task { @MainActor [weak self] in
             do {
                 _ = try await service.acceptChanges(sessionID: session.id)
-                self?.app.status = "已接受目前已驗證的差異；來源儲存庫仍未修改。"
+                self?.app.status = "Accepted the currently verified diff; the source repository is still unchanged."
                 self?.app.refresh()
             } catch { self?.app.errorMessage = error.localizedDescription }
         }
@@ -189,7 +189,7 @@ final class ChangeReviewModel {
         Task { @MainActor [weak self] in
             do {
                 let result = try await service.applyChangesToLocalBranch(sessionID: session.id, branchName: requestedBranchName)
-                self?.app.status = "已建立未提交工作樹：\(result.worktreePath)；沒有建立提交、推送或合併。"
+                self?.app.status = "Created an uncommitted worktree: \(result.worktreePath); no commit, push or merge was made."
                 self?.app.refresh()
             } catch { self?.app.errorMessage = error.localizedDescription }
         }

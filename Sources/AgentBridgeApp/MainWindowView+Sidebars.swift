@@ -205,9 +205,9 @@ extension MainWindowView {
     }
 
     var settingsPanel: some View {
-        GroupBox("助理") {
+        GroupBox("Assistant") {
             VStack(alignment: .leading, spacing: 10) {
-                Picker("助理", selection: Binding(
+                Picker("Assistant", selection: Binding(
                         get: { model.settings.defaultProvider },
                         set: { model.selectDefaultProvider($0) }
                     )) {
@@ -216,32 +216,32 @@ extension MainWindowView {
                         Text("Local").tag(AgentProvider.local)
                 }
                 if model.settings.defaultProvider == .claude {
-                    Picker("Claude 使用模式", selection: Binding(
+                    Picker("Claude Usage Mode", selection: Binding(
                             get: { model.settings.usageMode },
                             set: { model.selectUsageMode($0) }
                         )) {
-                            Text("官方 CLI 訂閱登入").tag(UsageMode.subscription)
-                            Text("Claude API（每次確認）").tag(UsageMode.api)
+                            Text("Official CLI Subscription").tag(UsageMode.subscription)
+                            Text("Claude API (confirm each run)").tag(UsageMode.api)
                     }
                 } else if model.settings.defaultProvider == .local {
                     Label("Local mode uses a configured loopback model. No subscription quota, API key, or cloud fallback applies.", systemImage: "desktopcomputer")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Label("Codex 使用官方 CLI 訂閱登入", systemImage: "checkmark.shield")
+                    Label("Codex uses an official CLI subscription.", systemImage: "checkmark.shield")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if model.isClaudeAPIRunContext {
-                    Label("Claude API 會產生費用；每次執行都要確認。", systemImage: "exclamationmark.triangle.fill")
+                    Label("Claude API calls incur charges; each run requires confirmation.", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(.orange)
                 }
                 if model.settings.defaultProvider == .local {
                     LocalModelSettingsSection(model: model)
                 } else {
-                    DisclosureGroup("CLI 執行檔") {
+                    DisclosureGroup("CLI Executables") {
                         VStack(alignment: .leading, spacing: 6) {
-                            TextField("Codex CLI 自動尋找", text: $model.codexPath)
-                            TextField("Claude CLI 自動尋找", text: $model.claudePath)
-                            Button("儲存 CLI 路徑") { model.saveSettings() }
+                            TextField("Codex CLI (auto-detect)", text: $model.codexPath)
+                            TextField("Claude CLI (auto-detect)", text: $model.claudePath)
+                            Button("Save CLI Paths") { model.saveSettings() }
                         }
                     }
                 }
@@ -252,10 +252,10 @@ extension MainWindowView {
     }
 
     var accountPanel: some View {
-        GroupBox(model.settings.defaultProvider == .local ? "Local memory account" : "官方 CLI 帳戶") {
+        GroupBox(model.settings.defaultProvider == .local ? "Local memory account" : "Official CLI Accounts") {
             VStack(alignment: .leading, spacing: 8) {
                 if let profile = model.selectedAccountProfile {
-                    Picker("帳戶", selection: Binding(
+                    Picker("Account", selection: Binding(
                         get: { model.selectedProfileIDs[model.settings.defaultProvider] ?? profile.id },
                         set: { model.selectAccountProfile($0) }
                     )) {
@@ -270,10 +270,10 @@ extension MainWindowView {
                         Label(model.localized(assessment.message), systemImage: assessment.confirmedSubscription ? "checkmark.seal" : "exclamationmark.shield")
                             .font(.caption).foregroundStyle(assessment.confirmedSubscription ? Color.secondary : Color.orange)
                     } else {
-                        Text("尚未檢查此帳戶的登入方式與方案。")
+                        Text("This account's sign-in and plan have not been checked.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    Toggle("允許此帳戶載入與保存專案共用記憶", isOn: Binding(
+                    Toggle("Allow this account to load and save shared project memory", isOn: Binding(
                         get: { model.selectedAccountProfile?.allowsSharedMemory ?? false },
                         set: { model.setSelectedAccountMemorySharing($0) }
                     ))
@@ -282,20 +282,20 @@ extension MainWindowView {
                         Text("Local models do not use sign-in or credential folders.")
                             .font(.caption2).foregroundStyle(.secondary)
                     } else if !profile.usesExistingLogin {
-                        Button("在 App 內登入此帳戶") { model.terminal.openProfileLoginTerminal() }
+                        Button("Sign In to This Account in the App") { model.terminal.openProfileLoginTerminal() }
                             .disabled(model.terminal.terminalRunning)
                     } else {
-                        Text("目前本機登入保持原狀；新增其他帳戶會使用獨立的 CLI 設定資料夾。")
+                        Text("Your current local sign-in stays unchanged. Additional accounts use separate CLI configuration folders.")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 } else {
-                    Text("正在載入帳戶設定…").font(.caption).foregroundStyle(.secondary)
+                    Text("Loading account settings…").font(.caption).foregroundStyle(.secondary)
                 }
                 Divider()
-                TextField(model.settings.defaultProvider == .local ? "New local account name" : "新帳戶顯示名稱", text: $model.newProfileName)
-                Toggle("建立後允許共用專案記憶（預設開啟）", isOn: $model.newProfileAllowsSharedMemory)
+                TextField(model.settings.defaultProvider == .local ? "New local account name" : "New Account Display Name", text: $model.newProfileName)
+                Toggle("Allow shared project memory after creation (on by default)", isOn: $model.newProfileAllowsSharedMemory)
                     .font(.caption)
-                Button("新增並切換帳戶") { model.createAccountProfile() }
+                Button("Add and Switch Account") { model.createAccountProfile() }
                     .disabled(model.newProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSwitchingTarget)
             }
             .padding(.vertical, 2)
@@ -308,7 +308,7 @@ extension MainWindowView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("資料根目錄").font(.caption.weight(.semibold))
+                        Text("Data root").font(.caption.weight(.semibold))
                         Text(model.workspaceRootPath)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -322,34 +322,34 @@ extension MainWindowView {
                         }
                     }
                     Spacer(minLength: 0)
-                    Button("變更…") { model.chooseWorkspaceRoot() }
+                    Button("Change…") { model.chooseWorkspaceRoot() }
                         .disabled(model.isChangingWorkspaceRoot || model.isRunning || model.terminal.terminalRunning)
                 }
-                TextField("Git 儲存庫路徑", text: $model.repositoryPath)
-                Button("選擇儲存庫…") { model.chooseRepository() }
+                TextField("Git Repository Path", text: $model.repositoryPath)
+                Button("Choose Repository…") { model.chooseRepository() }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if model.settings.defaultProvider == .local {
                     Label("Local project chat is read-only. Editing, terminal, autonomy, Skills, and MCP are unavailable.", systemImage: "lock.fill")
                         .font(.caption2).foregroundStyle(.secondary)
                 } else {
-                    Picker("新工作階段存取模式", selection: $model.requestedAccessMode) {
-                        Text("唯讀（預設）").tag(AccessMode.readOnly)
-                        Text("隔離變更（需先核准計畫）").tag(AccessMode.isolatedChanges)
+                    Picker("New session access mode", selection: $model.requestedAccessMode) {
+                        Text("Read-only (default)").tag(AccessMode.readOnly)
+                        Text("Isolated changes (plan approval required)").tag(AccessMode.isolatedChanges)
                             .disabled(model.settings.usageMode == .api)
-                        Text("原生互動終端").tag(AccessMode.interactiveManualApproval)
+                        Text("Native interactive terminal").tag(AccessMode.interactiveManualApproval)
                             .disabled(model.settings.usageMode == .api)
                     }
                     .font(.caption)
                 }
                 if model.settings.usageMode == .api && model.settings.defaultProvider != .local {
-                    Text("Claude API 只提供唯讀工作階段；隔離變更與互動終端僅支援官方 CLI 訂閱登入。")
+                    Text("Claude API sessions are read-only; isolated changes and interactive terminal sessions require official CLI subscription mode.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
-                Button("建立同一專案的新工作階段") { model.createSession() }
+                Button("Create a New Session for This Project") { model.createSession() }
                     .disabled(model.repositoryPath.isEmpty || model.isSwitchingTarget)
                 Text(model.settings.defaultProvider == .local
-                    ? "AgentBridge 固定提交版本並在自己的隔離工作區執行。Local 專案聊天只讀，並依綁定本機帳戶的同意設定共用記憶。"
-                    : "AgentBridge 固定提交版本並在自己的隔離工作區執行。相同來源與提交版本在 Codex、Claude 間共用聊天記憶。")
+                    ? "AgentBridge pins the commit and runs in its own isolated workspace. Local project chat is read-only and shares memory according to the bound local account's consent setting."
+                    : "AgentBridge pins the commit and runs in its own isolated workspace. Codex and Claude share chat memory when they use the same source and commit.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             .padding(.vertical, 2)
@@ -358,9 +358,9 @@ extension MainWindowView {
     }
 
     var sessionList: some View {
-        GroupBox("工作階段") {
+        GroupBox("Sessions") {
             if model.sessions.isEmpty {
-                ContentUnavailableView("尚無工作階段", systemImage: "bubble.left.and.bubble.right")
+                ContentUnavailableView("No Sessions Yet", systemImage: "bubble.left.and.bubble.right")
                     .frame(minHeight: 120)
             } else {
                 List(model.sessions, selection: Binding(

@@ -56,21 +56,21 @@ public enum AccountProfileError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .invalidName:
-            "帳戶名稱請輸入 1 到 80 個字元，且不要包含換行或控制字元。"
+            "Account names must contain 1 to 80 characters and cannot include newlines or control characters."
         case .duplicateName(let provider):
-            "已有同名的 \(provider.rawValue) 帳戶設定，請改用不同名稱。"
+            "An account named this already exists for \(provider.rawValue). Choose a different name."
         case .profileNotFound(let id):
-            "找不到帳戶設定 \(id.uuidString)。"
+            "Could not find account profile \(id.uuidString)."
         case .providerMismatch(let id, let provider):
-            "帳戶設定 \(id.uuidString) 不屬於 \(provider.rawValue)。"
+            "Account profile \(id.uuidString)  does not belong to \(provider.rawValue)."
         case .existingLoginCannotBeReauthenticated:
-            "內建帳戶使用目前本機登入。為避免登出或覆寫，請建立獨立帳戶設定後再登入。"
+            "The built-in account uses the current local sign-in. To avoid signing out or overwriting it, create a separate account profile before signing in."
         case .maximumProfilesReached:
-            "帳戶設定數量已達上限。"
+            "The maximum number of account profiles has been reached."
         case .invalidStore:
-            "帳戶設定檔格式錯誤或包含不一致的資料；為避免使用錯誤帳戶，已停止切換。"
+            "The account profile file is malformed or inconsistent. Switching stopped to avoid using the wrong account."
         case .persistence(let message):
-            "無法安全讀寫帳戶設定：\(message)"
+            "Could not safely read or write account settings: \(message)"
         }
     }
 }
@@ -107,11 +107,11 @@ public final class AccountProfileStore: @unchecked Sendable {
     ) throws {
         guard rootURL.isFileURL, rootURL.path.hasPrefix("/"),
               !rootURL.path.split(separator: "/", omittingEmptySubsequences: true).contains("..") else {
-            throw AccountProfileError.persistence("帳戶資料夾路徑無效。")
+            throw AccountProfileError.persistence("The account directory path is invalid.")
         }
         let standardizedRoot = rootURL.standardizedFileURL
         guard standardizedRoot.path != "/" else {
-            throw AccountProfileError.persistence("不能將檔案系統根目錄用作帳戶資料夾。")
+            throw AccountProfileError.persistence("The filesystem root cannot be used as an account directory.")
         }
 
         self.rootURL = standardizedRoot
@@ -284,7 +284,7 @@ public final class AccountProfileStore: @unchecked Sendable {
                     throw AccountProfileError.profileNotFound(id)
                 }
                 guard allowsSharing else {
-                    throw AgentBridgeError.sessionMismatch("共享記憶同意已變更；請重新檢視交接內容。")
+                    throw AgentBridgeError.sessionMismatch("Shared-memory consent has changed; review the handoff again.")
                 }
             }
             return try operation()
@@ -346,7 +346,7 @@ public final class AccountProfileStore: @unchecked Sendable {
     private func defaultProfile(provider: AgentProvider, document: ProfileStoreDocument) -> AccountProfile {
         AccountProfile(
             id: Self.defaultID(for: provider),
-            name: provider == .local ? "本機模型" : "目前本機登入",
+            name: provider == .local ? "Local model" : "Current local login",
             provider: provider,
             // Prevent login workflows from treating this built-in identity as
             // a credential profile. Local has no authentication state.
@@ -383,9 +383,9 @@ public final class AccountProfileStore: @unchecked Sendable {
         defer { instanceLock.unlock() }
         return try PrivateLockFile.withLock(at: lockURL, error: { failure in
             switch failure {
-            case .unavailable: AccountProfileError.persistence("無法開啟鎖定檔。")
-            case .notPrivateFile: AccountProfileError.persistence("鎖定檔不是安全的私有一般檔案。")
-            case .lockFailed: AccountProfileError.persistence("無法鎖定帳戶設定。")
+            case .unavailable: AccountProfileError.persistence("Could not open the lock file.")
+            case .notPrivateFile: AccountProfileError.persistence("The lock file is not a secure private regular file.")
+            case .lockFailed: AccountProfileError.persistence("Could not lock the account settings.")
             }
         }, operation)
     }
@@ -395,14 +395,14 @@ public final class AccountProfileStore: @unchecked Sendable {
         if lstat(profilesURL.path, &pathMetadata) != 0 {
             if errno == ENOENT, allowMissing { return ProfileStoreDocument() }
             if errno == ENOENT { throw AccountProfileError.invalidStore }
-            throw AccountProfileError.persistence("無法檢查帳戶設定檔。")
+            throw AccountProfileError.persistence("Could not inspect the account profile file.")
         }
         guard (pathMetadata.st_mode & S_IFMT) == S_IFREG else {
-            throw AccountProfileError.persistence("帳戶設定檔不能是符號連結或非一般檔案。")
+            throw AccountProfileError.persistence("The account profile file cannot be a symlink or a non-regular file.")
         }
 
         let descriptor = open(profilesURL.path, O_RDONLY | O_NOFOLLOW)
-        guard descriptor >= 0 else { throw AccountProfileError.persistence("無法安全開啟帳戶設定檔。") }
+        guard descriptor >= 0 else { throw AccountProfileError.persistence("Could not safely open the account profile file.") }
         defer { _ = close(descriptor) }
         var openedMetadata = stat()
         guard fstat(descriptor, &openedMetadata) == 0,
@@ -410,7 +410,7 @@ public final class AccountProfileStore: @unchecked Sendable {
               openedMetadata.st_size >= 0,
               openedMetadata.st_size <= off_t(Self.maximumFileSize),
               fchmod(descriptor, mode_t(0o600)) == 0 else {
-            throw AccountProfileError.persistence("帳戶設定檔格式或權限不安全。")
+            throw AccountProfileError.persistence("The account profile file format or permissions are unsafe.")
         }
 
         var data = Data()
@@ -420,11 +420,11 @@ public final class AccountProfileStore: @unchecked Sendable {
             let count = read(descriptor, &buffer, buffer.count)
             if count < 0 {
                 if errno == EINTR { continue }
-                throw AccountProfileError.persistence("無法讀取帳戶設定檔。")
+                throw AccountProfileError.persistence("Could not read the account profile file.")
             }
             if count == 0 { break }
             guard data.count + count <= Self.maximumFileSize else {
-                throw AccountProfileError.persistence("帳戶設定檔超過大小上限。")
+                throw AccountProfileError.persistence("The account profile file exceeds the size limit.")
             }
             data.append(contentsOf: buffer[0..<count])
         }
@@ -446,22 +446,22 @@ public final class AccountProfileStore: @unchecked Sendable {
         do {
             data = try encoder.encode(document)
         } catch {
-            throw AccountProfileError.persistence("無法編碼帳戶設定。")
+            throw AccountProfileError.persistence("Could not encode the account settings.")
         }
         guard data.count <= Self.maximumFileSize else {
-            throw AccountProfileError.persistence("帳戶設定檔超過大小上限。")
+            throw AccountProfileError.persistence("The account profile file exceeds the size limit.")
         }
 
         let temporaryURL = rootURL.appendingPathComponent(".account-profiles.\(UUID().uuidString.lowercased()).tmp")
         let descriptor = open(temporaryURL.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode_t(0o600))
-        guard descriptor >= 0 else { throw AccountProfileError.persistence("無法建立暫存帳戶設定檔。") }
+        guard descriptor >= 0 else { throw AccountProfileError.persistence("Could not create a temporary account profile file.") }
         var shouldRemoveTemporary = true
         defer {
             _ = close(descriptor)
             if shouldRemoveTemporary { _ = unlink(temporaryURL.path) }
         }
         guard fchmod(descriptor, mode_t(0o600)) == 0 else {
-            throw AccountProfileError.persistence("無法設定暫存檔案權限。")
+            throw AccountProfileError.persistence("Could not set permissions on the temporary file.")
         }
 
         try data.withUnsafeBytes { rawBuffer in
@@ -471,21 +471,21 @@ public final class AccountProfileStore: @unchecked Sendable {
                 let count = write(descriptor, baseAddress.advanced(by: written), rawBuffer.count - written)
                 if count < 0 {
                     if errno == EINTR { continue }
-                    throw AccountProfileError.persistence("無法寫入暫存帳戶設定。")
+                    throw AccountProfileError.persistence("Could not write the temporary account settings.")
                 }
-                guard count > 0 else { throw AccountProfileError.persistence("帳戶設定寫入未完成。") }
+                guard count > 0 else { throw AccountProfileError.persistence("The account settings write did not complete.") }
                 written += count
             }
         }
         guard fsync(descriptor) == 0, rename(temporaryURL.path, profilesURL.path) == 0 else {
-            throw AccountProfileError.persistence("無法原子更新帳戶設定。")
+            throw AccountProfileError.persistence("Could not atomically update the account settings.")
         }
         shouldRemoveTemporary = false
         let directoryDescriptor = open(rootURL.path, O_RDONLY)
         if directoryDescriptor >= 0 {
             defer { _ = close(directoryDescriptor) }
             guard fsync(directoryDescriptor) == 0 else {
-                throw AccountProfileError.persistence("無法同步帳戶資料夾。")
+                throw AccountProfileError.persistence("Could not synchronize the account directory.")
             }
         }
     }
@@ -541,30 +541,30 @@ public final class AccountProfileStore: @unchecked Sendable {
     private static func createPrivateDirectory(_ url: URL, fileManager: FileManager) throws {
         var metadata = stat()
         if lstat(url.path, &metadata) != 0 {
-            guard errno == ENOENT else { throw AccountProfileError.persistence("無法檢查帳戶資料夾。") }
+            guard errno == ENOENT else { throw AccountProfileError.persistence("Could not inspect the account directory.") }
             do {
                 try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
             } catch {
-                throw AccountProfileError.persistence("無法建立帳戶資料夾。")
+                throw AccountProfileError.persistence("Could not create the account directory.")
             }
         }
         guard lstat(url.path, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFDIR,
               chmod(url.path, mode_t(0o700)) == 0 else {
-            throw AccountProfileError.persistence("帳戶資料夾必須是私有資料夾，不能是符號連結。")
+            throw AccountProfileError.persistence("The account directory must be private and cannot be a symlink.")
         }
     }
 
     private static func createExclusivePrivateDirectory(_ url: URL) throws {
         let result = url.path.withCString { mkdir($0, mode_t(0o700)) }
         guard result == 0 else {
-            throw AccountProfileError.persistence("無法建立新的帳戶資料夾。")
+            throw AccountProfileError.persistence("Could not create the new account directory.")
         }
         var metadata = stat()
         guard lstat(url.path, &metadata) == 0,
               (metadata.st_mode & S_IFMT) == S_IFDIR,
               chmod(url.path, mode_t(0o700)) == 0 else {
             _ = url.path.withCString { rmdir($0) }
-            throw AccountProfileError.persistence("新的帳戶資料夾權限不安全。")
+            throw AccountProfileError.persistence("The new account directory permissions are unsafe.")
         }
     }
 
@@ -572,18 +572,18 @@ public final class AccountProfileStore: @unchecked Sendable {
         var metadata = stat()
         guard lstat(url.path, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFDIR,
               chmod(url.path, mode_t(0o700)) == 0 else {
-            throw AccountProfileError.persistence("帳戶登入資料夾不存在或不是安全的私有資料夾。")
+            throw AccountProfileError.persistence("The account sign-in directory is missing or is not a secure private directory.")
         }
     }
 
     private static func createPrivateFile(_ url: URL) throws {
         let descriptor = open(url.path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
-        guard descriptor >= 0 else { throw AccountProfileError.persistence("無法建立安全的鎖定檔。") }
+        guard descriptor >= 0 else { throw AccountProfileError.persistence("Could not create a secure lock file.") }
         defer { _ = close(descriptor) }
         var metadata = stat()
         guard fstat(descriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
               fchmod(descriptor, mode_t(0o600)) == 0 else {
-            throw AccountProfileError.persistence("鎖定檔必須是私有一般檔案。")
+            throw AccountProfileError.persistence("The lock file must be a private regular file.")
         }
     }
 }

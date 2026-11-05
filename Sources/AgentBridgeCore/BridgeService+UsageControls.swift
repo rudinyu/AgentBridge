@@ -161,35 +161,35 @@ extension BridgeService {
                     timestamp: now,
                     sessionID: sessionID,
                     kind: "api.session.stale_run_recovered",
-                    message: "未取得作用中的執行鎖；已將中斷後殘留的 Claude API 工作階段標記為失敗，接著進行帳單手動結算。"
+                    message: "No active run lock was found. The stale interrupted Claude API session was marked failed and will proceed to manual bill settlement."
                 ))
             }
 
             try store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: "api.cost.manual_reconciliation.attempted",
-                message: String(format: "使用者確認將依 Anthropic 帳單，以 US$%.6f 結算此 Claude API 工作階段。", actualUSD)
+                message: String(format: "The user confirmed settling this Claude API session per the Anthropic bill at US$%.6f.", actualUSD)
             ))
 
             try ledger.reconcile(sessionID: sessionID, actualUSD: actualUSD, now: now)
             try store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: "api.cost.manual_reconciled",
-                message: String(format: "使用者已對照 Anthropic 帳單，手動結算實際費用 US$%.6f。", actualUSD)
+                message: String(format: "The user manually settled the actual charge against the Anthropic bill: US$%.6f.", actualUSD)
             ))
         }
     }
 
     private func validateAPIReconciliationSession(_ session: SessionRecord, accountProfileID: UUID) throws {
         guard session.provider == .claude else {
-            throw AgentBridgeError.sessionMismatch("手動費用結算只適用於 Claude API 工作階段。")
+            throw AgentBridgeError.sessionMismatch("Manual charge settlement is available only for Claude API sessions.")
         }
         let boundProfileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
         guard boundProfileID == accountProfileID else {
-            throw AgentBridgeError.sessionMismatch("所選帳戶不是此工作階段綁定的 Claude 帳戶。")
+            throw AgentBridgeError.sessionMismatch("The selected account is not the Claude account bound to this session.")
         }
         guard session.providerSessionID == nil else {
-            throw AgentBridgeError.sessionMismatch("此工作階段具有訂閱模式 CLI 工作階段識別碼，不能手動結算 Claude API 費用。")
+            throw AgentBridgeError.sessionMismatch("This session has a subscription-mode CLI session ID, so Claude API charges cannot be settled manually.")
         }
     }
 

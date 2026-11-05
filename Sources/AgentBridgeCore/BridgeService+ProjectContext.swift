@@ -102,7 +102,7 @@ extension BridgeService {
     ) throws {
         let session = try loadSession(sessionID)
         guard session.provider != .local else {
-            throw AgentBridgeError.sessionMismatch("本機模型目前不支援自治工作流程。")
+            throw AgentBridgeError.sessionMismatch("Local models do not support autonomous workflows yet.")
         }
         let boundProfileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
         guard boundProfileID == profileID else {
@@ -286,7 +286,7 @@ extension BridgeService {
             try LocalModelClient.validateSettings(localSettings)
             let availableTokens = localSettings.contextWindowTokens - localSettings.maxOutputTokens - 512
             guard availableTokens > 0 else {
-                throw AgentBridgeError.invalidInput("所選本機上下文視窗不足以保留輸出空間與安全餘裕；請調高上下文視窗或降低輸出上限。")
+                throw AgentBridgeError.invalidInput("The selected local context window is too small to reserve output space and safety margin. Increase the context window or lower the output reserve.")
             }
             // Bound UTF-8 input bytes to the remaining token budget. This is a
             // conservative planning proxy, never an exact tokenizer count.
@@ -469,14 +469,14 @@ extension BridgeService {
         let workspaceURL = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
         let directoryDescriptor = open(workspaceURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard directoryDescriptor >= 0 else {
-            throw AgentBridgeError.sessionMismatch("無法安全開啟隔離工作區以提供共享記憶。")
+            throw AgentBridgeError.sessionMismatch("Could not safely open the isolated workspace to provide shared memory.")
         }
         defer { _ = close(directoryDescriptor) }
         let fileDescriptor = filename.withCString {
             openat(directoryDescriptor, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode_t(0o600))
         }
         guard fileDescriptor >= 0 else {
-            throw AgentBridgeError.persistence("無法安全建立互動記憶檔。")
+            throw AgentBridgeError.persistence("Could not safely create the interactive memory file.")
         }
         var shouldRemove = true
         defer {
@@ -486,11 +486,11 @@ extension BridgeService {
         var metadata = stat()
         guard fstat(fileDescriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
               fchmod(fileDescriptor, mode_t(0o600)) == 0 else {
-            throw AgentBridgeError.persistence("互動記憶檔不是安全的私有一般檔案。")
+            throw AgentBridgeError.persistence("The interactive memory file is not a secure private regular file.")
         }
         try Self.writeAll(Data(contextPrompt.utf8), to: fileDescriptor)
         guard fsync(fileDescriptor) == 0 else {
-            throw AgentBridgeError.persistence("無法同步互動記憶檔。")
+            throw AgentBridgeError.persistence("Could not synchronize the interactive memory file.")
         }
         shouldRemove = false
         return workspaceURL.appendingPathComponent(filename)
@@ -514,9 +514,9 @@ extension BridgeService {
                 let count = write(descriptor, baseAddress.advanced(by: offset), bytes.count - offset)
                 if count < 0 {
                     if errno == EINTR { continue }
-                    throw AgentBridgeError.persistence("無法寫入互動記憶檔。")
+                    throw AgentBridgeError.persistence("Could not write the interactive memory file.")
                 }
-                guard count > 0 else { throw AgentBridgeError.persistence("互動記憶檔寫入未完成。") }
+                guard count > 0 else { throw AgentBridgeError.persistence("The interactive memory file write did not complete.") }
                 offset += count
             }
         }

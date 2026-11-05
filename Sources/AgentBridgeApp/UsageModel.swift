@@ -23,6 +23,8 @@ final class UsageModel {
     var apiReconciliationSessionID: UUID?
     var apiReconciliationActualUSD = ""
     var apiReconciliationConfirmed = false
+    /// The status the view shows in a calm color; any other status is a prompt or an error.
+    static let reconciliationSettledMessage = "Cost settled manually."
     var apiReconciliationStatus = ""
     @ObservationIgnored var loadedUsageControlsScopeKey: String?
     @ObservationIgnored private var refreshedUsageStatisticsScopeKey: String?
@@ -182,7 +184,7 @@ final class UsageModel {
 
     func saveUsageControlSettings() {
         guard let service = app.service, let profile = app.selectedAccountProfile else {
-            usageControlStatus = "找不到目前選取的帳戶設定。"
+            usageControlStatus = "The currently selected account settings could not be found."
             return
         }
         var updated = usageControls
@@ -193,7 +195,7 @@ final class UsageModel {
             } else if let limit = Double(rawLimit), limit.isFinite {
                 updated.apiMonthlyLimitUSD = limit
             } else {
-                usageControlStatus = "請輸入有效的 Claude API 月上限金額。"
+                usageControlStatus = "Enter a valid Claude API monthly limit."
                 return
             }
         }
@@ -201,7 +203,7 @@ final class UsageModel {
         var sessionLimit: Double?
         guard parseOptionalDollarLimit(apiDailyLimitInput, into: &dailyLimit),
               parseOptionalDollarLimit(apiSessionLimitInput, into: &sessionLimit) else {
-            usageControlStatus = "API 每日與工作階段 USD 上限必須是有效的正數，或留空代表不限。"
+            usageControlStatus = "Daily and session API USD limits must be positive numbers, or left empty for no limit."
             return
         }
         updated.apiDailyLimitUSD = dailyLimit
@@ -213,7 +215,7 @@ final class UsageModel {
             apiMonthlyLimitInput = updated.apiMonthlyLimitUSD.map { String(format: "%.2f", $0) } ?? ""
             apiDailyLimitInput = updated.apiDailyLimitUSD.map { String(format: "%.2f", $0) } ?? ""
             apiSessionLimitInput = updated.apiSessionLimitUSD.map { String(format: "%.2f", $0) } ?? ""
-            usageControlStatus = "本機用量控制已儲存。"
+            usageControlStatus = "Local usage controls were saved."
             app.refresh(forceUsageStatistics: true)
         } catch {
             usageControlStatus = error.localizedDescription
@@ -228,7 +230,7 @@ final class UsageModel {
     /// conservative settlement for when the bill is not yet available.
     func useReservedAmountForSelectedAPICost() {
         guard let candidate = selectedAPIReconciliationCandidate else {
-            apiReconciliationStatus = "請選擇此 Claude 帳戶中尚未結算的 API 工作階段。"
+            apiReconciliationStatus = "Select an unsettled API session for this Claude account."
             return
         }
         apiReconciliationActualUSD = String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), candidate.reservedUSD)
@@ -239,16 +241,16 @@ final class UsageModel {
         guard let service = app.service, let profile = app.selectedAccountProfile,
               profile.provider == .claude,
               let candidate = selectedAPIReconciliationCandidate else {
-            apiReconciliationStatus = "請選擇此 Claude 帳戶中尚未結算的 API 工作階段。"
+            apiReconciliationStatus = "Select an unsettled API session for this Claude account."
             return
         }
         let rawAmount = apiReconciliationActualUSD.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let actualUSD = Double(rawAmount), actualUSD.isFinite, actualUSD >= 0 else {
-            apiReconciliationStatus = "請輸入 provider 帳單所列的有效實際 USD 金額。"
+            apiReconciliationStatus = "Enter a valid actual USD amount from the provider bill."
             return
         }
         guard apiReconciliationConfirmed else {
-            apiReconciliationStatus = "結算前請確認金額已對照 provider 帳單。"
+            apiReconciliationStatus = "Confirm that the amount has been checked against the provider bill before settling."
             return
         }
         do {
@@ -258,7 +260,7 @@ final class UsageModel {
                 actualUSD: actualUSD,
                 explicitlyConfirmed: true
             )
-            apiReconciliationStatus = "費用已手動結算。"
+            apiReconciliationStatus = Self.reconciliationSettledMessage
             apiReconciliationActualUSD = ""
             apiReconciliationConfirmed = false
             lastAPIReconciliationRefresh = nil
@@ -297,9 +299,9 @@ final class UsageModel {
                 updated.macOSNotificationsEnabled = granted
                 self.persistUsageControls(updated, service: service, profile: profile)
                 if let error {
-                    self.usageControlStatus = "無法啟用 macOS 通知：\(error.localizedDescription)"
+                    self.usageControlStatus = "Could not enable macOS notifications: \(error.localizedDescription)"
                 } else if !granted {
-                    self.usageControlStatus = "未取得 macOS 通知權限；提醒仍會顯示在 App 內。"
+                    self.usageControlStatus = "macOS notification permission was not granted. Alerts will still appear in the app."
                 }
             }
         }
@@ -308,25 +310,25 @@ final class UsageModel {
     private func evaluateSubscriptionThresholds(snapshot: UsageStatisticsSnapshot) {
         let profileKey = "\(snapshot.provider.rawValue):\(snapshot.accountProfileID.uuidString.lowercased())"
         evaluateThreshold(
-            title: "近 5 小時本機執行",
+            title: "Local Runs in the Last 5 Hours",
             used: snapshot.subscriptionFiveHourRuns,
             limit: usageControls.subscriptionFiveHourRunLimit,
             key: "\(profileKey):subscription-5h:\(usageAlertPeriodID(duration: 5 * 60 * 60, at: snapshot.generatedAt))"
         )
         evaluateThreshold(
-            title: "近 24 小時本機執行",
+            title: "Local Runs in the Last 24 Hours",
             used: snapshot.subscriptionDailyRuns,
             limit: usageControls.subscriptionDailyRunLimit,
             key: "\(profileKey):subscription-24h:\(usageAlertPeriodID(duration: 24 * 60 * 60, at: snapshot.generatedAt))"
         )
         evaluateThreshold(
-            title: "近 7 天本機執行",
+            title: "Local Runs in the Last 7 Days",
             used: snapshot.subscriptionSevenDayRuns,
             limit: usageControls.subscriptionWeeklyRunLimit,
             key: "\(profileKey):subscription-7d:\(usageAlertPeriodID(duration: 7 * 24 * 60 * 60, at: snapshot.generatedAt))"
         )
         evaluateThreshold(
-            title: "目前工作階段本機執行",
+            title: "Local Runs in the Current Session",
             used: snapshot.subscriptionSessionRuns,
             limit: usageControls.subscriptionSessionRunLimit,
             key: "\(profileKey):subscription-session:\(app.selectedSessionID?.uuidString ?? "none")"
@@ -347,19 +349,19 @@ final class UsageModel {
             if ratio >= Double(threshold) / 100 {
                 recordUsageAlert(
                     key: key,
-                    message: String(format: "Claude API 本機月預算已達 %d%%（已用與保留合計 US$%.2f / US$%.2f）。", threshold, consumed, budgetSnapshot.monthlyLimitUSD)
+                    message: String(format: "Claude API local monthly budget reached %d%% (used and reserved total US$%.2f / US$%.2f).", threshold, consumed, budgetSnapshot.monthlyLimitUSD)
                 )
             }
         }
         if let activity = usageStatistics {
             evaluateThreshold(
-                title: "近 24 小時 Claude API 執行次數",
+                title: "Claude API Runs in the Last 24 Hours",
                 used: activity.apiDailyRuns,
                 limit: usageControls.apiDailyRunLimit,
                 key: "api-count-24h:\(profileID.uuidString.lowercased()):\(ISO8601DateFormatter().string(from: Date()).prefix(10))"
             )
             evaluateThreshold(
-                title: "目前工作階段 Claude API 執行次數",
+                title: "Claude API Runs in the Current Session",
                 used: activity.apiSessionRuns,
                 limit: usageControls.apiSessionRunLimit,
                 key: "api-count-session:\(profileID.uuidString.lowercased()):\(app.selectedSessionID?.uuidString ?? "none")"
@@ -368,13 +370,13 @@ final class UsageModel {
         if let costs = apiCostSnapshot {
             let day = ISO8601DateFormatter().string(from: Date()).prefix(10)
             evaluateDollarThreshold(
-                title: "Claude API UTC 每日 USD 上限",
+                title: "Claude API UTC Daily USD Limit",
                 used: costs.dailyUsedUSD + costs.dailyReservedUSD,
                 limit: usageControls.apiDailyLimitUSD,
                 key: "api-usd-day:\(profileID.uuidString.lowercased()):\(day)"
             )
             evaluateDollarThreshold(
-                title: "Claude API 工作階段 USD 上限",
+                title: "Claude API Session USD Limit",
                 used: costs.sessionUsedUSD + costs.sessionReservedUSD,
                 limit: usageControls.apiSessionLimitUSD,
                 key: "api-usd-session:\(profileID.uuidString.lowercased()):\(app.selectedSessionID?.uuidString ?? "none")"
@@ -387,7 +389,7 @@ final class UsageModel {
         for threshold in [50, 75, 90, 100] {
             let alertKey = "\(key):\(threshold)"
             if Double(used) / Double(limit) >= Double(threshold) / 100 {
-                recordUsageAlert(key: alertKey, message: "\(title)達到本機上限的 \(threshold)%（\(used)/\(limit)）。")
+                recordUsageAlert(key: alertKey, message: "\(title)reached the local limit of \(threshold)% (\(used)/\(limit)).")
             }
         }
     }
@@ -399,7 +401,7 @@ final class UsageModel {
             if used / limit >= Double(threshold) / 100 {
                 recordUsageAlert(
                     key: alertKey,
-                    message: String(format: "%@達到本機上限的 %d%%（US$%.2f / US$%.2f）。", title, threshold, used, limit)
+                    message: String(format: "%@reached the local limit of %d%% (US$%.2f / US$%.2f).", title, threshold, used, limit)
                 )
             }
         }
@@ -416,7 +418,7 @@ final class UsageModel {
         guard let service = app.service, let profile = app.selectedAccountProfile else { return }
         persistUsageControls(updated, service: service, profile: profile, updateStatus: false)
         guard usageControls.macOSNotificationsEnabled else { return }
-        let notificationTitle = app.localized("AgentBridge 用量提醒")
+        let notificationTitle = app.localized("AgentBridge Usage Alert")
         let notificationBody = app.localized(message)
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
@@ -446,8 +448,8 @@ final class UsageModel {
             }
             if updateStatus {
                 usageControlStatus = updated.macOSNotificationsEnabled
-                    ? "已啟用 macOS 門檻通知；提醒也會保留在 App 內。"
-                    : "已關閉 macOS 通知；門檻提醒仍會保留在 App 內。"
+                    ? "macOS threshold notifications are enabled. Alerts will also remain in the app."
+                    : "macOS notifications are disabled. Threshold alerts will still remain in the app."
             }
         } catch {
             if updateStatus { usageControlStatus = error.localizedDescription }

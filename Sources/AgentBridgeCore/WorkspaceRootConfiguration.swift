@@ -79,16 +79,16 @@ public enum WorkspaceRootConfigurationStore {
         var metadata = stat()
         guard lstat(fileURL.path, &metadata) == 0 else {
             if errno == ENOENT { return nil }
-            throw AgentBridgeError.persistence("無法安全讀取工作區資料根目錄設定。")
+            throw AgentBridgeError.persistence("Could not safely read the workspace data root setting.")
         }
         guard (metadata.st_mode & S_IFMT) == S_IFREG,
               metadata.st_size >= 0,
               metadata.st_size <= maximumFileSize else {
-            throw AgentBridgeError.persistence("工作區資料根目錄設定不是有效的一般檔案。")
+            throw AgentBridgeError.persistence("The workspace data root setting is not a valid regular file.")
         }
         let descriptor = open(fileURL.path, O_RDONLY | O_NOFOLLOW)
         guard descriptor >= 0 else {
-            throw AgentBridgeError.persistence("無法安全讀取工作區資料根目錄設定。")
+            throw AgentBridgeError.persistence("Could not safely read the workspace data root setting.")
         }
         defer { _ = close(descriptor) }
         var openedMetadata = stat()
@@ -97,7 +97,7 @@ public enum WorkspaceRootConfigurationStore {
               openedMetadata.st_size >= 0,
               openedMetadata.st_size <= maximumFileSize,
               fchmod(descriptor, mode_t(0o600)) == 0 else {
-            throw AgentBridgeError.persistence("無法保護工作區資料根目錄設定。")
+            throw AgentBridgeError.persistence("Could not secure the workspace data root setting.")
         }
         do {
             var data = Data()
@@ -110,24 +110,24 @@ public enum WorkspaceRootConfigurationStore {
                 if count == 0 { break }
                 if count < 0 {
                     if errno == EINTR { continue }
-                    throw AgentBridgeError.persistence("無法安全讀取工作區資料根目錄設定。")
+                    throw AgentBridgeError.persistence("Could not safely read the workspace data root setting.")
                 }
                 guard data.count + count <= maximumFileSize else {
-                    throw AgentBridgeError.persistence("工作區資料根目錄設定超過大小上限。")
+                    throw AgentBridgeError.persistence("The workspace data root setting exceeds its size limit.")
                 }
                 data.append(contentsOf: buffer.prefix(count))
             }
             let stored = try JSONDecoder().decode(WorkspaceRootFile.self, from: data)
             guard stored.version == 1,
                   let selected = validatedStoredPath(stored.selectedRootPath) else {
-                throw AgentBridgeError.persistence("工作區資料根目錄設定格式錯誤。")
+                throw AgentBridgeError.persistence("The workspace data root setting is invalid.")
             }
             let prior = stored.priorRootPaths.compactMap(validatedStoredPath)
             return WorkspaceRootConfiguration(selectedRootURL: selected, priorRootURLs: prior)
         } catch let error as AgentBridgeError {
             throw error
         } catch {
-            throw AgentBridgeError.persistence("工作區資料根目錄設定格式錯誤。")
+            throw AgentBridgeError.persistence("The workspace data root setting is invalid.")
         }
     }
 
@@ -140,17 +140,17 @@ public enum WorkspaceRootConfigurationStore {
     ) throws -> WorkspaceRootConfiguration {
         let selected = selectedRootURL.standardizedFileURL
         guard let selectedPath = validatedStoredPath(selected.path) else {
-            throw AgentBridgeError.invalidInput("工作區資料根目錄必須是有效的絕對路徑。")
+            throw AgentBridgeError.invalidInput("The workspace data root must be a valid absolute path.")
         }
         try AuditStore.createPrivateDirectory(privateRootURL, fileManager: fileManager)
         let fileURL = privateRootURL.appendingPathComponent(fileName)
         var metadata = stat()
         if lstat(fileURL.path, &metadata) == 0 {
             guard (metadata.st_mode & S_IFMT) == S_IFREG else {
-                throw AgentBridgeError.persistence("工作區資料根目錄設定不是一般檔案。")
+                throw AgentBridgeError.persistence("The workspace data root setting is not a regular file.")
             }
         } else if errno != ENOENT {
-            throw AgentBridgeError.persistence("無法安全更新工作區資料根目錄設定。")
+            throw AgentBridgeError.persistence("Could not safely update the workspace data root setting.")
         }
         let configuration = WorkspaceRootConfiguration(
             selectedRootURL: selectedPath,
@@ -164,20 +164,20 @@ public enum WorkspaceRootConfigurationStore {
         do {
             let data = try JSONEncoder.workspaceRootEncoder.encode(stored)
             guard data.count <= maximumFileSize else {
-                throw AgentBridgeError.persistence("工作區資料根目錄設定超過大小上限。")
+                throw AgentBridgeError.persistence("The workspace data root setting exceeds its size limit.")
             }
             try data.write(to: fileURL, options: .atomic)
             let descriptor = open(fileURL.path, O_RDONLY | O_NOFOLLOW)
-            guard descriptor >= 0 else { throw AgentBridgeError.persistence("無法保護工作區資料根目錄設定。") }
+            guard descriptor >= 0 else { throw AgentBridgeError.persistence("Could not secure the workspace data root setting.") }
             defer { _ = close(descriptor) }
             guard fchmod(descriptor, mode_t(0o600)) == 0 else {
-                throw AgentBridgeError.persistence("無法保護工作區資料根目錄設定。")
+                throw AgentBridgeError.persistence("Could not secure the workspace data root setting.")
             }
             return configuration
         } catch let error as AgentBridgeError {
             throw error
         } catch {
-            throw AgentBridgeError.persistence("無法儲存工作區資料根目錄設定。")
+            throw AgentBridgeError.persistence("Could not save the workspace data root setting.")
         }
     }
 
@@ -259,17 +259,17 @@ public enum WorkspaceRootCoordinator {
     public static func validateConfiguredRoot(_ rootURL: URL, privateRootURL: URL) throws -> URL {
         let root = rootURL.standardizedFileURL
         guard root.path.hasPrefix("/"), root.path != "/" else {
-            throw AgentBridgeError.persistence("已儲存的工作區資料根目錄路徑無效；請使用 App 或 `agentbridge workspace set /absolute/path/to/root` 重新選擇。")
+            throw AgentBridgeError.persistence("The saved workspace data root path is invalid. Choose another folder in the app or run `agentbridge workspace set /absolute/path/to/root`.")
         }
         guard root.path != privateRootURL.standardizedFileURL.path,
               !root.path.hasPrefix(privateRootURL.standardizedFileURL.path + "/") else {
-            throw AgentBridgeError.persistence("工作區資料根目錄不能位於 AgentBridge 私人設定資料夾內。")
+            throw AgentBridgeError.persistence("The workspace data root cannot be inside AgentBridge's private settings folder.")
         }
         var metadata = stat()
         guard lstat(root.path, &metadata) == 0,
               (metadata.st_mode & S_IFMT) == S_IFDIR,
               root.resolvingSymlinksInPath().standardizedFileURL.path == root.path else {
-            throw AgentBridgeError.persistence("已選取的工作區資料根目錄不存在，或已變成符號連結；請在 App 或執行 `agentbridge workspace set /absolute/path/to/root` 重新選擇。")
+            throw AgentBridgeError.persistence("The selected workspace data root is missing or has become a symbolic link. Choose another folder in the app or run `agentbridge workspace set /absolute/path/to/root`.")
         }
         return root
     }
@@ -284,36 +284,36 @@ public enum WorkspaceRootCoordinator {
               requestedRootURL.path.hasPrefix("/"),
               !requestedRootURL.path.contains("\0"),
               !requestedRootURL.pathComponents.contains("..") else {
-            throw AgentBridgeError.invalidInput("請選擇絕對路徑的本機工作區資料根目錄。")
+            throw AgentBridgeError.invalidInput("Choose a local workspace data root using an absolute path.")
         }
         let requested = requestedRootURL.standardizedFileURL
         var metadata = stat()
         let requestedRootExists = lstat(requested.path, &metadata) == 0
         if requestedRootExists {
             guard (metadata.st_mode & S_IFMT) == S_IFDIR else {
-                throw AgentBridgeError.invalidInput("工作區資料根目錄必須是一般資料夾，不能是符號連結。")
+                throw AgentBridgeError.invalidInput("The workspace data root must be a regular folder, not a symbolic link.")
             }
         } else if errno != ENOENT {
-            throw AgentBridgeError.persistence("無法安全檢查所選的工作區資料根目錄。")
+            throw AgentBridgeError.persistence("Could not safely inspect the selected workspace data root.")
         }
 
         let preflightCanonical = requested.resolvingSymlinksInPath().standardizedFileURL
         if try isInsideGitRepository(preflightCanonical) {
-            throw AgentBridgeError.invalidInput("工作區資料根目錄不能位於 Git 儲存庫內。")
+            throw AgentBridgeError.invalidInput("The workspace data root cannot be inside a Git repository.")
         }
         if !requestedRootExists {
             do { try fileManager.createDirectory(at: requested, withIntermediateDirectories: true) }
-            catch { throw AgentBridgeError.persistence("無法建立所選的工作區資料根目錄。") }
+            catch { throw AgentBridgeError.persistence("Could not create the selected workspace data root.") }
         }
 
         let canonical = requested.resolvingSymlinksInPath().standardizedFileURL
         if try isInsideGitRepository(canonical) {
-            throw AgentBridgeError.invalidInput("工作區資料根目錄不能位於 Git 儲存庫內。")
+            throw AgentBridgeError.invalidInput("The workspace data root cannot be inside a Git repository.")
         }
         guard canonical.path != "/",
               canonical.path != privateRootURL.standardizedFileURL.path,
               !canonical.path.hasPrefix(privateRootURL.standardizedFileURL.path + "/") else {
-            throw AgentBridgeError.invalidInput("工作區資料根目錄不能是磁碟根目錄或 AgentBridge 私人設定資料夾。")
+            throw AgentBridgeError.invalidInput("The workspace data root cannot be the disk root or AgentBridge's private settings folder.")
         }
         let isInsideManagedStorage = managedWorkspaceRoots.contains { root in
             managedStorageNames.contains { name in
@@ -322,12 +322,12 @@ public enum WorkspaceRootCoordinator {
             }
         }
         guard !isInsideManagedStorage else {
-            throw AgentBridgeError.invalidInput("工作區資料根目錄不能位於 AgentBridge 管理的工作區、共用記憶、討論或任務看板資料夾內。")
+            throw AgentBridgeError.invalidInput("The workspace data root cannot be inside AgentBridge-managed workspace, shared-memory, discussion or task-board folders.")
         }
         var canonicalMetadata = stat()
         guard lstat(canonical.path, &canonicalMetadata) == 0,
               (canonicalMetadata.st_mode & S_IFMT) == S_IFDIR else {
-            throw AgentBridgeError.invalidInput("工作區資料根目錄必須是一般資料夾。")
+            throw AgentBridgeError.invalidInput("The workspace data root must be a regular folder.")
         }
         return canonical
     }
@@ -344,7 +344,7 @@ public enum WorkspaceRootCoordinator {
                 // pointer used by linked worktrees.
                 if type == S_IFDIR || type == S_IFREG { return true }
             } else if errno != ENOENT && errno != ENOTDIR {
-                throw AgentBridgeError.persistence("無法安全檢查所選工作區資料根目錄的 Git 狀態。")
+                throw AgentBridgeError.persistence("Could not safely check the Git status of the selected workspace data root.")
             }
             if directory.path == "/" { return false }
             directory.deleteLastPathComponent()
@@ -360,7 +360,7 @@ private final class WorkspaceRootChangeLease: @unchecked Sendable {
         let lockURL = privateRootURL.appendingPathComponent(".workspace-root.lock")
         let lockDescriptor = open(lockURL.path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, mode_t(0o600))
         guard lockDescriptor >= 0 else {
-            throw AgentBridgeError.persistence("無法安全建立工作區資料根目錄鎖定檔。")
+            throw AgentBridgeError.persistence("Could not safely create the workspace data root lock file.")
         }
 
         var metadata = stat()
@@ -368,13 +368,13 @@ private final class WorkspaceRootChangeLease: @unchecked Sendable {
               (metadata.st_mode & S_IFMT) == S_IFREG,
               fchmod(lockDescriptor, mode_t(0o600)) == 0 else {
             _ = close(lockDescriptor)
-            throw AgentBridgeError.persistence("工作區資料根目錄鎖定檔不是安全的私有一般檔案。")
+            throw AgentBridgeError.persistence("The workspace data root lock is not a safe private regular file.")
         }
 
         while flock(lockDescriptor, LOCK_EX) != 0 {
             if errno == EINTR { continue }
             _ = close(lockDescriptor)
-            throw AgentBridgeError.persistence("無法鎖定工作區資料根目錄設定。")
+            throw AgentBridgeError.persistence("Could not lock the workspace data root setting.")
         }
         self.descriptor = lockDescriptor
     }
@@ -398,7 +398,7 @@ public extension RuntimePaths {
     static func requireWorkspaceRoot(fileManager: FileManager = .default) throws -> URL {
         let privateRoot = try applicationSupportRoot(fileManager: fileManager)
         guard let configuration = try WorkspaceRootConfigurationStore.load(privateRootURL: privateRoot, fileManager: fileManager) else {
-            throw AgentBridgeError.invalidInput("尚未設定工作區資料根目錄；請在 App 選擇資料夾，或先執行 `agentbridge workspace set /absolute/path/to/root`。")
+            throw AgentBridgeError.invalidInput("No workspace data root is set. Choose a folder in the app, or run `agentbridge workspace set /absolute/path/to/root` first.")
         }
         return try WorkspaceRootCoordinator.validateConfiguredRoot(configuration.selectedRootURL, privateRootURL: privateRoot)
     }

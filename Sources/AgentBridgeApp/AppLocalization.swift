@@ -27,7 +27,14 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 }
 
 enum AppLocalization {
-    private static let englishStrings = loadEnglishStrings()
+    /// Messages are written in English. English display only needs the table for
+    /// the few entries that restyle a value (such as capitalized status words)
+    /// and for older stored text: audit events and records saved before the
+    /// source language changed are still Chinese, so those entries live in
+    /// `Legacy.strings` and are translated by fragment.
+    private static let englishStrings = loadStrings(table: "Localizable", subdirectory: "en.lproj")
+        .merging(loadStrings(table: "Legacy", subdirectory: "en.lproj")) { current, _ in current }
+    private static let chineseTemplates = loadChineseTemplates()
 
     static func string(_ key: String, language: AppLanguage) -> String {
         guard let path = Bundle.module.path(forResource: language.swiftPackageLocalization, ofType: "lproj"),
@@ -39,7 +46,7 @@ enum AppLocalization {
 
     /// Localizes dynamic status and error strings while preserving provider output and identifiers.
     static func display(_ source: String, language: AppLanguage) -> String {
-        if language == .traditionalChinese { return string(source, language: language) }
+        if language == .traditionalChinese { return chineseDisplay(source, depth: 0) }
         if let direct = englishStrings[source] { return direct }
         var translated = source
         // Plain-word keys such as status raw values only match whole strings;
@@ -52,8 +59,71 @@ enum AppLocalization {
         return translated
     }
 
-    private static func loadEnglishStrings() -> [String: String] {
-        guard let url = Bundle.module.url(forResource: "Localizable", withExtension: "strings", subdirectory: "en.lproj"),
+    /// Whole-sentence lookup first, then whole-sentence templates such as
+    /// "Loaded shared memory revision %@, with %@ earlier turn(s)%@." Values
+    /// captured by a template are translated in turn. Nothing is replaced
+    /// inside a sentence, so short English fragments cannot corrupt other text.
+    private static func chineseDisplay(_ source: String, depth: Int) -> String {
+        let direct = string(source, language: .traditionalChinese)
+        if direct != source { return direct }
+        guard depth < 3 else { return source }
+        let range = NSRange(source.startIndex..., in: source)
+        for template in chineseTemplates {
+            guard let match = template.regex.firstMatch(in: source, range: range) else { continue }
+            var captures: [String] = []
+            for index in 1..<match.numberOfRanges {
+                guard let captured = Range(match.range(at: index), in: source) else { captures.append(""); continue }
+                captures.append(chineseDisplay(String(source[captured]), depth: depth + 1))
+            }
+            return template.fill(captures)
+        }
+        return source
+    }
+
+    private struct ChineseTemplate {
+        let regex: NSRegularExpression
+        let translationParts: [String]
+
+        func fill(_ captures: [String]) -> String {
+            var result = translationParts[0]
+            for (index, part) in translationParts.dropFirst().enumerated() {
+                result += (index < captures.count ? captures[index] : "") + part
+            }
+            return result
+        }
+    }
+
+    private static let specifier = try! NSRegularExpression(
+        pattern: #"%(?:\d+\$)?[-+ #0]*\d*(?:\.\d+)?(?:lld|ld|d|f|@|s|u|x)"#
+    )
+
+    private static func split(_ text: String) -> [String] {
+        var parts: [String] = []
+        var last = text.startIndex
+        for match in specifier.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let range = Range(match.range, in: text) else { continue }
+            parts.append(String(text[last..<range.lowerBound]))
+            last = range.upperBound
+        }
+        parts.append(String(text[last...]))
+        return parts
+    }
+
+    private static func loadChineseTemplates() -> [ChineseTemplate] {
+        let table = loadStrings(table: "Localizable", subdirectory: "zh-Hant.lproj")
+        var templates: [(weight: Int, template: ChineseTemplate)] = []
+        for (key, value) in table {
+            let keyParts = split(key)
+            guard keyParts.count > 1 else { continue }
+            let pattern = "^" + keyParts.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "(.*?)") + "$"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else { continue }
+            templates.append((keyParts.reduce(0) { $0 + $1.count }, ChineseTemplate(regex: regex, translationParts: split(value))))
+        }
+        return templates.sorted { $0.weight > $1.weight }.map(\.template)
+    }
+
+    private static func loadStrings(table: String, subdirectory: String) -> [String: String] {
+        guard let url = Bundle.module.url(forResource: table, withExtension: "strings", subdirectory: subdirectory),
               let data = try? Data(contentsOf: url),
               let dictionary = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: String] else {
             return [:]

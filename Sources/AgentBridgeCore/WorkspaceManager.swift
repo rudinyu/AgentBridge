@@ -36,7 +36,7 @@ public final class WorkspaceManager: @unchecked Sendable {
         snapshotCommit requestedSnapshotCommit: String? = nil
     ) async throws -> SessionRecord {
         guard store.workspaceRootURL != nil else {
-            throw AgentBridgeError.invalidInput("尚未設定工作區資料根目錄；請在 App 選擇資料夾，或先執行 `agentbridge workspace set /absolute/path/to/root`。")
+            throw AgentBridgeError.invalidInput("No workspace data root is set. Choose a folder in the app, or run `agentbridge workspace set /absolute/path/to/root` first.")
         }
         let currentSnapshot = try await inspectSourceRepository(path: sourcePath)
         let snapshot: WorkspaceSnapshot
@@ -56,7 +56,7 @@ public final class WorkspaceManager: @unchecked Sendable {
         let sessionID = UUID()
         let destination = store.workspacesURL.appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
         guard !fileManager.fileExists(atPath: destination.path) else {
-            throw AgentBridgeError.git("隔離工作區路徑已存在。")
+            throw AgentBridgeError.git("The isolated workspace path already exists.")
         }
         do {
             try AuditStore.createPrivateDirectory(destination, fileManager: fileManager)
@@ -67,15 +67,15 @@ public final class WorkspaceManager: @unchecked Sendable {
                 snapshot.repositoryRoot.path, destination.path
             ], workingDirectory: nil)
             guard isDirectory(destination), !isSymbolicLink(destination) else {
-                throw AgentBridgeError.git("Git 複製後的隔離工作區不是一般資料夾。")
+                throw AgentBridgeError.git("The isolated workspace after the Git clone is not a regular directory.")
             }
             guard chmod(destination.path, mode_t(0o700)) == 0 else {
-                throw AgentBridgeError.git("無法設定隔離工作區權限。")
+                throw AgentBridgeError.git("Could not set permissions on the isolated workspace.")
             }
             _ = try await runGit(arguments: ["-C", destination.path, "remote", "remove", "origin"], workingDirectory: nil)
             let alternateObjects = destination.appendingPathComponent(".git/objects/info/alternates")
             guard !fileManager.fileExists(atPath: alternateObjects.path) else {
-                throw AgentBridgeError.git("隔離複本不得依賴來源 Git 物件資料夾。")
+                throw AgentBridgeError.git("The isolated clone must not depend on the source Git object directory.")
             }
             _ = try await runGit(arguments: [
                 "-c", "core.hooksPath=/dev/null",
@@ -85,7 +85,7 @@ public final class WorkspaceManager: @unchecked Sendable {
             ], workingDirectory: nil)
             let actualCommit = try await gitText(["-C", destination.path, "rev-parse", "HEAD"])
             guard actualCommit == snapshot.commit else {
-                throw AgentBridgeError.git("隔離工作區提交版本與來源不符。")
+                throw AgentBridgeError.git("The isolated workspace commit does not match the source.")
             }
             let record = SessionRecord(
                 id: sessionID,
@@ -98,14 +98,14 @@ public final class WorkspaceManager: @unchecked Sendable {
                 accountProfileID: accountProfileID
             )
             try store.saveSession(record)
-            try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "session.created", message: "建立提交版本 \(snapshot.commit.prefix(12)) 的隔離工作區；來源未提交變更 \(snapshot.wasDirty ? "不包含" : "不存在")。"))
+            try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "session.created", message: "Created an isolated workspace for commit \(snapshot.commit.prefix(12)); uncommitted source changes: \(snapshot.wasDirty ? "not included" : "not present")."))
             return record
         } catch {
             if isWithinManagedWorkspaces(destination), fileManager.fileExists(atPath: destination.path) {
                 try? fileManager.removeItem(at: destination)
             }
             if let error = error as? AgentBridgeError { throw error }
-            throw AgentBridgeError.git("Git 無法建立提交版本的隔離複本。")
+            throw AgentBridgeError.git("Git could not create an isolated clone for the commit.")
         }
     }
 
@@ -116,25 +116,25 @@ public final class WorkspaceManager: @unchecked Sendable {
         let destination = try validatedAbsolutePath(path)
         var current = URL(fileURLWithPath: "/", isDirectory: true)
         let components = destination.path.split(separator: "/")
-        guard !components.isEmpty else { throw AgentBridgeError.invalidInput("請選擇新的本機專案資料夾。") }
+        guard !components.isEmpty else { throw AgentBridgeError.invalidInput("Choose a new local project folder.") }
         for component in components.dropLast() {
             current.appendPathComponent(String(component), isDirectory: true)
             var metadata = stat()
             guard lstat(current.path, &metadata) == 0,
                   (metadata.st_mode & S_IFMT) == S_IFDIR else {
-                throw AgentBridgeError.invalidInput("新專案路徑的父資料夾必須存在，且不得包含符號連結。")
+                throw AgentBridgeError.invalidInput("The parent folder of the new project path must exist and must not contain symbolic links.")
             }
         }
         var destinationMetadata = stat()
         guard lstat(destination.path, &destinationMetadata) != 0, errno == ENOENT else {
-            throw AgentBridgeError.invalidInput("新專案目的地必須是尚不存在的資料夾；不會覆寫現有內容。")
+            throw AgentBridgeError.invalidInput("The new project destination must be a folder that does not exist yet; existing content will not be overwritten.")
         }
         var ancestor = destination.deletingLastPathComponent()
         while ancestor.path != "/" {
             let gitMetadata = ancestor.appendingPathComponent(".git")
             var gitInfo = stat()
             if lstat(gitMetadata.path, &gitInfo) == 0 {
-                throw AgentBridgeError.invalidInput("新專案不能建立在既有 Git 儲存庫內。")
+                throw AgentBridgeError.invalidInput("A new project cannot be created inside an existing Git repository.")
             }
             var headInfo = stat()
             var objectsInfo = stat()
@@ -144,7 +144,7 @@ public final class WorkspaceManager: @unchecked Sendable {
                (objectsInfo.st_mode & S_IFMT) == S_IFDIR,
                lstat(ancestor.appendingPathComponent("refs").path, &refsInfo) == 0,
                (refsInfo.st_mode & S_IFMT) == S_IFDIR {
-                throw AgentBridgeError.invalidInput("新專案不能建立在既有 Git 儲存庫內。")
+                throw AgentBridgeError.invalidInput("A new project cannot be created inside an existing Git repository.")
             }
             ancestor.deleteLastPathComponent()
         }
@@ -157,7 +157,7 @@ public final class WorkspaceManager: @unchecked Sendable {
     func createEmptyProjectRepository(path: String) async throws -> WorkspaceSnapshot {
         let destination = try validateNewProjectDestination(path: path)
         guard mkdir(destination.path, mode_t(0o700)) == 0 else {
-            throw AgentBridgeError.git("無法建立新的專案資料夾；目的地可能已被建立。")
+            throw AgentBridgeError.git("Could not create the new project folder; the destination may already have been created.")
         }
         do {
             _ = try await runGit(arguments: [
@@ -173,21 +173,21 @@ public final class WorkspaceManager: @unchecked Sendable {
             guard isDirectory(destination), !isSymbolicLink(destination),
                   isDirectory(destination.appendingPathComponent(".git")),
                   !isSymbolicLink(destination.appendingPathComponent(".git")) else {
-                throw AgentBridgeError.git("新專案的 Git 結構無法安全確認。")
+                throw AgentBridgeError.git("The new project's Git structure could not be confirmed safely.")
             }
             let commit = try await gitText(["-C", destination.path, "rev-parse", "HEAD"])
             guard commit.range(of: #"^[0-9a-fA-F]{40,64}$"#, options: .regularExpression) != nil else {
-                throw AgentBridgeError.git("無法確認新專案的初始提交。")
+                throw AgentBridgeError.git("Could not confirm the new project's initial commit.")
             }
             let tree = try await runGit(arguments: ["-C", destination.path, "ls-tree", "-r", "--name-only", "HEAD"], workingDirectory: nil)
             guard !tree.outputWasTruncated, tree.standardOutput.isEmpty else {
-                throw AgentBridgeError.git("新專案初始提交包含非預期檔案。")
+                throw AgentBridgeError.git("The new project's initial commit contains unexpected files.")
             }
             let status = try await runGit(arguments: [
                 "-C", destination.path, "status", "--porcelain=v1", "--untracked-files=normal"
             ], workingDirectory: nil)
             guard !status.outputWasTruncated, status.standardOutput.isEmpty else {
-                throw AgentBridgeError.git("新專案在初始化後出現非預期檔案。")
+                throw AgentBridgeError.git("Unexpected files appeared in the new project after initialization.")
             }
             return WorkspaceSnapshot(repositoryRoot: destination, commit: commit.lowercased(), wasDirty: false)
         } catch {
@@ -195,7 +195,7 @@ public final class WorkspaceManager: @unchecked Sendable {
                 try? fileManager.removeItem(at: destination)
             }
             if let error = error as? AgentBridgeError { throw error }
-            throw AgentBridgeError.git("無法安全初始化新的本機 Git 專案。")
+            throw AgentBridgeError.git("Could not safely initialize the new local Git project.")
         }
     }
 
@@ -207,24 +207,24 @@ public final class WorkspaceManager: @unchecked Sendable {
     public func validateWorkspace(for session: SessionRecord, accessMode: AccessMode = .readOnly) async throws {
         guard session.policy.accessMode == accessMode,
               session.policy.workspaceReadOnly == (accessMode == .readOnly) else {
-            throw AgentBridgeError.sessionMismatch("工作階段權限與要求的執行模式不符；請建立符合模式的新工作階段。")
+            throw AgentBridgeError.sessionMismatch("The session permissions do not match the requested run mode. Create a session with the matching mode.")
         }
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
         guard isWithinManagedWorkspaces(workspace), isDirectory(workspace), !isSymbolicLink(workspace) else {
-            throw AgentBridgeError.sessionMismatch("工作階段工作區不在 AgentBridge 管理的隔離資料夾內。")
+            throw AgentBridgeError.sessionMismatch("The session workspace is outside AgentBridge's managed isolated directory.")
         }
         let gitMetadata = workspace.appendingPathComponent(".git")
         guard workspace.lastPathComponent == session.id.uuidString.lowercased(),
               isDirectory(gitMetadata), !isSymbolicLink(gitMetadata) else {
-            throw AgentBridgeError.sessionMismatch("隔離工作區已失去 Git 中繼資料。")
+            throw AgentBridgeError.sessionMismatch("The isolated workspace has lost its Git metadata.")
         }
         let alternateObjects = gitMetadata.appendingPathComponent("objects/info/alternates")
         guard !fileManager.fileExists(atPath: alternateObjects.path) else {
-            throw AgentBridgeError.sessionMismatch("隔離工作區仍參照其他 Git 物件資料夾。")
+            throw AgentBridgeError.sessionMismatch("The isolated workspace still references another Git object directory.")
         }
         let topLevel = try await gitText(["-C", workspace.path, "rev-parse", "--show-toplevel"])
         guard URL(fileURLWithPath: topLevel, isDirectory: true).standardizedFileURL.path == workspace.path else {
-            throw AgentBridgeError.sessionMismatch("Git 工作區根目錄與工作階段記錄不符。")
+            throw AgentBridgeError.sessionMismatch("The Git workspace root does not match the session record.")
         }
         let commit = try await gitText(["-C", workspace.path, "rev-parse", "HEAD"])
         guard commit == session.snapshotCommit else { throw AgentBridgeError.workspaceChanged }
@@ -232,7 +232,7 @@ public final class WorkspaceManager: @unchecked Sendable {
 
     public func diff(for session: SessionRecord) async throws -> WorkspaceChangeDiff {
         guard session.policy.accessMode == .isolatedChanges else {
-            throw AgentBridgeError.sessionMismatch("只有隔離變更工作階段可以檢視變更。")
+            throw AgentBridgeError.sessionMismatch("Only isolated-change sessions can review changes.")
         }
         try await validateWorkspace(for: session, accessMode: .isolatedChanges)
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
@@ -271,13 +271,13 @@ public final class WorkspaceManager: @unchecked Sendable {
                 outputLimit: 1_048_576
             )
             guard !patchResult.outputWasTruncated else {
-                throw AgentBridgeError.git("檔案差異超過大小限制；請拆分工作階段後再檢視。")
+                throw AgentBridgeError.git("The file diff exceeds the size limit; split the session before reviewing.")
             }
             guard let patchText = String(data: patchResult.standardOutput, encoding: .utf8) else {
-                throw AgentBridgeError.git("Git 差異包含無法顯示的檔名或內容。")
+                throw AgentBridgeError.git("The Git diff contains file names or content that cannot be displayed.")
             }
             guard combinedPatch.count + patchResult.standardOutput.count <= 10 * 1_024 * 1_024 else {
-                throw AgentBridgeError.git("完整差異超過大小限制；請拆分工作階段後再匯出。")
+                throw AgentBridgeError.git("The full diff exceeds the size limit; split the session before exporting.")
             }
             combinedPatch.append(contentsOf: patchResult.standardOutput)
             let trackedStatus = trackedEntries.first(where: { $0.path == path })?.status
@@ -293,15 +293,15 @@ public final class WorkspaceManager: @unchecked Sendable {
 
     public func restoreFiles(for session: SessionRecord, paths: [String]) async throws {
         guard session.policy.accessMode == .isolatedChanges else {
-            throw AgentBridgeError.sessionMismatch("只有隔離變更工作階段可以還原檔案。")
+            throw AgentBridgeError.sessionMismatch("Only isolated-change sessions can restore files.")
         }
         try await validateWorkspace(for: session, accessMode: .isolatedChanges)
-        guard !paths.isEmpty else { throw AgentBridgeError.invalidInput("請選擇至少一個要還原的檔案。") }
+        guard !paths.isEmpty else { throw AgentBridgeError.invalidInput("Choose at least one file to restore.") }
         let requestedPaths = Set(try paths.map { try validateRelativeGitPath($0) })
         let diff = try await diff(for: session)
         let changedPaths = Set(diff.files.map(\.path))
         guard requestedPaths.isSubset(of: changedPaths) else {
-            throw AgentBridgeError.invalidInput("只能還原目前差異中列出的檔案。")
+            throw AgentBridgeError.invalidInput("Only files listed in the current diff can be restored.")
         }
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
         for path in requestedPaths.sorted() {
@@ -310,12 +310,12 @@ public final class WorkspaceManager: @unchecked Sendable {
                 workingDirectory: nil,
                 allowedExitCodes: [0, 1]
             )
-            guard !tracked.outputWasTruncated else { throw AgentBridgeError.git("Git 檔案索引超過大小限制。") }
+            guard !tracked.outputWasTruncated else { throw AgentBridgeError.git("The Git file index exceeds the size limit.") }
             if tracked.exitCode == 0 {
                 let inBaseCommit = try await runGit(arguments: [
                     "-C", workspace.path, "ls-tree", "-r", "--name-only", "-z", session.snapshotCommit, "--", path
                 ], workingDirectory: nil)
-                guard !inBaseCommit.outputWasTruncated else { throw AgentBridgeError.git("Git 基準檔案清單超過大小限制。") }
+                guard !inBaseCommit.outputWasTruncated else { throw AgentBridgeError.git("The Git base file list exceeds the size limit.") }
                 if inBaseCommit.standardOutput.isEmpty {
                     _ = try await runGit(arguments: ["-C", workspace.path, "rm", "-f", "--", path], workingDirectory: nil)
                 } else {
@@ -330,7 +330,7 @@ public final class WorkspaceManager: @unchecked Sendable {
                 var metadata = stat()
                 guard lstat(fileURL.path, &metadata) == 0,
                       (metadata.st_mode & S_IFMT) == S_IFREG || (metadata.st_mode & S_IFMT) == S_IFLNK else {
-                    throw AgentBridgeError.git("未追蹤檔案已改變或不是一般檔案，未執行還原。")
+                    throw AgentBridgeError.git("An untracked file changed or is not a regular file; nothing was restored.")
                 }
                 try fileManager.removeItem(at: fileURL)
             }
@@ -339,7 +339,7 @@ public final class WorkspaceManager: @unchecked Sendable {
 
     public func restoreAllChanges(for session: SessionRecord) async throws {
         guard session.policy.accessMode == .isolatedChanges else {
-            throw AgentBridgeError.sessionMismatch("只有隔離變更工作階段可以還原檔案。")
+            throw AgentBridgeError.sessionMismatch("Only isolated-change sessions can restore files.")
         }
         try await validateWorkspace(for: session, accessMode: .isolatedChanges)
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
@@ -349,7 +349,7 @@ public final class WorkspaceManager: @unchecked Sendable {
 
     public func applyChangesToLocalBranch(for session: SessionRecord, branchName: String) async throws -> BranchApplyResult {
         guard session.policy.accessMode == .isolatedChanges else {
-            throw AgentBridgeError.sessionMismatch("只有隔離變更工作階段可以套用到本機分支。")
+            throw AgentBridgeError.sessionMismatch("Only isolated-change sessions can be applied to a local branch.")
         }
         let diff = try await diff(for: session)
         return try await applyVerifiedChangesToLocalBranch(for: session, branchName: branchName, diff: diff)
@@ -361,12 +361,12 @@ public final class WorkspaceManager: @unchecked Sendable {
         diff: WorkspaceChangeDiff
     ) async throws -> BranchApplyResult {
         guard session.policy.accessMode == .isolatedChanges else {
-            throw AgentBridgeError.sessionMismatch("只有隔離變更工作階段可以套用到本機分支。")
+            throw AgentBridgeError.sessionMismatch("Only isolated-change sessions can be applied to a local branch.")
         }
         try await validateWorkspace(for: session, accessMode: .isolatedChanges)
         try validateVerifiedDiff(diff, for: session)
         guard !diff.files.isEmpty, !diff.patch.isEmpty else {
-            throw AgentBridgeError.invalidInput("工作區沒有可套用的變更。")
+            throw AgentBridgeError.invalidInput("The workspace has no changes to apply.")
         }
         let source = URL(fileURLWithPath: session.sourceRepositoryPath, isDirectory: true).standardizedFileURL
         try await validateSourceRepository(source, expectedCommit: session.snapshotCommit)
@@ -406,7 +406,7 @@ public final class WorkspaceManager: @unchecked Sendable {
             worktreeAdded = true
             branchCreated = !branchAlreadyExists
             guard isWithinManagedWorkspaces(destination), isDirectory(destination), !isSymbolicLink(destination) else {
-                throw AgentBridgeError.git("建立的分支工作樹不在 AgentBridge 管理的隔離資料夾內。")
+                throw AgentBridgeError.git("The created branch worktree is not inside an AgentBridge-managed isolated folder.")
             }
             try await validateSourceRepository(source, expectedCommit: session.snapshotCommit)
             _ = try await runGit(
@@ -429,7 +429,7 @@ public final class WorkspaceManager: @unchecked Sendable {
                 _ = try? await runGit(arguments: ["-C", source.path, "branch", "-D", branchName], workingDirectory: nil)
             }
             if let error = error as? AgentBridgeError { throw error }
-            throw AgentBridgeError.git("無法將變更套用到指定的本機分支；來源工作目錄保持不變。")
+            throw AgentBridgeError.git("Could not apply the changes to the specified local branch; the source working directory is unchanged.")
         }
     }
 
@@ -447,23 +447,23 @@ public final class WorkspaceManager: @unchecked Sendable {
     private func inspectSourceRepository(path: String) async throws -> WorkspaceSnapshot {
         let input = try validatedAbsolutePath(path)
         guard isDirectory(input), !isSymbolicLink(input) else {
-            throw AgentBridgeError.invalidInput("來源必須是一般資料夾；請選擇 Git 根目錄，而非符號連結。")
+            throw AgentBridgeError.invalidInput("The source must be a regular directory. Choose the Git root, not a symlink.")
         }
         let sourceGitMetadata = input.appendingPathComponent(".git")
         guard isDirectory(sourceGitMetadata), !isSymbolicLink(sourceGitMetadata) else {
-            throw AgentBridgeError.invalidInput("來源必須是完整 Git 儲存庫；目前不支援 linked worktree。")
+            throw AgentBridgeError.invalidInput("The source must be a full Git repository. Linked worktrees are not supported.")
         }
         let topLevel = try await gitText(["-C", input.path, "rev-parse", "--show-toplevel"])
         let root = URL(fileURLWithPath: topLevel, isDirectory: true).standardizedFileURL
         guard root.path == input.path else {
-            throw AgentBridgeError.invalidInput("請直接選擇 Git 儲存庫根目錄。")
+            throw AgentBridgeError.invalidInput("Select the Git repository root directly.")
         }
         let commit = try await gitText(["-C", root.path, "rev-parse", "HEAD"])
         guard commit.range(of: #"^[0-9a-fA-F]{40,64}$"#, options: .regularExpression) != nil else {
-            throw AgentBridgeError.git("無法確認來源提交版本。")
+            throw AgentBridgeError.git("Could not confirm the source commit.")
         }
         let status = try await runGit(arguments: ["-C", root.path, "status", "--porcelain=v1", "--untracked-files=normal"], workingDirectory: nil)
-        guard !status.outputWasTruncated else { throw AgentBridgeError.git("來源狀態輸出超過大小限制。") }
+        guard !status.outputWasTruncated else { throw AgentBridgeError.git("The source status output exceeds the size limit.") }
         return WorkspaceSnapshot(repositoryRoot: root, commit: commit.lowercased(), wasDirty: !status.standardOutput.isEmpty)
     }
 
@@ -473,7 +473,7 @@ public final class WorkspaceManager: @unchecked Sendable {
               path.utf8.count <= 4_096,
               !components.contains(where: { $0 == ".." }),
               !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
-            throw AgentBridgeError.invalidInput("請選擇有效的絕對本機資料夾路徑。")
+            throw AgentBridgeError.invalidInput("Choose a valid absolute local folder path.")
         }
         return URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
     }
@@ -496,7 +496,7 @@ public final class WorkspaceManager: @unchecked Sendable {
 
     private func resolveSnapshotCommit(_ requested: String, repositoryRoot: URL) async throws -> String {
         guard requested.range(of: #"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"#, options: .regularExpression) != nil else {
-            throw AgentBridgeError.invalidInput("指定的固定提交必須是完整的 40 或 64 位 Git 雜湊。")
+            throw AgentBridgeError.invalidInput("The pinned commit must be a full 40- or 64-character Git hash.")
         }
         let normalized = requested.lowercased()
         let resolved = try await gitText([
@@ -504,22 +504,22 @@ public final class WorkspaceManager: @unchecked Sendable {
             "rev-parse", "--verify", "--end-of-options", "\(normalized)^{commit}"
         ]).lowercased()
         guard resolved == normalized else {
-            throw AgentBridgeError.git("指定的固定提交不存在，或不是這個來源儲存庫中的完整提交。")
+            throw AgentBridgeError.git("The pinned commit does not exist or is not a complete commit in this source repository.")
         }
         return resolved
     }
 
     private func validateSourceRepository(_ source: URL, expectedCommit: String) async throws {
         guard isDirectory(source), !isSymbolicLink(source) else {
-            throw AgentBridgeError.sessionMismatch("原始 Git 儲存庫已不存在或不再是一般資料夾。")
+            throw AgentBridgeError.sessionMismatch("The original Git repository no longer exists or is no longer a regular folder.")
         }
         let gitMetadata = source.appendingPathComponent(".git")
         guard isDirectory(gitMetadata), !isSymbolicLink(gitMetadata) else {
-            throw AgentBridgeError.sessionMismatch("原始 Git 儲存庫結構已改變，無法安全套用變更。")
+            throw AgentBridgeError.sessionMismatch("The original Git repository structure changed, so the changes cannot be applied safely.")
         }
         let topLevel = try await gitText(["-C", source.path, "rev-parse", "--show-toplevel"])
         guard URL(fileURLWithPath: topLevel, isDirectory: true).standardizedFileURL.path == source.path else {
-            throw AgentBridgeError.sessionMismatch("原始儲存庫根目錄與工作階段記錄不符。")
+            throw AgentBridgeError.sessionMismatch("The original repository root does not match the session record.")
         }
         let actualCommit = try await gitText(["-C", source.path, "rev-parse", "HEAD"])
         guard actualCommit == expectedCommit else {
@@ -531,26 +531,26 @@ public final class WorkspaceManager: @unchecked Sendable {
         guard !name.isEmpty, !name.hasPrefix("-"), name.utf8.count <= 200,
               !name.contains("@{-"),
               !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
-            throw AgentBridgeError.invalidInput("請輸入有效的本機分支名稱。")
+            throw AgentBridgeError.invalidInput("Enter a valid local branch name.")
         }
         let result = try await runGit(
             arguments: ["-C", repository.path, "check-ref-format", "--branch", name],
             workingDirectory: nil
         )
         guard !result.outputWasTruncated else {
-            throw AgentBridgeError.invalidInput("請輸入有效的本機分支名稱。")
+            throw AgentBridgeError.invalidInput("Enter a valid local branch name.")
         }
     }
 
     private func parseNameStatus(_ data: Data) throws -> [(status: String, path: String)] {
         let fields = data.split(separator: 0, omittingEmptySubsequences: true).map { Data($0) }
-        guard fields.count.isMultiple(of: 2) else { throw AgentBridgeError.git("Git 檔案差異格式無法辨識。") }
+        guard fields.count.isMultiple(of: 2) else { throw AgentBridgeError.git("The Git file diff format is not recognized.") }
         var entries: [(status: String, path: String)] = []
         for index in stride(from: 0, to: fields.count, by: 2) {
             guard let status = String(data: fields[index], encoding: .utf8),
                   let path = String(data: fields[index + 1], encoding: .utf8),
                   !status.isEmpty, !path.isEmpty else {
-                throw AgentBridgeError.git("Git 檔案差異包含無法顯示的路徑。")
+                throw AgentBridgeError.git("The Git file diff contains paths that cannot be displayed.")
             }
             entries.append((status: status, path: path))
         }
@@ -560,7 +560,7 @@ public final class WorkspaceManager: @unchecked Sendable {
     private func parseNULSeparatedPaths(_ data: Data) throws -> [String] {
         try data.split(separator: 0, omittingEmptySubsequences: true).map { field in
             guard let path = String(data: Data(field), encoding: .utf8), !path.isEmpty else {
-                throw AgentBridgeError.git("Git 未追蹤檔案清單包含無法顯示的路徑。")
+                throw AgentBridgeError.git("The Git untracked file list contains paths that cannot be displayed.")
             }
             return path
         }
@@ -575,7 +575,7 @@ public final class WorkspaceManager: @unchecked Sendable {
               !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
               !components.isEmpty,
               components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
-            throw AgentBridgeError.invalidInput("差異路徑不是安全的相對檔案路徑。")
+            throw AgentBridgeError.invalidInput("A diff path is not a safe relative file path.")
         }
         return path
     }
@@ -584,18 +584,18 @@ public final class WorkspaceManager: @unchecked Sendable {
         let rootPath = root.standardizedFileURL.path
         let filePath = fileURL.standardizedFileURL.path
         guard filePath.hasPrefix(rootPath + "/") else {
-            throw AgentBridgeError.invalidInput("檔案路徑超出隔離工作區。")
+            throw AgentBridgeError.invalidInput("The file path is outside the isolated workspace.")
         }
         let relative = String(filePath.dropFirst(rootPath.count + 1))
         let components = relative.split(separator: "/", omittingEmptySubsequences: false)
-        guard components.count >= 1 else { throw AgentBridgeError.invalidInput("檔案路徑無效。") }
+        guard components.count >= 1 else { throw AgentBridgeError.invalidInput("The file path is invalid.") }
         var parent = root
         for component in components.dropLast() {
             parent.appendPathComponent(String(component), isDirectory: true)
             var metadata = stat()
             guard lstat(parent.path, &metadata) == 0,
                   (metadata.st_mode & S_IFMT) == S_IFDIR else {
-                throw AgentBridgeError.invalidInput("檔案路徑的父資料夾不是一般資料夾。")
+                throw AgentBridgeError.invalidInput("The file path's parent folder is not a regular folder.")
             }
         }
     }
@@ -615,7 +615,7 @@ public final class WorkspaceManager: @unchecked Sendable {
         guard !result.outputWasTruncated,
               let value = String(data: result.standardOutput, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !value.isEmpty else {
-            throw AgentBridgeError.git("Git 回傳無法辨識的資訊。")
+            throw AgentBridgeError.git("Git returned information that could not be recognized.")
         }
         return value
     }
@@ -628,7 +628,7 @@ public final class WorkspaceManager: @unchecked Sendable {
         outputLimit: Int = 256_000
     ) async throws -> ProcessResult {
         guard fileManager.isExecutableFile(atPath: gitURL.path) else {
-            throw AgentBridgeError.git("找不到系統 Git。")
+            throw AgentBridgeError.git("System Git could not be found.")
         }
         let privateTemp = store.rootURL.appendingPathComponent("tmp/git", isDirectory: true)
         try AuditStore.createPrivateDirectory(privateTemp, fileManager: fileManager)
@@ -663,10 +663,10 @@ public final class WorkspaceManager: @unchecked Sendable {
             outputLimit: outputLimit
         )
         let result = try await runner.run(spec)
-        if result.timedOut { throw AgentBridgeError.git("Git 操作逾時。") }
-        if result.wasCancelled { throw AgentBridgeError.git("Git 操作已取消。") }
+        if result.timedOut { throw AgentBridgeError.git("The Git operation timed out.") }
+        if result.wasCancelled { throw AgentBridgeError.git("The Git operation was cancelled.") }
         guard allowedExitCodes.contains(result.exitCode) else {
-            throw AgentBridgeError.git("Git 指令失敗，結束代碼 \(result.exitCode)。")
+            throw AgentBridgeError.git("Git command failed with exit code \(result.exitCode).")
         }
         return result
     }

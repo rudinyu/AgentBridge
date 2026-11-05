@@ -64,12 +64,12 @@ public final class AuditStore: @unchecked Sendable {
             try Self.requireRegularFile(settingsURL)
             let attributes = try fileManager.attributesOfItem(atPath: settingsURL.path)
             guard (attributes[.size] as? NSNumber)?.intValue ?? 0 <= 256_000 else {
-                throw AgentBridgeError.persistence("設定檔超過大小上限。")
+                throw AgentBridgeError.persistence("The settings file exceeds the size limit.")
             }
             do {
                 return try decoder.decode(BridgeSettings.self, from: Data(contentsOf: settingsURL))
             } catch {
-                throw AgentBridgeError.persistence("設定檔格式錯誤。")
+                throw AgentBridgeError.persistence("The settings file is malformed.")
             }
         }
     }
@@ -84,7 +84,7 @@ public final class AuditStore: @unchecked Sendable {
             } catch let error as AgentBridgeError {
                 throw error
             } catch {
-                throw AgentBridgeError.persistence("無法寫入設定檔。")
+                throw AgentBridgeError.persistence("Could not write the settings file.")
             }
         }
     }
@@ -97,7 +97,7 @@ public final class AuditStore: @unchecked Sendable {
             } catch let error as AgentBridgeError {
                 throw error
             } catch {
-                throw AgentBridgeError.persistence("無法寫入工作階段索引。")
+                throw AgentBridgeError.persistence("Could not write the session index.")
             }
         }
     }
@@ -117,7 +117,7 @@ public final class AuditStore: @unchecked Sendable {
             } catch let error as AgentBridgeError {
                 throw error
             } catch {
-                throw AgentBridgeError.persistence("無法寫入工作階段索引。")
+                throw AgentBridgeError.persistence("Could not write the session index.")
             }
         }
     }
@@ -127,7 +127,7 @@ public final class AuditStore: @unchecked Sendable {
             try Self.requireRegularFile(sessionsURL)
             let attributes = try fileManager.attributesOfItem(atPath: sessionsURL.path)
             guard (attributes[.size] as? NSNumber)?.intValue ?? 0 <= maxFileSize else {
-                throw AgentBridgeError.persistence("工作階段索引超過大小上限。")
+                throw AgentBridgeError.persistence("The session index exceeds the size limit.")
             }
             guard let data = try? Data(contentsOf: sessionsURL) else { return [] }
             var latest: [UUID: SessionRecord] = [:]
@@ -154,7 +154,7 @@ public final class AuditStore: @unchecked Sendable {
             } catch let error as AgentBridgeError {
                 throw error
             } catch {
-                throw AgentBridgeError.persistence("無法寫入稽核事件。")
+                throw AgentBridgeError.persistence("Could not write the audit event.")
             }
         }
     }
@@ -166,7 +166,7 @@ public final class AuditStore: @unchecked Sendable {
             try Self.requireRegularFile(path)
             let attributes = try fileManager.attributesOfItem(atPath: path.path)
             guard (attributes[.size] as? NSNumber)?.intValue ?? 0 <= maxFileSize else {
-                throw AgentBridgeError.persistence("稽核檔案超過大小上限。")
+                throw AgentBridgeError.persistence("The audit file exceeds the size limit.")
             }
             guard let data = try? Data(contentsOf: path) else { return [] }
             return data.split(separator: 0x0A).compactMap { try? decoder.decode(AuditEvent.self, from: Data($0)) }
@@ -179,7 +179,7 @@ public final class AuditStore: @unchecked Sendable {
 
     public func requestCancellation(for sessionID: UUID) throws {
         guard let session = try session(id: sessionID), session.status == .running else {
-            throw AgentBridgeError.sessionMismatch("這個工作階段目前沒有執行中的程序。")
+            throw AgentBridgeError.sessionMismatch("This session has no running process.")
         }
         try requestCancellation(forRunID: sessionID)
     }
@@ -193,7 +193,7 @@ public final class AuditStore: @unchecked Sendable {
             try Data("cancel".utf8).write(to: requestURL, options: .atomic)
             try Self.setPrivateFilePermissions(requestURL, fileManager: fileManager)
         } catch {
-            throw AgentBridgeError.persistence("無法建立取消請求。")
+            throw AgentBridgeError.persistence("Could not create the cancellation request.")
         }
     }
 
@@ -207,16 +207,16 @@ public final class AuditStore: @unchecked Sendable {
     public func acquireRunLease(for sessionID: UUID) throws -> SessionRunLease {
         let url = rootURL.appendingPathComponent("session-\(sessionID.uuidString.lowercased()).run.lock")
         let descriptor = open(url.path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
-        guard descriptor >= 0 else { throw AgentBridgeError.persistence("無法鎖定工作階段。") }
+        guard descriptor >= 0 else { throw AgentBridgeError.persistence("Could not lock the session.") }
         var metadata = stat()
         guard fstat(descriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
               fchmod(descriptor, mode_t(0o600)) == 0 else {
             _ = close(descriptor)
-            throw AgentBridgeError.persistence("工作階段鎖定檔不是安全的一般檔案。")
+            throw AgentBridgeError.persistence("The session lock file is not a secure regular file.")
         }
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             _ = close(descriptor)
-            throw AgentBridgeError.sessionMismatch("這個工作階段已在其他視窗或終端機執行。")
+            throw AgentBridgeError.sessionMismatch("This session is already running in another window or terminal.")
         }
         return SessionRunLease(descriptor: descriptor)
     }
@@ -227,21 +227,21 @@ public final class AuditStore: @unchecked Sendable {
                 try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
             }
             try requireDirectory(url)
-            guard chmod(url.path, mode_t(0o700)) == 0 else { throw AgentBridgeError.persistence("無法設定資料夾權限。") }
+            guard chmod(url.path, mode_t(0o700)) == 0 else { throw AgentBridgeError.persistence("Could not set directory permissions.") }
         } catch {
             if let error = error as? AgentBridgeError { throw error }
-            throw AgentBridgeError.persistence("無法建立私有資料夾。")
+            throw AgentBridgeError.persistence("Could not create a private directory.")
         }
     }
 
     private static func secureExistingFile(_ url: URL, fileManager: FileManager) throws {
         let descriptor = open(url.path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
-        guard descriptor >= 0 else { throw AgentBridgeError.persistence("無法安全開啟資料檔。") }
+        guard descriptor >= 0 else { throw AgentBridgeError.persistence("Could not safely open the data file.") }
         defer { _ = close(descriptor) }
         var metadata = stat()
         guard fstat(descriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
               fchmod(descriptor, mode_t(0o600)) == 0 else {
-            throw AgentBridgeError.persistence("資料檔不是安全的一般檔案。")
+            throw AgentBridgeError.persistence("The data file is not a secure regular file.")
         }
     }
 
@@ -250,7 +250,7 @@ public final class AuditStore: @unchecked Sendable {
             try requireRegularFile(url)
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
-            throw AgentBridgeError.persistence("無法設定私有檔案權限。")
+            throw AgentBridgeError.persistence("Could not set private file permissions.")
         }
     }
 
@@ -258,11 +258,11 @@ public final class AuditStore: @unchecked Sendable {
         if fileManager.fileExists(atPath: url.path) { try requireRegularFile(url) }
         let oldSize = (try? fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
         guard oldSize + data.count + 1 <= maximumSize else {
-            throw AgentBridgeError.persistence("稽核檔案已達大小上限。")
+            throw AgentBridgeError.persistence("The audit file has reached its size limit.")
         }
         if !fileManager.fileExists(atPath: url.path) {
             guard fileManager.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
-                throw AgentBridgeError.persistence("無法建立稽核檔案。")
+                throw AgentBridgeError.persistence("Could not create the audit file.")
             }
         }
         try setPrivateFilePermissions(url, fileManager: fileManager)
@@ -277,9 +277,9 @@ public final class AuditStore: @unchecked Sendable {
         defer { lock.unlock() }
         return try PrivateLockFile.withLock(at: storeLockURL, exclusive: exclusive, error: { failure in
             switch failure {
-            case .unavailable: AgentBridgeError.persistence("無法開啟資料鎖定檔。")
-            case .notPrivateFile: AgentBridgeError.persistence("資料鎖定檔不是安全的一般檔案。")
-            case .lockFailed: AgentBridgeError.persistence("無法鎖定資料檔案。")
+            case .unavailable: AgentBridgeError.persistence("Could not open the data lock file.")
+            case .notPrivateFile: AgentBridgeError.persistence("The data lock file is not a secure regular file.")
+            case .lockFailed: AgentBridgeError.persistence("Could not lock the data file.")
             }
         }, operation)
     }
@@ -287,14 +287,14 @@ public final class AuditStore: @unchecked Sendable {
     private static func requireDirectory(_ url: URL) throws {
         var metadata = stat()
         guard lstat(url.path, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFDIR else {
-            throw AgentBridgeError.persistence("資料夾路徑不能是符號連結或非資料夾。")
+            throw AgentBridgeError.persistence("The directory path cannot be a symlink or a non-directory.")
         }
     }
 
     private static func requireRegularFile(_ url: URL) throws {
         var metadata = stat()
         guard lstat(url.path, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG else {
-            throw AgentBridgeError.persistence("資料檔路徑不能是符號連結或非一般檔案。")
+            throw AgentBridgeError.persistence("The data file path cannot be a symlink or a non-regular file.")
         }
     }
 

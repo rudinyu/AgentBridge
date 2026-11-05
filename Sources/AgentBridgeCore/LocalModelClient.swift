@@ -73,7 +73,7 @@ public final class LocalModelClient: @unchecked Sendable {
         } catch let error as URLError where error.code == .timedOut {
             throw AgentBridgeError.processTimedOut
         } catch {
-            throw AgentBridgeError.providerFailed(.local, "無法連線到指定的本機模型端點：\(OutputRedactor.redact(error.localizedDescription))")
+            throw AgentBridgeError.providerFailed(.local, "Could not reach the configured local model endpoint: \(OutputRedactor.redact(error.localizedDescription))")
         }
     }
 
@@ -92,14 +92,14 @@ public final class LocalModelClient: @unchecked Sendable {
     ) async throws -> LocalModelResponse {
         try settings.validate()
         guard (1...Self.maximumResponseBytes).contains(maximumOutputBytes) else {
-            throw AgentBridgeError.invalidInput("本機模型回覆大小上限無效。")
+            throw AgentBridgeError.invalidInput("The local model reply size limit is invalid.")
         }
         guard !settings.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AgentBridgeError.invalidInput("請先選擇要使用的本機模型。")
+            throw AgentBridgeError.invalidInput("Select a local model first.")
         }
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               prompt.utf8.count <= Self.maximumResponseBytes else {
-            throw AgentBridgeError.invalidInput("本機模型提示不可空白，且最多 2 MiB。")
+            throw AgentBridgeError.invalidInput("The local model prompt must not be empty and can be at most 2 MiB.")
         }
         try Self.requireLocalModelName(settings.model)
 
@@ -122,14 +122,14 @@ public final class LocalModelClient: @unchecked Sendable {
                         let data = try await Self.readModelList(request: listRequest, session: session)
                         let availableModels = try Self.parseModels(data, backend: settings.backend)
                         guard let selectedModel = availableModels.first(where: { $0.id == settings.model || $0.name == settings.model }) else {
-                            throw AgentBridgeError.invalidInput("指定的本機模型不在伺服器提供的本機模型清單中。")
+                            throw AgentBridgeError.invalidInput("The selected local model is not in the model list reported by the server.")
                         }
                         try Self.requireLocalModelName(selectedModel.id)
                         try Self.requireLocalModelName(selectedModel.name)
                         if let reportedContextWindow = selectedModel.contextWindowTokens,
                            settings.contextWindowTokens > reportedContextWindow {
                             throw AgentBridgeError.invalidInput(
-                                "所選模型回報的上下文視窗為 \(reportedContextWindow) tokens，低於目前設定的 \(settings.contextWindowTokens) tokens；請調低本機模型上下文設定後重試。"
+                                "The selected model reports a context window of \(reportedContextWindow) tokens, below the currently configured \(settings.contextWindowTokens) tokens; lower the local model context setting and try again."
                             )
                         }
                         return try await Self.readStream(
@@ -153,7 +153,7 @@ public final class LocalModelClient: @unchecked Sendable {
                         session.invalidateAndCancel()
                     }
                     guard let result = try await group.next() else {
-                        throw AgentBridgeError.providerFailed(.local, "本機模型沒有回傳結果。")
+                        throw AgentBridgeError.providerFailed(.local, "The local model returned no result.")
                     }
                     return result
                 }
@@ -170,7 +170,7 @@ public final class LocalModelClient: @unchecked Sendable {
         } catch let error as URLError where error.code == .timedOut {
             throw AgentBridgeError.processTimedOut
         } catch {
-            throw AgentBridgeError.providerFailed(.local, "本機模型連線失敗：\(OutputRedactor.redact(error.localizedDescription))")
+            throw AgentBridgeError.providerFailed(.local, "Local model connection failed: \(OutputRedactor.redact(error.localizedDescription))")
         }
     }
 
@@ -184,7 +184,7 @@ public final class LocalModelClient: @unchecked Sendable {
     ) async throws -> LocalModelResponse {
         let (bytes, response) = try await session.bytes(for: request, delegate: LocalModelNoRedirectDelegate())
         guard let http = response as? HTTPURLResponse else {
-            throw AgentBridgeError.providerFailed(.local, "本機模型伺服器回應格式無效。")
+            throw AgentBridgeError.providerFailed(.local, "The local model server response format is invalid.")
         }
         guard (200..<300).contains(http.statusCode) else {
             throw httpError(statusCode: http.statusCode)
@@ -205,15 +205,15 @@ public final class LocalModelClient: @unchecked Sendable {
             let lineBytes = line.last == 0x0D ? Array(line.dropLast()) : line
             let data = Data(lineBytes)
             guard let text = String(data: data, encoding: .utf8) else {
-                throw AgentBridgeError.providerFailed(.local, "本機模型串流包含無效的 UTF-8。")
+                throw AgentBridgeError.providerFailed(.local, "The local model stream contains invalid UTF-8.")
             }
             switch backend {
             case .ollama:
                 guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    throw AgentBridgeError.providerFailed(.local, "Ollama 串流包含無效的 JSON。")
+                    throw AgentBridgeError.providerFailed(.local, "The Ollama stream contains invalid JSON.")
                 }
                 guard !containsRemoteMetadata(object) else {
-                    throw AgentBridgeError.providerFailed(.local, "Ollama 回報模型使用遠端或雲端執行；本機模式已停止回覆。")
+                    throw AgentBridgeError.providerFailed(.local, "Ollama reported that the model runs remotely or in the cloud; local mode stopped the reply.")
                 }
                 if let message = object["message"] as? [String: Any], let chunk = message["content"] as? String {
                     try append(chunk, to: &output, bytes: &outputBytes, maximumBytes: maximumOutputBytes)
@@ -222,16 +222,16 @@ public final class LocalModelClient: @unchecked Sendable {
                 if let count = object["prompt_eval_count"] as? Int, count >= 0 { inputTokens = count }
                 if let count = object["eval_count"] as? Int, count >= 0 { outputTokens = count }
                 if object["error"] != nil {
-                    throw AgentBridgeError.providerFailed(.local, "Ollama 回報模型執行錯誤；未接受部分回覆。")
+                    throw AgentBridgeError.providerFailed(.local, "Ollama reported a model execution error; the partial reply was not accepted.")
                 }
                 if let message = object["message"] as? [String: Any],
                    message["tool_calls"] != nil || message["function_call"] != nil {
-                    throw AgentBridgeError.providerFailed(.local, "本機模型要求呼叫工具；本機聊天目前只接受純文字回覆。")
+                    throw AgentBridgeError.providerFailed(.local, "The local model requested a tool call; local chat currently accepts only plain-text replies.")
                 }
                 if object["done"] as? Bool == true {
                     if let reason = object["done_reason"] as? String,
                        !["stop", "eos_token", "end_turn"].contains(reason.lowercased()) {
-                        throw AgentBridgeError.providerFailed(.local, "Ollama 回覆未正常完成；不會儲存不完整內容。")
+                        throw AgentBridgeError.providerFailed(.local, "The Ollama reply did not complete normally; incomplete content will not be saved.")
                     }
                     completed = true
                 }
@@ -240,17 +240,17 @@ public final class LocalModelClient: @unchecked Sendable {
                 let payload = text.dropFirst(5).trimmingCharacters(in: .whitespaces)
                 if payload == "[DONE]" {
                     guard openAIFinishReasonAccepted else {
-                        throw AgentBridgeError.providerFailed(.local, "OpenAI 相容串流在提供正常完成原因前結束。")
+                        throw AgentBridgeError.providerFailed(.local, "The OpenAI-compatible stream ended before providing a normal finish reason.")
                     }
                     completed = true
                     return
                 }
                 guard let payloadData = payload.data(using: .utf8),
                       let object = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else {
-                    throw AgentBridgeError.providerFailed(.local, "OpenAI 相容串流包含無效的 JSON。")
+                    throw AgentBridgeError.providerFailed(.local, "The OpenAI-compatible stream contains invalid JSON.")
                 }
                 if object["error"] != nil {
-                    throw AgentBridgeError.providerFailed(.local, "OpenAI 相容伺服器回報模型執行錯誤；未接受部分回覆。")
+                    throw AgentBridgeError.providerFailed(.local, "The OpenAI-compatible server reported a model execution error; the partial reply was not accepted.")
                 }
                 if let usage = object["usage"] as? [String: Any] {
                     if let count = usage["prompt_tokens"] as? Int, count >= 0 { inputTokens = count }
@@ -258,30 +258,30 @@ public final class LocalModelClient: @unchecked Sendable {
                 }
                 guard let choices = object["choices"] as? [[String: Any]] else {
                     if object["usage"] != nil { return }
-                    throw AgentBridgeError.providerFailed(.local, "OpenAI 相容串流缺少 choices 陣列。")
+                    throw AgentBridgeError.providerFailed(.local, "The OpenAI-compatible stream is missing the choices array.")
                 }
                 if choices.isEmpty {
                     guard object["usage"] != nil else {
-                        throw AgentBridgeError.providerFailed(.local, "OpenAI 相容串流沒有候選回覆。")
+                        throw AgentBridgeError.providerFailed(.local, "The OpenAI-compatible stream has no candidate reply.")
                     }
                     return
                 }
                 guard choices.count == 1, let choice = choices.first,
                       (choice["index"] as? Int ?? 0) == 0 else {
-                    throw AgentBridgeError.providerFailed(.local, "OpenAI 相容串流回傳多個或不明候選回覆；本機模式無法安全判定。")
+                    throw AgentBridgeError.providerFailed(.local, "The OpenAI-compatible stream returned multiple or unknown candidate replies; local mode cannot decide safely.")
                 }
                 if choice["error"] != nil {
-                    throw AgentBridgeError.providerFailed(.local, "OpenAI 相容串流回報候選回覆錯誤。")
+                    throw AgentBridgeError.providerFailed(.local, "The OpenAI-compatible stream reported a candidate reply error.")
                 }
                 let delta = choice["delta"] as? [String: Any]
                 let message = choice["message"] as? [String: Any]
                 if delta?["tool_calls"] != nil || delta?["function_call"] != nil
                     || message?["tool_calls"] != nil || message?["function_call"] != nil {
-                    throw AgentBridgeError.providerFailed(.local, "本機模型要求呼叫工具；本機聊天目前只接受純文字回覆。")
+                    throw AgentBridgeError.providerFailed(.local, "The local model requested a tool call; local chat currently accepts only plain-text replies.")
                 }
                 if let finishReason = choice["finish_reason"] as? String {
                     guard ["stop", "eos_token", "end_turn"].contains(finishReason.lowercased()) else {
-                        throw AgentBridgeError.providerFailed(.local, "OpenAI 相容回覆未正常完成；不會儲存不完整內容。")
+                        throw AgentBridgeError.providerFailed(.local, "The OpenAI-compatible reply did not complete normally; incomplete content will not be saved.")
                     }
                     openAIFinishReasonAccepted = true
                 }
@@ -298,7 +298,7 @@ public final class LocalModelClient: @unchecked Sendable {
         for try await byte in bytes {
             totalBytes += 1
             guard totalBytes <= maximumResponseBytes else {
-                throw AgentBridgeError.providerFailed(.local, "本機模型回應超過 2 MiB 上限。")
+                throw AgentBridgeError.providerFailed(.local, "The local model response exceeds the 2 MiB limit.")
             }
             if byte == 0x0A {
                 try consumeLine(line)
@@ -306,7 +306,7 @@ public final class LocalModelClient: @unchecked Sendable {
                 if completed { break }
             } else {
                 guard line.count < 1_048_576 else {
-                    throw AgentBridgeError.providerFailed(.local, "本機模型串流單行超過 1 MiB 上限。")
+                    throw AgentBridgeError.providerFailed(.local, "A local model stream line exceeds the 1 MiB limit.")
                 }
                 line.append(byte)
             }
@@ -315,12 +315,12 @@ public final class LocalModelClient: @unchecked Sendable {
             try consumeLine(line)
         }
         guard completed else {
-            throw AgentBridgeError.providerFailed(.local, "本機模型串流提前結束，未收到完成標記；不會接受不完整回覆。")
+            throw AgentBridgeError.providerFailed(.local, "The local model stream ended early without a completion marker; an incomplete reply will not be accepted.")
         }
         guard !output.isEmpty else {
-            throw AgentBridgeError.providerFailed(.local, "本機模型完成串流但沒有回覆文字。")
+            throw AgentBridgeError.providerFailed(.local, "The local model finished streaming without reply text.")
         }
-        onProgress?("本機模型已完成回覆。")
+        onProgress?("The local model finished replying.")
         return LocalModelResponse(
             text: OutputRedactor.redact(output),
             usage: LocalModelUsage(inputTokens: inputTokens, outputTokens: outputTokens, estimatedInputTokens: estimatedInputTokens)
@@ -330,7 +330,7 @@ public final class LocalModelClient: @unchecked Sendable {
     private static func readModelList(request: URLRequest, session: URLSession) async throws -> Data {
         let (bytes, response) = try await session.bytes(for: request, delegate: LocalModelNoRedirectDelegate())
         guard let http = response as? HTTPURLResponse else {
-            throw AgentBridgeError.providerFailed(.local, "本機模型伺服器回應格式無效。")
+            throw AgentBridgeError.providerFailed(.local, "The local model server response format is invalid.")
         }
         guard (200..<300).contains(http.statusCode) else {
             throw httpError(statusCode: http.statusCode)
@@ -338,7 +338,7 @@ public final class LocalModelClient: @unchecked Sendable {
         var data = Data()
         for try await byte in bytes {
             guard data.count < 1_048_576 else {
-                throw AgentBridgeError.providerFailed(.local, "本機模型清單超過 1 MiB 上限。")
+                throw AgentBridgeError.providerFailed(.local, "The local model list exceeds the 1 MiB limit.")
             }
             data.append(byte)
         }
@@ -353,7 +353,7 @@ public final class LocalModelClient: @unchecked Sendable {
     ) throws {
         let count = chunk.utf8.count
         guard count <= maximumBytes - bytes else {
-            throw AgentBridgeError.providerFailed(.local, "本機模型文字回應超過設定的大小上限；未接受不完整回覆。")
+            throw AgentBridgeError.providerFailed(.local, "The local model text response exceeds the configured size limit; an incomplete reply was not accepted.")
         }
         output += chunk
         bytes += count
@@ -365,7 +365,7 @@ public final class LocalModelClient: @unchecked Sendable {
     ) {
         guard let callback, Date().timeIntervalSince(lastEmittedAt) >= 1 else { return }
         lastEmittedAt = Date()
-        callback("本機模型正在撰寫回覆。")
+        callback("The local model is writing a reply.")
     }
 
     private static func pollCancellation(
@@ -416,7 +416,7 @@ public final class LocalModelClient: @unchecked Sendable {
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         } catch {
-            throw AgentBridgeError.invalidInput("無法編碼本機模型要求。")
+            throw AgentBridgeError.invalidInput("Could not encode the local model request.")
         }
         return request
     }
@@ -431,7 +431,7 @@ public final class LocalModelClient: @unchecked Sendable {
               let rawHost = components.host?.lowercased(),
               ["127.0.0.1", "::1"].contains(rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))),
               components.port.map({ (1...65_535).contains($0) }) ?? true else {
-            throw AgentBridgeError.invalidInput("本機模型端點只能使用沒有帳密、查詢或片段的 http://127.0.0.1 或 http://[::1] 位址。")
+            throw AgentBridgeError.invalidInput("Local model endpoints must use http://127.0.0.1 or http://[::1] without credentials, query parameters, or fragments.")
         }
         let path = components.percentEncodedPath
         guard path.isEmpty || path == "/" || (
@@ -440,7 +440,7 @@ public final class LocalModelClient: @unchecked Sendable {
                 && path.split(separator: "/").allSatisfy { $0 != "." && $0 != ".." }
                 && path.unicodeScalars.allSatisfy { CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~/").contains($0) }
         ) else {
-            throw AgentBridgeError.invalidInput("本機模型端點路徑含有不安全或無效的字元。")
+            throw AgentBridgeError.invalidInput("The local model endpoint path contains unsafe or invalid characters.")
         }
         let prefix = path == "/" ? "" : path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         var prefixSegments = prefix.split(separator: "/").map(String.init)
@@ -465,7 +465,7 @@ public final class LocalModelClient: @unchecked Sendable {
             .joined(separator: "/"))
         components.percentEncodedPath = components.path
         guard let url = components.url else {
-            throw AgentBridgeError.invalidInput("本機模型端點格式無效。")
+            throw AgentBridgeError.invalidInput("The local model endpoint format is invalid.")
         }
         return url
     }
@@ -473,23 +473,23 @@ public final class LocalModelClient: @unchecked Sendable {
     private static func parseModels(_ data: Data, backend: LocalModelBackend) throws -> [LocalModelDescriptor] {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               object["error"] == nil else {
-            throw AgentBridgeError.providerFailed(.local, "本機模型清單格式無效。")
+            throw AgentBridgeError.providerFailed(.local, "The local model list format is invalid.")
         }
         let records: [[String: Any]]
         switch backend {
         case .ollama:
             guard let values = object["models"] as? [[String: Any]] else {
-                throw AgentBridgeError.providerFailed(.local, "Ollama 模型清單缺少 models 陣列。")
+                throw AgentBridgeError.providerFailed(.local, "The Ollama model list is missing the models array.")
             }
             records = values
         case .openAICompatible:
             guard let values = object["data"] as? [[String: Any]] else {
-                throw AgentBridgeError.providerFailed(.local, "OpenAI 相容模型清單缺少 data 陣列。")
+                throw AgentBridgeError.providerFailed(.local, "The OpenAI-compatible model list is missing the data array.")
             }
             records = values
         }
         guard records.count <= 2_048 else {
-            throw AgentBridgeError.providerFailed(.local, "本機模型清單超過 2048 個項目。")
+            throw AgentBridgeError.providerFailed(.local, "The local model list exceeds 2048 items.")
         }
         var result: [LocalModelDescriptor] = []
         var seen: Set<String> = []
@@ -565,17 +565,17 @@ public final class LocalModelClient: @unchecked Sendable {
 
     private static func requireLocalModelName(_ value: String) throws {
         guard !isRemoteModelTag(value) else {
-            throw AgentBridgeError.invalidInput("此模型標籤表示雲端、託管或遠端模型；本機模式拒絕使用它。")
+            throw AgentBridgeError.invalidInput("This model tag indicates a cloud, hosted or remote model; local mode refuses to use it.")
         }
         guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               value.utf8.count <= 256,
               !value.contains("\0") else {
-            throw AgentBridgeError.invalidInput("本機模型名稱無效。")
+            throw AgentBridgeError.invalidInput("The local model name is invalid.")
         }
     }
 
     private static func httpError(statusCode: Int) -> AgentBridgeError {
-        .providerFailed(.local, "本機模型伺服器回傳 HTTP \(statusCode)；未接受錯誤回應內容。")
+        .providerFailed(.local, "The local model server returned HTTP \(statusCode); the error response body was not accepted.")
     }
 
     private static func makeSession() -> URLSession {

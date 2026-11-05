@@ -244,7 +244,7 @@ final class UsageStatisticsTests: XCTestCase {
             guard case .dollarLimitReached(let scope, let limit, let committed) = error else {
                 return XCTFail("Unexpected API dollar cap error: \(error)")
             }
-            XCTAssertEqual(scope, "UTC 每日")
+            XCTAssertEqual(scope, "UTC daily")
             XCTAssertEqual(limit, 1)
             XCTAssertEqual(committed, 2)
         }
@@ -286,7 +286,7 @@ final class UsageStatisticsTests: XCTestCase {
             guard case .dollarLimitReached(let scope, let limit, let committed) = error else {
                 return XCTFail("Unexpected API dollar cap error: \(error)")
             }
-            XCTAssertEqual(scope, "UTC 每日")
+            XCTAssertEqual(scope, "UTC daily")
             XCTAssertEqual(limit, 0.01)
             XCTAssertEqual(committed, 0.02)
         }
@@ -348,7 +348,7 @@ final class UsageStatisticsTests: XCTestCase {
             sessionID: fixture.session.id,
             actualUSD: 1.25,
             explicitlyConfirmed: true
-        )) { XCTAssertEqual($0 as? AgentBridgeError, .sessionMismatch("所選帳戶不是此工作階段綁定的 Claude 帳戶。")) }
+        )) { XCTAssertEqual($0 as? AgentBridgeError, .sessionMismatch("The selected account is not the Claude account bound to this session.")) }
 
         let codexSession = SessionRecord(
             provider: .codex,
@@ -364,7 +364,7 @@ final class UsageStatisticsTests: XCTestCase {
             sessionID: codexSession.id,
             actualUSD: 1.25,
             explicitlyConfirmed: true
-        )) { XCTAssertEqual($0 as? AgentBridgeError, .sessionMismatch("手動費用結算只適用於 Claude API 工作階段。")) }
+        )) { XCTAssertEqual($0 as? AgentBridgeError, .sessionMismatch("Manual charge settlement is available only for Claude API sessions.")) }
 
         let missingSessionID = UUID()
         XCTAssertThrowsError(try fixture.service.reconcileAPIUsageFromProviderBill(
@@ -386,7 +386,7 @@ final class UsageStatisticsTests: XCTestCase {
             sessionID: fixture.session.id,
             actualUSD: 1.25,
             explicitlyConfirmed: true
-        )) { XCTAssertEqual($0 as? AgentBridgeError, .sessionMismatch("這個工作階段已在其他視窗或終端機執行。")) }
+        )) { XCTAssertEqual($0 as? AgentBridgeError, .sessionMismatch("This session is already running in another window or terminal.")) }
         XCTAssertEqual(try fixture.budget().reservedUSD, 4)
         XCTAssertTrue(try fixture.window().hasUnresolvedCall)
         withExtendedLifetime(activeRunLease) {}

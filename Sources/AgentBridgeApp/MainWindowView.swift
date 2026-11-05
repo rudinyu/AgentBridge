@@ -53,15 +53,15 @@ struct MainWindowView: View {
                 .interactiveDismissDisabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminal.terminalLaunch != nil)
         }
         .alert("AgentBridge", isPresented: Binding(get: { model.errorMessage != nil && !model.setupWizard.isPresented }, set: { if !$0 { model.errorMessage = nil } })) {
-            Button("好", role: .cancel) { model.errorMessage = nil }
+            Button("OK", role: .cancel) { model.errorMessage = nil }
         } message: {
             Text(model.localized(model.errorMessage ?? ""))
         }
-        .alert("清除此專案的共用記憶？", isPresented: $model.confirmClearMemory) {
-            Button("清除記憶", role: .destructive) { model.clearSharedMemory() }
-            Button("取消", role: .cancel) { model.confirmClearMemory = false }
+        .alert("Clear shared memory for this project?", isPresented: $model.confirmClearMemory) {
+            Button("Clear Memory", role: .destructive) { model.clearSharedMemory() }
+            Button("Cancel", role: .cancel) { model.confirmClearMemory = false }
         } message: {
-            Text("這會刪除此來源儲存庫與固定提交版本的對話記憶與備註。provider 原生工作階段不會被修改。")
+            Text("This deletes chat memory and notes for this source repository and pinned commit. Native provider sessions will not be changed.")
         }
         .fileImporter(
             isPresented: Bindable(model.extensions).isImportingExtensionDescriptor,
@@ -86,17 +86,17 @@ struct MainWindowView: View {
             Image(systemName: "externaldrive.badge.plus")
                 .font(.system(size: 42))
                 .foregroundStyle(.secondary)
-            Text("選擇工作區資料根目錄")
+            Text("Choose workspace data root")
                 .font(.title2.weight(.semibold))
-            Text("首次使用前，請選擇或建立一個資料夾。AgentBridge 會在裡面保存隔離工作區和共用記憶；App 設定、獨立帳戶的 CLI profile 資料夾與用量帳本仍留在 Application Support。內建帳戶沿用 provider CLI 原有的登入資料夾。")
+            Text("Choose or create a folder before first use. AgentBridge stores isolated workspaces and shared memory there; app settings, dedicated CLI profile folders for separate accounts, and usage ledgers stay in Application Support. Built-in accounts continue to use their provider CLI's existing login folder.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 520)
-            Button("選擇或建立資料根目錄…") { model.chooseWorkspaceRoot() }
+            Button("Choose or create data root…") { model.chooseWorkspaceRoot() }
                 .buttonStyle(.borderedProminent)
                 .disabled(model.isChangingWorkspaceRoot)
             if model.isChangingWorkspaceRoot {
-                ProgressView("正在安全複製現有工作區與共用記憶…")
+                ProgressView("Safely copying existing workspaces and shared memory…")
             }
             Text(model.localized(model.status))
                 .font(.caption)
@@ -116,9 +116,9 @@ struct MainWindowView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Picker("語言", selection: $model.appLanguage) {
+            Picker("Language", selection: $model.appLanguage) {
                 Text("English").tag(AppLanguage.english)
-                Text("繁體中文").tag(AppLanguage.traditionalChinese)
+                Text("Traditional Chinese").tag(AppLanguage.traditionalChinese)
             }
             .pickerStyle(.menu)
             Button(model.localized("Setup Wizard")) { model.setupWizard.open() }
@@ -132,10 +132,10 @@ struct MainWindowView: View {
                 }
             }
             if model.chats.selectedDiscussionID == nil && !model.isLocalProviderContext {
-                Button("檢查登入與方案") { model.checkAuthentication() }
+                Button("Check Sign-in and Plan") { model.checkAuthentication() }
                     .disabled(model.hasActiveAutonomousWorkflow || model.chats.hasActiveDiscussionOperation)
             }
-            Button("更新") { model.refresh() }
+            Button("Refresh") { model.refresh() }
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
     }

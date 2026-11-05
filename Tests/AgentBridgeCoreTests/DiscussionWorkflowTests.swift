@@ -490,7 +490,7 @@ final class DiscussionWorkflowTests: XCTestCase {
             )
             XCTFail("A handoff that cannot fit the bounded shared-memory document must stop before project creation.")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("共享記憶") || error.localizedDescription.contains("Shared memory"))
+            XCTAssertTrue(error.localizedDescription.lowercased().contains("memory"))
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
         XCTAssertTrue(try fixture.service.sessions().isEmpty)

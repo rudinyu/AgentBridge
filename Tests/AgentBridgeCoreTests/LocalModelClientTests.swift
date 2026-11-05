@@ -191,7 +191,7 @@ final class LocalModelClientTests: XCTestCase {
             }
             XCTAssertTrue(message.contains("4096"))
             XCTAssertTrue(message.contains("8192"))
-            XCTAssertTrue(message.contains("上下文") || message.lowercased().contains("context"))
+            XCTAssertTrue(message.lowercased().contains("context"))
         }
         XCTAssertEqual(server.requests.map(\.method), ["GET"])
         XCTAssertFalse(server.requests.contains { $0.method == "POST" })

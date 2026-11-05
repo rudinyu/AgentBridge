@@ -139,7 +139,7 @@ public final class DiscussionStore: @unchecked Sendable {
         catch { throw AgentBridgeError.persistence("Could not estimate discussion completion storage.") }
         let worstCaseAssistantReserve = Self.maximumTextBytes * 6 + 2_048
         guard data.count <= Self.maximumRecordBytes - worstCaseAssistantReserve else {
-            throw AgentBridgeError.persistence("討論保存空間不足；已保留原逐字稿，請另開討論後再送出。")
+            throw AgentBridgeError.persistence("Discussion storage is full; the original transcript is kept. Start a new discussion and send again.")
         }
     }
 

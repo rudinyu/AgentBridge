@@ -54,7 +54,7 @@ struct SetupWizardView: View {
             Spacer()
             Picker(model.localized("Language"), selection: $model.appLanguage) {
                 Text("English").tag(AppLanguage.english)
-                Text("繁體中文").tag(AppLanguage.traditionalChinese)
+                Text("Traditional Chinese").tag(AppLanguage.traditionalChinese)
             }
             .pickerStyle(.menu)
             if model.workspaceRootIsConfigured {

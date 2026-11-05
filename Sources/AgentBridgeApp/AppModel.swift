@@ -33,7 +33,7 @@ final class AppModel {
     var codexPath = ""
     var claudePath = ""
     var prompt = ""
-    var status = "就緒。"
+    var status = "Ready."
     var errorMessage: String?
     var outputText = ""
     var isRunning = false
@@ -116,7 +116,7 @@ final class AppModel {
         chats.loadSavedPreferences()
         do {
             guard try RuntimePaths.workspaceRootConfiguration() != nil else {
-                status = "請選擇工作區資料根目錄以開始。"
+                status = "Choose a workspace data root to get started."
                 setupWizard.initialize(workspaceRootConfigured: false)
                 return
             }
@@ -223,7 +223,7 @@ final class AppModel {
     func profileName(for session: SessionRecord) -> String {
         let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
         return accountProfiles[session.provider]?.first(where: { $0.id == profileID })?.name
-            ?? (session.provider == .local ? localized("Local account") : localized("目前本機登入"))
+            ?? (session.provider == .local ? localized("Local account") : localized("Current local login"))
     }
 
     func boundProfile(for session: SessionRecord) -> AccountProfile? {
@@ -239,7 +239,7 @@ final class AppModel {
             if loadedSettings.defaultProvider == .codex, loadedSettings.usageMode == .api {
                 loadedSettings.usageMode = .subscription
                 try service.saveSettings(loadedSettings)
-                status = "Codex 使用官方 CLI 訂閱登入；已修正舊的不相容設定。"
+                status = "Codex uses its official CLI subscription sign-in. An older incompatible setting was corrected."
                 clearAPIAuthorization()
             }
             let localModelDraft = settings.localModel
@@ -364,8 +364,8 @@ final class AppModel {
             try service.saveSettings(settings)
             terminal.providerUsageReport = nil
             status = provider == .codex && previous.usageMode == .api
-                ? "已切換至 Codex，並儲存為官方 CLI 訂閱登入模式。"
-                : "新工作階段預設助理已儲存。"
+                ? "Switched to Codex and saved official CLI subscription mode."
+                : "The default assistant for new sessions was saved."
             usage.loadedUsageControlsScopeKey = nil
             refresh(forceUsageStatistics: true)
             if let anchor = selectedSession { selectOrCreateSession(for: provider, anchoredTo: anchor) }
@@ -391,7 +391,7 @@ final class AppModel {
             updateBinaryPathsInSettings()
             try service.saveSettings(settings)
             if usageMode == .api { terminal.providerUsageReport = nil }
-            status = "Claude 使用模式已儲存。"
+            status = "Claude usage mode was saved."
             refresh(forceUsageStatistics: true)
             if let anchor = selectedSession { selectOrCreateSession(for: .claude, anchoredTo: anchor) }
         } catch {
@@ -515,8 +515,8 @@ final class AppModel {
 
     func chooseRepository() {
         let panel = NSOpenPanel()
-        panel.title = localized("選擇 Git 儲存庫根目錄")
-        panel.message = localized("AgentBridge 會複製目前提交版本到私有隔離工作區。來源的未提交變更不會複製。")
+        panel.title = localized("Choose a Git Repository Root")
+        panel.message = localized("AgentBridge copies the current commit into a private isolated workspace. Uncommitted source changes are not copied.")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
@@ -528,8 +528,8 @@ final class AppModel {
               !terminal.terminalRunning, terminal.terminalLaunch == nil, !hasActiveAutonomousWorkflow,
               !chats.hasActiveDiscussionOperation else { return }
         let panel = NSOpenPanel()
-        panel.title = localized("選擇工作區資料根目錄")
-        panel.message = localized("AgentBridge 會在此資料夾保存隔離工作區與共用記憶；私人設定和用量資料仍保留在 Application Support。")
+        panel.title = localized("Choose workspace data root")
+        panel.message = localized("AgentBridge stores isolated workspaces and shared memory in this folder. Private settings and usage data stay in Application Support.")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
@@ -537,7 +537,7 @@ final class AppModel {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         isChangingWorkspaceRoot = true
-        status = localized("正在安全複製現有工作區與共用記憶…")
+        status = localized("Safely copying existing workspaces and shared memory…")
         Task {
             do {
                 let privateRoot = try RuntimePaths.applicationSupportRoot()
@@ -549,7 +549,7 @@ final class AppModel {
                 workspaceRootPath = selected.path
                 errorMessage = nil
                 setupWizard.errorMessage = nil
-                status = localized("工作區資料根目錄已更新；舊資料仍保留在原位置。")
+                status = localized("Workspace data root updated. Existing data remains at its previous location.")
                 refresh(forceUsageStatistics: true)
                 if setupWizard.cliPath.isEmpty {
                     setupWizard.cliPath = UserDefaults.standard.string(forKey: SetupWizardModel.cliPathPreferenceKey(for: setupWizard.provider))
@@ -580,7 +580,7 @@ final class AppModel {
         do {
             updateBinaryPathsInSettings()
             try service.saveSettings(settings)
-            status = "設定已儲存。"
+            status = "Settings saved."
             refresh()
         } catch {
             errorMessage = error.localizedDescription
@@ -592,7 +592,7 @@ final class AppModel {
             errorMessage = localized("Provider checks are paused while a discussion request is active.")
             return
         }
-        guard let profile = selectedAccountProfile else { errorMessage = "找不到所選帳戶設定。"; return }
+        guard let profile = selectedAccountProfile else { errorMessage = "The selected account settings could not be found."; return }
         checkAuthentication(for: profile)
     }
 
@@ -615,7 +615,7 @@ final class AppModel {
         }
         let provider = profile.provider
         let requestedCLIPath = normalizedCLIPath(settings.binaryPath(for: provider))
-        status = "正在檢查官方 CLI 登入狀態…"
+        status = "Checking official CLI sign-in status…"
         Task {
             do {
                 let assessment = try await service.checkAuthentication(provider: provider, profileID: profile.id)
@@ -650,7 +650,7 @@ final class AppModel {
                 } else {
                     reportOperationError(error.localizedDescription)
                 }
-                status = "登入檢查失敗。"
+                status = "Sign-in check failed."
             }
         }
     }
@@ -666,17 +666,17 @@ final class AppModel {
     func createSession() {
         guard let service else { return }
         let provider = settings.defaultProvider
-        guard !repositoryPath.isEmpty else { errorMessage = "請先選擇 Git 儲存庫。"; return }
+        guard !repositoryPath.isEmpty else { errorMessage = "Select a Git repository first."; return }
         guard provider != .local || requestedAccessMode == .readOnly else {
             errorMessage = localized("Local project chat only supports read-only sessions.")
             return
         }
         guard provider == .local || requestedAccessMode != .interactiveManualApproval || settings.usageMode == .subscription else {
-            errorMessage = "互動模式目前只支援訂閱登入。"
+            errorMessage = "Interactive mode currently supports subscription sign-in only."
             return
         }
         guard provider == .local || requestedAccessMode != .isolatedChanges || settings.usageMode == .subscription else {
-            errorMessage = "隔離變更模式只支援訂閱登入；Claude API 只能建立唯讀工作階段。"
+            errorMessage = "Isolated-changes mode supports only the subscription sign-in; Claude API can create read-only sessions only."
             return
         }
         do {
@@ -685,45 +685,45 @@ final class AppModel {
             errorMessage = error.localizedDescription
             return
         }
-        status = "正在建立提交版本的隔離工作區…"
+        status = "Creating an isolated workspace for the pinned commit…"
         let access = requestedAccessMode
         Task {
             do {
                 let session = try await service.createSession(sourcePath: repositoryPath, provider: provider, accessMode: access)
-                status = session.sourceWasDirty ? "工作階段已建立。來源未提交變更已排除。" : "工作階段已建立。"
+                status = session.sourceWasDirty ? "Session created. Uncommitted source changes were excluded." : "Session created."
                 refresh()
                 isProjectConversationActive = true
                 selectedSessionID = session.id
                 selectedSessionDidChange()
             } catch {
                 errorMessage = error.localizedDescription
-                status = "無法建立工作階段。"
+                status = "Could not create the session."
             }
         }
     }
 
     func runPrompt() {
-        guard let service, let session = selectedSession else { errorMessage = "請選擇工作階段。"; return }
+        guard let service, let session = selectedSession else { errorMessage = "Select a session."; return }
         guard session.policy.accessMode == .readOnly else {
             errorMessage = session.policy.accessMode == .isolatedChanges
-                ? "隔離變更工作階段請先建立、檢視並核准工作計畫，再執行變更。"
-                : "原生互動工作階段請從終端機面板啟動。"
+                ? "For an isolated-changes session, create, review and approve a work plan before running changes."
+                : "Start native interactive sessions from the Terminal panel."
             return
         }
         guard canStartAnotherRun else {
             errorMessage = hasActiveAutonomousWorkflow
                 ? localized("Manual provider runs are paused while an autonomous workflow is active.")
-                : "最多可同時執行三個不同工作階段；目前工作階段也不能重複執行。"
+                : "Up to three different sessions can run at once; the current session also cannot run twice."
             return
         }
         var apiRequest: APIUsageRequest?
         if settings.usageMode == .api && session.provider != .local {
             guard isClaudeAPIRunContext else {
-                errorMessage = "Claude API 只能用於 Claude 預設助理與 Claude 工作階段。"
+                errorMessage = "Claude API is available only with Claude selected as the default assistant and in a Claude session."
                 return
             }
             guard let budget = Double(apiBudget), budget.isFinite, budget > 0, !apiKey.isEmpty, confirmAPIRun else {
-                errorMessage = "API 模式需要單次預算、API 金鑰，以及明確確認。"
+                errorMessage = "API mode requires a per-run budget, an API key, and explicit confirmation."
                 return
             }
             apiRequest = APIUsageRequest(requestedBudgetUSD: budget, explicitlyAuthorized: true, apiKey: apiKey)
@@ -737,7 +737,7 @@ final class AppModel {
         outputText = ""
         status = session.provider == .local
             ? localized("Sending to the configured local model…")
-            : (settings.usageMode == .api ? "正在檢查並保留預算…" : "正在執行…")
+            : (settings.usageMode == .api ? "Checking and reserving the budget…" : "Running…")
         apiKey = ""
         confirmAPIRun = false
         Task { @MainActor [self] in
@@ -757,18 +757,18 @@ final class AppModel {
                     }
                 }
                 outputText = output.text
-                status = "回應完成。"
+                status = "Response finished."
                 prompt = ""
             } catch {
                 errorMessage = error.localizedDescription
-                status = "執行結束。"
+                status = "Run ended."
             }
         }
     }
 
     func runApprovedChanges() {
         guard let service, let session = selectedSession, let plan = session.changePlan else {
-            errorMessage = "請先保存並明確核准目前的工作計畫。"
+            errorMessage = "Save and explicitly approve the current work plan first."
             return
         }
         guard changes.selectedChangePlanDraftMatchesSaved else {
@@ -776,22 +776,22 @@ final class AppModel {
             return
         }
         guard session.approvedChangePlanDigest == plan.reviewDigest else {
-            errorMessage = "請先保存並明確核准目前的工作計畫。"
+            errorMessage = "Save and explicitly approve the current work plan first."
             return
         }
         guard settings.usageMode == .subscription else {
-            errorMessage = "隔離變更只支援官方 CLI 訂閱登入。"
+            errorMessage = "Isolated changes support only the official CLI subscription sign-in."
             return
         }
         guard canStartAnotherRun else {
             errorMessage = hasActiveAutonomousWorkflow
                 ? localized("Manual provider runs are paused while an autonomous workflow is active.")
-                : "最多可同時執行三個不同工作階段；目前工作階段也不能重複執行。"
+                : "Up to three different sessions can run at once; the current session also cannot run twice."
             return
         }
         let promptValue = prompt
         guard !promptValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            errorMessage = "請輸入要交給助理的變更要求。"
+            errorMessage = "Enter the change request for the assistant."
             return
         }
         let cancellation = CancellationFlag()
@@ -799,7 +799,7 @@ final class AppModel {
         activeRunSessionID = session.id
         isRunning = true
         errorMessage = nil
-        status = "正在隔離工作區執行已核准的變更…"
+        status = "Running the approved changes in the isolated workspace…"
         Task { @MainActor [self] in
             defer {
                 activeRunFlags.removeValue(forKey: session.id)
@@ -823,10 +823,10 @@ final class AppModel {
                 }
                 outputText = output.text
                 prompt = ""
-                status = "CLI 回報變更執行完成；請檢視完整檔案差異。"
+                status = "The CLI reported the change run finished; review the full file diff."
             } catch {
                 errorMessage = error.localizedDescription
-                status = "變更執行結束。"
+                status = "The change run ended."
             }
         }
     }
@@ -839,10 +839,10 @@ final class AppModel {
             return
         }
         guard !isRunning || activeRunFlags[session.id] == nil else {
-            errorMessage = "此工作階段目前已有執行中的工作。"
+            errorMessage = "This session already has work in progress."
             return
         }
-        guard activeRunFlags.count < 3 else { errorMessage = "最多可同時執行三項工作。"; return }
+        guard activeRunFlags.count < 3 else { errorMessage = "Up to three tasks can run at once."; return }
         let executable = custom ? URL(fileURLWithPath: changes.customVerifierPath) : nil
         let arguments = custom ? changes.customVerifierArgumentsText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) : []
         let cancellation = CancellationFlag()
@@ -870,8 +870,8 @@ final class AppModel {
                 )
                 changes.verificationResult = result
                 status = result.succeeded
-                    ? "驗證 CLI 回報成功；退出代碼 0，耗時 \(String(format: "%.2f", result.durationSeconds)) 秒。"
-                    : "驗證未通過或未完成；請查看 CLI 輸出與活動記錄。"
+                    ? "The verification CLI reported success; exit code 0, took \(String(format: "%.2f", result.durationSeconds)) s."
+                    : "Verification did not pass or did not finish; check the CLI output and the activity log."
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -892,7 +892,7 @@ final class AppModel {
                 includeNotes: includeMemoryNotes
             )
             projectMemoryHandoffs = try service.projectMemoryHandoffs(sessionID: source.id)
-            status = "已建立明確記憶交接：\(handoff.sourceCommit.prefix(12)) → \(handoff.targetCommit.prefix(12))。"
+            status = "Created an explicit memory handoff: \(handoff.sourceCommit.prefix(12)) → \(handoff.targetCommit.prefix(12))."
             selectedMemoryTurnIDs = []
             includeMemoryNotes = false
         } catch { errorMessage = error.localizedDescription }
@@ -1021,7 +1021,7 @@ final class AppModel {
         activeRunFlags[id]?.cancel()
         do {
             try service?.cancel(sessionID: id)
-            status = "已送出取消請求…"
+            status = "Cancellation request sent…"
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1048,13 +1048,13 @@ final class AppModel {
         }) {
             selectedSessionID = match.id
             repositoryPath = match.sourceRepositoryPath
-            status = "已切換至同一專案的 \(provider.rawValue.capitalized) 工作階段；共用記憶保持不變。"
+            status = "Switched to the same-project \(provider.rawValue.capitalized) session; shared memory is unchanged."
             return
         }
         repositoryPath = anchor.sourceRepositoryPath
         requestedAccessMode = access
         isSwitchingTarget = true
-        status = "正在為所選助理與帳戶建立同一專案的隔離工作區…"
+        status = "Creating an isolated workspace for this project and the selected assistant and account…"
         Task {
             defer { isSwitchingTarget = false }
             do {
@@ -1068,11 +1068,11 @@ final class AppModel {
                 selectedSessionID = session.id
                 refreshSelectedEvents()
                 status = session.snapshotCommit == anchor.snapshotCommit
-                    ? "已切換工作階段；同一提交版本的共用記憶可由已同意的帳戶載入。"
-                    : "新工作階段已建立於目前提交版本；提交版本改變時會使用不同的共用記憶。"
+                    ? "Session switched. Accounts that consented can load shared memory for the same commit."
+                    : "A new session was created for the current commit. A different commit uses separate shared memory."
             } catch {
                 errorMessage = error.localizedDescription
-                status = "無法切換工作階段。"
+                status = "Could not switch sessions."
             }
         }
     }
@@ -1109,7 +1109,7 @@ final class AppModel {
         guard let service else { return }
         let provider = settings.defaultProvider
         let name = newProfileName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { errorMessage = "請為新帳戶輸入名稱。"; return }
+        guard !name.isEmpty else { errorMessage = "Enter a name for the new account."; return }
         let anchor = selectedSession
         do {
             let profile = try service.createAccountProfile(name: name, provider: provider, allowsSharedMemory: newProfileAllowsSharedMemory)
@@ -1140,7 +1140,7 @@ final class AppModel {
         do {
             try service.setAccountSharedMemoryAllowed(id: profile.id, allowed: allowed)
             accountProfiles[settings.defaultProvider] = try service.accountProfiles(provider: settings.defaultProvider)
-            status = allowed ? "已允許此帳戶載入與保存專案共用記憶。" : "此帳戶不會載入或保存專案共用記憶。"
+            status = allowed ? "This account can now load and save shared project memory." : "This account will not load or save shared project memory."
             refreshSelectedEvents()
         } catch {
             errorMessage = error.localizedDescription
@@ -1152,7 +1152,7 @@ final class AppModel {
         do {
             try service.setSharedMemoryNotes(sessionID: session.id, notes: memoryNotes)
             memorySnapshot = try service.sharedMemory(sessionID: session.id)
-            status = "共用記憶備註已儲存。"
+            status = "Shared memory notes saved."
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1165,7 +1165,7 @@ final class AppModel {
             memorySnapshot = try service.sharedMemory(sessionID: session.id)
             memoryNotes = memorySnapshot?.notes ?? ""
             confirmClearMemory = false
-            status = "此專案與提交版本的共用記憶已清除。"
+            status = "Shared memory for this project and commit was cleared."
         } catch {
             errorMessage = error.localizedDescription
         }

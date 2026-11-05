@@ -199,7 +199,7 @@ final class ExtensionsModel {
             _ = try app.service?.importExtensionDescriptor(descriptor, source: source, sourceReference: url.path)
             extensionDescriptors = try app.service?.extensionDescriptors() ?? []
             selectedExtensionID = descriptor.id
-            app.status = "已匯入惰性擴充功能中繼資料；未執行任何指令或腳本。"
+            app.status = "Imported inert extension metadata; no command or script was run."
         } catch { app.errorMessage = error.localizedDescription }
     }
 
@@ -216,7 +216,7 @@ final class ExtensionsModel {
                 allowedRelativePaths: paths,
                 allowedHosts: hosts
             )
-            app.status = "已保存此專案的窄範圍政策中繼資料；擴充功能仍未啟用或執行。"
+            app.status = "Saved narrow-scope policy metadata for this project; the extension is still not enabled or run."
             app.refresh()
         } catch { app.errorMessage = error.localizedDescription }
     }
@@ -226,7 +226,7 @@ final class ExtensionsModel {
         do {
             let projectID = try service.extensionProjectID(sessionID: session.id)
             _ = try service.revokeExtensionPermissions(extensionID: selectedExtensionID, projectID: projectID)
-            app.status = "已撤銷此專案的擴充功能權限政策。"
+            app.status = "Revoked this project's extension permission policy."
             app.refresh()
         } catch { app.errorMessage = error.localizedDescription }
     }

@@ -41,7 +41,7 @@ public struct LocalModelSettings: Codable, Equatable, Sendable {
               (1_024...131_072).contains(contextWindowTokens),
               (1...32_768).contains(maxOutputTokens),
               contextWindowTokens - maxOutputTokens > 512 else {
-            throw AgentBridgeError.invalidInput("本機模型設定無效；請檢查端點、模型名稱、上下文視窗與輸出上限。")
+            throw AgentBridgeError.invalidInput("Local model settings are invalid. Check the endpoint, model name, context window, and output limit.")
         }
     }
 }
@@ -465,24 +465,24 @@ public enum AgentBridgeError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .invalidInput(let message): message
-        case .missingExecutable(let provider): "找不到 \(provider.rawValue) CLI，請在設定中指定執行檔路徑。"
-        case .unsupportedAPIUsage: "AgentBridge 0.5.0 不支援這項 API 付費操作；本次未呼叫模型服務。"
-        case .unauthenticated(let provider, let reason): "\(provider.rawValue) 沒有可確認的訂閱登入：\(reason)"
-        case .unsupportedProviderOutput(let provider): "\(provider.rawValue) CLI 回傳無法確認成功的輸出格式。"
-        case .providerFailed(let provider, let reason): "\(provider.rawValue) 執行失敗：\(reason)"
-        case .sessionNotFound(let id): "找不到工作階段 \(id.uuidString)。"
+        case .missingExecutable(let provider): "Could not find \(provider.rawValue) CLI. Specify its executable path in Settings."
+        case .unsupportedAPIUsage: "AgentBridge 0.5.0 does not support this paid API operation. No model service was called."
+        case .unauthenticated(let provider, let reason): "\(provider.rawValue)  has no confirmed subscription sign-in: \(reason)"
+        case .unsupportedProviderOutput(let provider): "\(provider.rawValue)  CLI returned an output format that could not be confirmed as successful."
+        case .providerFailed(let provider, let reason): "\(provider.rawValue) run failed: \(reason)"
+        case .sessionNotFound(let id): "Could not find session \(id.uuidString)."
         case .sessionMismatch(let message): message
-        case .workspaceChanged: "隔離工作區已改變。請建立新的工作階段以固定新的提交版本。"
-        case .changePlanRequired: "開始隔離變更前，請先檢視並核准目前工作計畫。"
-        case .invalidChangePlan(let message): "工作計畫無效：\(message)"
-        case .sourceBaseConflict(let expected, let actual): "來源儲存庫已改變，無法套用這份變更。工作階段基準：\(expected.prefix(12))；來源目前版本：\(actual.prefix(12))。"
-        case .verificationRequired: "套用或接受變更前，請先成功完成工作區驗證。"
-        case .verificationCommandRejected(let message): "驗證指令遭拒：\(message)"
-        case .processTimedOut: "執行逾時，已停止子程序。"
-        case .processCancelled: "執行已取消。"
-        case .processLaunchFailed(let message): "無法啟動子程序：\(message)"
-        case .persistence(let message): "無法保存工作階段資料：\(message)"
-        case .git(let message): "建立 Git 隔離工作區失敗：\(message)"
+        case .workspaceChanged: "The isolated workspace has changed. Create a new session to pin the new commit."
+        case .changePlanRequired: "Review and approve the current work plan before starting isolated changes."
+        case .invalidChangePlan(let message): "Invalid work plan: \(message)"
+        case .sourceBaseConflict(let expected, let actual): "The source repository has changed, so this change cannot be applied. Session base: \(expected.prefix(12)); current source version: \(actual.prefix(12))."
+        case .verificationRequired: "Complete workspace verification successfully before applying or accepting changes."
+        case .verificationCommandRejected(let message): "Verification command rejected: \(message)"
+        case .processTimedOut: "The run timed out and the child process was stopped."
+        case .processCancelled: "The run was cancelled."
+        case .processLaunchFailed(let message): "Could not launch the child process: \(message)"
+        case .persistence(let message): "Could not save session data: \(message)"
+        case .git(let message): "Could not create the isolated Git workspace: \(message)"
         }
     }
 }

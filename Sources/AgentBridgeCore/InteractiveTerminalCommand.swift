@@ -7,7 +7,7 @@ public enum InteractiveTerminalCommand {
 
     public static func script(executablePath: String, sessionID: UUID) throws -> String {
         guard executablePath.hasPrefix("/"), !executablePath.contains("\0") else {
-            throw AgentBridgeError.invalidInput("互動 CLI 必須使用絕對執行檔路徑。")
+            throw AgentBridgeError.invalidInput("The interactive CLI must use an absolute executable path.")
         }
         let binary = Self.shellQuote(executablePath)
         let id = Self.shellQuote(sessionID.uuidString.lowercased())

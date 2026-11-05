@@ -88,13 +88,13 @@ public enum RuntimeEnvironment {
         searchPath: String = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     ) throws -> URL {
         guard provider != .local else {
-            throw AgentBridgeError.sessionMismatch("本機模型使用直接本機 HTTP 連線，不會啟動 CLI。")
+            throw AgentBridgeError.sessionMismatch("Local models use a direct local HTTP connection and do not launch a CLI.")
         }
         let expected = provider.rawValue
         if let configuredPath, !configuredPath.isEmpty {
             let url = URL(fileURLWithPath: configuredPath).standardizedFileURL
             guard url.lastPathComponent == expected, FileManager.default.isExecutableFile(atPath: url.path) else {
-                throw AgentBridgeError.invalidInput("\(expected) 執行檔路徑必須指向可執行的 \(expected) 檔案。")
+                throw AgentBridgeError.invalidInput("\(expected) executable path must point to an executable \(expected) file.")
             }
             return url
         }
@@ -453,7 +453,7 @@ public enum ProviderCommandBuilder {
 
     private static func validateResumeID(_ value: String) throws {
         guard UUID(uuidString: value) != nil else {
-            throw AgentBridgeError.sessionMismatch("供應商工作階段 ID 格式無效；為避免參數注入，已拒絕續用。")
+            throw AgentBridgeError.sessionMismatch("The provider session ID format is invalid. Resume was rejected to prevent argument injection.")
         }
     }
 
@@ -466,7 +466,7 @@ public enum ProviderCommandBuilder {
     ) throws -> [String] {
         let cents = (budgetUSD * 100).rounded()
         guard budgetUSD.isFinite, budgetUSD >= 0.01, budgetUSD <= 140, abs((cents / 100) - budgetUSD) < 0.000_000_1 else {
-            throw AgentBridgeError.invalidInput("Claude API 單次上限必須介於 US$0.01 至 US$140，最多兩位小數。")
+            throw AgentBridgeError.invalidInput("The Claude API per-run cap must be between US$0.01 and US$140 with at most two decimal places.")
         }
         let formattedBudget = String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), budgetUSD)
         let mcpConfiguration = try claudeMCPConfiguration(
@@ -611,29 +611,29 @@ public enum ProviderOutputParser {
         switch provider {
         case .codex:
             switch type {
-            case "thread.started": return "Codex 已開始工作。"
-            case "turn.started": return "Codex 正在處理要求。"
-            case "item.started": return "Codex 正在查看工作區。"
-            case "turn.completed": return "Codex 已完成回應。"
-            case "turn.failed", "error", "turn_error": return "Codex 回報執行錯誤。"
+            case "thread.started": return "Codex started working."
+            case "turn.started": return "Codex is processing the request."
+            case "item.started": return "Codex is inspecting the workspace."
+            case "turn.completed": return "Codex completed the response."
+            case "turn.failed", "error", "turn_error": return "Codex reported a run error."
             default: return nil
             }
         case .claude:
             switch type {
-            case "system": return "Claude 已開始互動。"
+            case "system": return "Claude started the interaction."
             case "stream_event":
                 guard let body = event["event"] as? [String: Any], let eventType = body["type"] as? String else { return nil }
                 if eventType == "content_block_delta",
                    let delta = body["delta"] as? [String: Any], delta["type"] as? String == "text_delta" {
-                    return "Claude 正在撰寫回應。"
+                    return "Claude is writing a response."
                 }
                 if eventType == "content_block_start",
                    let block = body["content_block"] as? [String: Any], block["type"] as? String == "tool_use" {
-                    return "Claude 正在使用受限工具。"
+                    return "Claude is using a restricted tool."
                 }
                 return nil
-            case "result": return "Claude 已完成回應。"
-            case "error": return "Claude 回報執行錯誤。"
+            case "result": return "Claude completed the response."
+            case "error": return "Claude reported a run error."
             default: return nil
             }
         case .local:
@@ -674,9 +674,9 @@ public enum ProviderOutputParser {
             case "turn.completed":
                 completed = true
             case "turn.failed", "error", "turn_error":
-                throw AgentBridgeError.providerFailed(.codex, "服務回報工作階段失敗。")
+                throw AgentBridgeError.providerFailed(.codex, "The service reported that the session failed.")
             default:
-                if event["error"] != nil { throw AgentBridgeError.providerFailed(.codex, "服務回報錯誤。") }
+                if event["error"] != nil { throw AgentBridgeError.providerFailed(.codex, "The service reported an error.") }
             }
         }
         guard completed, !finalText.isEmpty else { throw AgentBridgeError.unsupportedProviderOutput(.codex) }
@@ -699,17 +699,17 @@ public enum ProviderOutputParser {
             switch type {
             case "result":
                 if event["is_error"] as? Bool == true {
-                    throw AgentBridgeError.providerFailed(.claude, "服務回報工作階段錯誤。")
+                    throw AgentBridgeError.providerFailed(.claude, "The service reported a session error.")
                 }
                 let subtype = event["subtype"] as? String
-                guard subtype == "success" else { throw AgentBridgeError.providerFailed(.claude, "服務回報工作階段失敗。") }
+                guard subtype == "success" else { throw AgentBridgeError.providerFailed(.claude, "The service reported that the session failed.") }
                 succeeded = true
                 if let result = event["result"] as? String { finalText = result }
                 if let rawCost = event["total_cost_usd"] {
                     guard let cost = rawCost as? NSNumber,
                           CFGetTypeID(cost) != CFBooleanGetTypeID(),
                           cost.doubleValue.isFinite, cost.doubleValue >= 0 else {
-                        throw AgentBridgeError.providerFailed(.claude, "服務回傳無法確認的費用；保留預算且不會標示成功。")
+                        throw AgentBridgeError.providerFailed(.claude, "The service returned an unconfirmed charge. The budget remains reserved, and the run will not be marked successful.")
                     }
                     actualCostUSD = cost.doubleValue
                 }
@@ -721,10 +721,10 @@ public enum ProviderOutputParser {
                     finalText += fragment
                 }
             case "error":
-                throw AgentBridgeError.providerFailed(.claude, "服務回報錯誤。")
+                throw AgentBridgeError.providerFailed(.claude, "The service reported an error.")
             case "system":
                 if let subtype = event["subtype"] as? String, subtype.lowercased().contains("error") {
-                    throw AgentBridgeError.providerFailed(.claude, "服務回報錯誤。")
+                    throw AgentBridgeError.providerFailed(.claude, "The service reported an error.")
                 }
             default:
                 break
@@ -738,23 +738,23 @@ public enum ProviderOutputParser {
 public enum AuthStatusClassifier {
     public static func codex(stdout: Data, stderr: Data, exitCode: Int32) -> AuthAssessment {
         guard exitCode == 0 else {
-            return AuthAssessment(provider: .codex, confirmedSubscription: false, message: "登入狀態無法確認；請在官方 CLI 中檢查登入狀態。")
+            return AuthAssessment(provider: .codex, confirmedSubscription: false, message: "Sign-in status could not be confirmed. Check sign-in in the official CLI.")
         }
         guard let status = String(data: stdout + stderr, encoding: .utf8)?.lowercased() else {
-            return AuthAssessment(provider: .codex, confirmedSubscription: false, message: "登入狀態格式無法確認。")
+            return AuthAssessment(provider: .codex, confirmedSubscription: false, message: "The sign-in status format could not be confirmed.")
         }
         if status.contains("api key") || status.contains("api_key") || status.contains("api-key") {
-            return AuthAssessment(provider: .codex, confirmedSubscription: false, message: "偵測到 API 金鑰登入；此版本僅接受 ChatGPT 訂閱登入。")
+            return AuthAssessment(provider: .codex, confirmedSubscription: false, message: "API key sign-in was detected. This version accepts ChatGPT subscription sign-in only.")
         }
         if status.contains("logged in using chatgpt") || status.contains("logged in with chatgpt") || status.contains("authenticated with chatgpt") {
-            return AuthAssessment(provider: .codex, confirmedSubscription: true, message: "已確認 ChatGPT 訂閱登入。")
+            return AuthAssessment(provider: .codex, confirmedSubscription: true, message: "ChatGPT subscription sign-in was confirmed.")
         }
-        return AuthAssessment(provider: .codex, confirmedSubscription: false, message: "無法辨識登入方式，為安全起見不會執行。")
+        return AuthAssessment(provider: .codex, confirmedSubscription: false, message: "The sign-in method could not be identified. The run will not start for safety.")
     }
 
     public static func claude(stdout: Data, stderr: Data, exitCode: Int32) -> AuthAssessment {
         guard exitCode == 0 else {
-            return AuthAssessment(provider: .claude, confirmedSubscription: false, message: "登入狀態無法確認；請在官方 CLI 中檢查登入狀態。")
+            return AuthAssessment(provider: .claude, confirmedSubscription: false, message: "Sign-in status could not be confirmed. Check sign-in in the official CLI.")
         }
         let parsed = [stdout, stderr].compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }.first
         guard let json = parsed,
@@ -762,16 +762,16 @@ public enum AuthStatusClassifier {
               let method = json["authMethod"] as? String,
               let rawPlan = json["subscriptionType"] as? String,
               let plan = safeStatusValue(rawPlan) else {
-            return AuthAssessment(provider: .claude, confirmedSubscription: false, message: "登入方式或訂閱方案無法確認。")
+            return AuthAssessment(provider: .claude, confirmedSubscription: false, message: "The sign-in method or subscription plan could not be confirmed.")
         }
         guard method.lowercased() == "claude.ai" else {
-            return AuthAssessment(provider: .claude, confirmedSubscription: false, message: "目前不是 claude.ai 訂閱登入。")
+            return AuthAssessment(provider: .claude, confirmedSubscription: false, message: "The current sign-in is not a claude.ai subscription.")
         }
         let accountLabel = safeStatusValue(json["email"] as? String)
         return AuthAssessment(
             provider: .claude,
             confirmedSubscription: true,
-            message: "已確認 Claude 訂閱登入（\(plan)）。",
+            message: "Claude subscription sign-in confirmed (\(plan)).",
             accountLabel: accountLabel,
             planName: plan
         )
@@ -803,7 +803,7 @@ public final class ProviderAdapter: Sendable {
             return AuthAssessment(
                 provider: .local,
                 confirmedSubscription: false,
-                message: "本機模型沒有訂閱登入狀態；請測試本機伺服器連線。"
+                message: "Local models have no subscription sign-in status; test the local server connection."
             )
         }
         let arguments: [String]
@@ -817,12 +817,12 @@ public final class ProviderAdapter: Sendable {
                 "auth", "status", "--json"
             ]
         case .local:
-            return AuthAssessment(provider: .local, confirmedSubscription: false, message: "本機模型不會讀取 CLI 登入狀態。")
+            return AuthAssessment(provider: .local, confirmedSubscription: false, message: "Local models do not read CLI sign-in status.")
         }
         let spec = ProcessSpec(executableURL: executableURL, arguments: arguments, environment: environment, workingDirectoryURL: URL(fileURLWithPath: temporaryDirectory.path, isDirectory: true), standardInput: Data(), timeout: 12, outputLimit: 64_000)
         let result = try await runner.run(spec)
         guard !result.wasCancelled, !result.timedOut, !result.outputWasTruncated else {
-            return AuthAssessment(provider: provider, confirmedSubscription: false, message: "登入狀態無法確認；請在官方 CLI 中檢查登入狀態。")
+            return AuthAssessment(provider: provider, confirmedSubscription: false, message: "Sign-in status could not be confirmed. Check sign-in in the official CLI.")
         }
         switch provider {
         case .codex:
@@ -830,7 +830,7 @@ public final class ProviderAdapter: Sendable {
         case .claude:
             return AuthStatusClassifier.claude(stdout: result.standardOutput, stderr: result.standardError, exitCode: result.exitCode)
         case .local:
-            return AuthAssessment(provider: .local, confirmedSubscription: false, message: "本機模型不使用訂閱登入。")
+            return AuthAssessment(provider: .local, confirmedSubscription: false, message: "Local models do not use subscription sign-in.")
         }
     }
 
@@ -856,7 +856,7 @@ public final class ProviderAdapter: Sendable {
         let arguments: [String]
         if let apiBudgetUSD {
             guard provider == .claude, resumeID == nil else {
-                throw AgentBridgeError.sessionMismatch("API 模式目前僅支援新的 Claude 工作階段。")
+                throw AgentBridgeError.sessionMismatch("API mode currently supports only new Claude sessions.")
             }
             arguments = try ProviderCommandBuilder.claudeAPIArguments(
                 workspacePath: session.workspacePath,
@@ -887,7 +887,7 @@ public final class ProviderAdapter: Sendable {
                     mcpEnvironment: mcpEnvironment
                 )
             case .local:
-                throw AgentBridgeError.sessionMismatch("本機模型不會透過 CLI、MCP 或專案工具執行。")
+                throw AgentBridgeError.sessionMismatch("Local models do not run through a CLI, MCP or project tools.")
             }
         }
         let lineHandler: (@Sendable (String) -> Void)?
@@ -912,7 +912,7 @@ public final class ProviderAdapter: Sendable {
         let result = try await runner.run(spec, cancellation: cancellation)
         if result.timedOut { throw AgentBridgeError.processTimedOut }
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
-        guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "CLI 結束代碼 \(result.exitCode)。") }
+        guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "CLI exit code \(result.exitCode).") }
         let parsed = try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated)
         let output = stateless
             ? ProviderOutput(text: parsed.text, providerSessionID: nil, actualCostUSD: parsed.actualCostUSD)
@@ -937,7 +937,7 @@ public final class ProviderAdapter: Sendable {
         case .claude:
             arguments = ProviderCommandBuilder.claudeDiscussionArguments()
         case .local:
-            throw AgentBridgeError.sessionMismatch("本機模型使用直接本機 HTTP 連線，不會啟動 CLI。")
+            throw AgentBridgeError.sessionMismatch("Local models use a direct local HTTP connection and do not launch a CLI.")
         }
         let lineHandler: (@Sendable (String) -> Void)?
         if let onProgress {
@@ -963,7 +963,7 @@ public final class ProviderAdapter: Sendable {
         let result = try await runner.run(spec, cancellation: cancellation)
         if result.timedOut { throw AgentBridgeError.processTimedOut }
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
-        guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "CLI 結束代碼 \(result.exitCode)。") }
+        guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "CLI exit code \(result.exitCode).") }
         return (result, try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated))
     }
 
@@ -1003,7 +1003,7 @@ public final class ProviderAdapter: Sendable {
                 mcpEnvironment: mcpEnvironment
             )
         case .local:
-            throw AgentBridgeError.sessionMismatch("本機模型不支援隔離變更。")
+            throw AgentBridgeError.sessionMismatch("Local models do not support isolated changes.")
         }
         let lineHandler: (@Sendable (String) -> Void)?
         if let onProgress {
@@ -1030,7 +1030,7 @@ public final class ProviderAdapter: Sendable {
         if result.timedOut { throw AgentBridgeError.processTimedOut }
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
         guard result.exitCode == 0 else {
-            throw AgentBridgeError.providerFailed(provider, "CLI 結束代碼 \(result.exitCode)。")
+            throw AgentBridgeError.providerFailed(provider, "CLI exit code \(result.exitCode).")
         }
         return (result, try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated))
     }
@@ -1089,7 +1089,7 @@ public final class ProviderAdapter: Sendable {
                 contextFilePath: contextFilePath
             )
         case .local:
-            throw AgentBridgeError.sessionMismatch("本機模型不支援原生互動終端。")
+            throw AgentBridgeError.sessionMismatch("Local models do not support the native interactive terminal.")
         }
         let result = try await runner.runInteractive(
             executableURL: executableURL,
@@ -1101,7 +1101,7 @@ public final class ProviderAdapter: Sendable {
             onLaunched: onLaunched
         )
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
-        guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "互動 CLI 結束代碼 \(result.exitCode)。") }
+        guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "Interactive CLI exit code \(result.exitCode).") }
         return result
     }
 
@@ -1119,7 +1119,7 @@ public final class ProviderAdapter: Sendable {
         case .claude:
             arguments = ProviderCommandBuilder.claudeUsageArguments()
         case .local:
-            throw AgentBridgeError.sessionMismatch("本機模型沒有訂閱用量終端。")
+            throw AgentBridgeError.sessionMismatch("Local models have no subscription usage terminal.")
         }
         let result = try await runner.runInteractive(
             executableURL: executableURL,
@@ -1131,7 +1131,7 @@ public final class ProviderAdapter: Sendable {
         )
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
         guard result.exitCode == 0 else {
-            throw AgentBridgeError.providerFailed(provider, "互動 usage CLI 結束代碼 \(result.exitCode)。")
+            throw AgentBridgeError.providerFailed(provider, "Interactive usage CLI exit code \(result.exitCode).")
         }
         return result
     }

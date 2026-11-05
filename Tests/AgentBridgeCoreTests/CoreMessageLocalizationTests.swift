@@ -1,122 +1,62 @@
 import Foundation
 import XCTest
 
-/// Core messages are written in Traditional Chinese and translated by the
-/// App's English string table, either whole or by fixed fragments around
-/// interpolations. This test replays that lookup for every Chinese literal in
-/// AgentBridgeCore so a new message cannot ship without an English entry.
+/// Core messages are written in English. The App shows them as written for
+/// English and translates them for Traditional Chinese, either whole or through
+/// whole-sentence templates such as "Loaded %@ turn(s)". These tests keep the
+/// source language and the two string tables consistent.
 final class CoreMessageLocalizationTests: XCTestCase {
-    private static let ignoreMarker = "// l10n: content matcher"
+    /// Chinese text that Core must keep because it matches user content.
+    private static let contentMatcherFiles: Set<String> = ["ContextCompression.swift"]
 
-    func testEveryChineseCoreMessageHasAnEnglishTranslation() throws {
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let englishTable = try loadTable(packageRoot.appendingPathComponent(
-            "Sources/AgentBridgeApp/Resources/en.lproj/Localizable.strings"
-        ))
-        let chineseTable = try loadTable(packageRoot.appendingPathComponent(
-            "Sources/AgentBridgeApp/Resources/zh-Hant.lproj/Localizable.strings"
-        ))
-        XCTAssertEqual(Set(englishTable.keys), Set(chineseTable.keys), "Both string tables must have the same keys.")
-
-        let replacementKeys = englishTable.keys.sorted { $0.count > $1.count }
-        let coreDirectory = packageRoot.appendingPathComponent("Sources/AgentBridgeCore", isDirectory: true)
+    func testCoreSourcesContainNoChineseMessages() throws {
+        let coreDirectory = packageRoot().appendingPathComponent("Sources/AgentBridgeCore", isDirectory: true)
         let files = try FileManager.default.contentsOfDirectory(atPath: coreDirectory.path)
-            .filter { $0.hasSuffix(".swift") }.sorted()
-        var untranslated: [String] = []
+            .filter { $0.hasSuffix(".swift") && !Self.contentMatcherFiles.contains($0) }.sorted()
+        var offenders: [String] = []
         for file in files {
             let source = try String(contentsOf: coreDirectory.appendingPathComponent(file), encoding: .utf8)
-            for (index, line) in source.components(separatedBy: "\n").enumerated() {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                guard !trimmed.hasPrefix("//"), !line.contains(Self.ignoreMarker) else { continue }
-                for fragments in Self.literalFragments(in: line) where fragments.contains(where: Self.containsHan) {
-                    let display = Self.display(
-                        fragments.joined(separator: " <value> "),
-                        table: englishTable,
-                        replacementKeys: replacementKeys
-                    )
-                    if Self.containsHan(display) {
-                        untranslated.append("\(file):\(index + 1): \(fragments.joined(separator: "…"))")
-                    }
-                }
+            for (index, line) in source.components(separatedBy: "\n").enumerated() where Self.containsHan(line) {
+                offenders.append("\(file):\(index + 1): \(line.trimmingCharacters(in: .whitespaces))")
             }
         }
         XCTAssertTrue(
-            untranslated.isEmpty,
-            "Add en.lproj and zh-Hant.lproj entries for these Core messages:\n" + untranslated.joined(separator: "\n")
+            offenders.isEmpty,
+            "Write Core messages in English and add the Chinese text to zh-Hant.lproj:\n" + offenders.joined(separator: "\n")
         )
     }
 
-    /// Mirrors `AppLocalization.display` for English.
-    private static func display(_ source: String, table: [String: String], replacementKeys: [String]) -> String {
-        if let direct = table[source] { return direct }
-        var translated = source
-        for key in replacementKeys where source.contains(key) && !key.allSatisfy({ $0.isASCII && $0.isLetter }) {
-            guard let value = table[key], value != key else { continue }
-            translated = translated.replacingOccurrences(of: key, with: value)
+    func testStringTablesShareKeysAndTemplatesKeepTheirPlaceholders() throws {
+        let resources = packageRoot().appendingPathComponent("Sources/AgentBridgeApp/Resources", isDirectory: true)
+        let english = try loadTable(resources.appendingPathComponent("en.lproj/Localizable.strings"))
+        let chinese = try loadTable(resources.appendingPathComponent("zh-Hant.lproj/Localizable.strings"))
+        XCTAssertEqual(Set(english.keys), Set(chinese.keys), "Both string tables must have the same keys.")
+
+        let specifier = try NSRegularExpression(pattern: #"%(?:\d+\$)?[-+ #0]*\d*(?:\.\d+)?(?:lld|ld|d|f|@|s|u|x)"#)
+        func placeholderCount(_ text: String) -> Int {
+            specifier.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
         }
-        return translated
+        var mismatches: [String] = []
+        for (key, value) in chinese where placeholderCount(key) != placeholderCount(value) {
+            mismatches.append(key)
+        }
+        XCTAssertTrue(
+            mismatches.isEmpty,
+            "A translation must keep the same number of placeholders as its key:\n" + mismatches.sorted().joined(separator: "\n")
+        )
     }
 
-    /// Returns the fixed text of each ordinary string literal on a line, split
-    /// around `\(...)` interpolations and printf specifiers. Raw strings
-    /// (`#"..."#`) are regular expressions in Core and are skipped.
-    private static func literalFragments(in line: String) -> [[String]] {
-        let characters = Array(line)
-        var results: [[String]] = []
-        var index = 0
-        while index < characters.count {
-            if characters[index] == "#", index + 1 < characters.count, characters[index + 1] == "\"" {
-                index += 2
-                while index + 1 < characters.count, !(characters[index] == "\"" && characters[index + 1] == "#") { index += 1 }
-                index += 2
-                continue
-            }
-            guard characters[index] == "\"" else { index += 1; continue }
-            index += 1
-            var fragments: [String] = []
-            var current = ""
-            while index < characters.count, characters[index] != "\"" {
-                if characters[index] == "\\", index + 1 < characters.count, characters[index + 1] == "(" {
-                    var depth = 1
-                    index += 2
-                    while index < characters.count, depth > 0 {
-                        if characters[index] == "(" { depth += 1 }
-                        if characters[index] == ")" { depth -= 1 }
-                        index += 1
-                    }
-                    fragments.append(current)
-                    current = ""
-                    continue
-                }
-                if characters[index] == "\\", index + 1 < characters.count {
-                    current.append(characters[index])
-                    current.append(characters[index + 1])
-                    index += 2
-                    continue
-                }
-                current.append(characters[index])
-                index += 1
-            }
-            index += 1
-            fragments.append(current)
-            results.append(fragments.flatMap(splitFormatSpecifiers))
-        }
-        return results
+    func testLegacyTableTranslatesOnlyChineseKeys() throws {
+        let resources = packageRoot().appendingPathComponent("Sources/AgentBridgeApp/Resources", isDirectory: true)
+        let legacy = try loadTable(resources.appendingPathComponent("en.lproj/Legacy.strings"))
+        XCTAssertFalse(legacy.isEmpty)
+        let english = legacy.filter { $0.key.unicodeScalars.allSatisfy(\.isASCII) }
+        XCTAssertTrue(english.isEmpty, "Legacy.strings is only for text saved before messages became English.")
     }
 
-    private static func splitFormatSpecifiers(_ text: String) -> [String] {
-        guard let expression = try? NSRegularExpression(pattern: #"%(?:\.\d+)?[@dfs]"#) else { return [text] }
-        let range = NSRange(text.startIndex..., in: text)
-        var parts: [String] = []
-        var start = text.startIndex
-        for match in expression.matches(in: text, range: range) {
-            guard let matchRange = Range(match.range, in: text) else { continue }
-            parts.append(String(text[start..<matchRange.lowerBound]))
-            start = matchRange.upperBound
-        }
-        parts.append(String(text[start...]))
-        return parts
+    private func packageRoot() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     }
 
     private static func containsHan(_ text: String) -> Bool {

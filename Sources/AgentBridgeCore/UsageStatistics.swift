@@ -65,7 +65,7 @@ public struct UsageControlSettings: Codable, Equatable, Sendable {
         }
         guard notifiedThresholds.count <= 64,
               notifiedThresholds.keys.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 160 }) else {
-            throw UsageControlError.persistence("門檻提醒記錄格式不正確。")
+            throw UsageControlError.persistence("The threshold alert record is malformed.")
         }
     }
 }
@@ -84,23 +84,23 @@ public enum UsageControlError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .invalidRunLimit:
-            "本機執行上限必須是 1 到 100000 的整數；留空代表不限。"
+            "A local run limit must be an integer from 1 to 100000. Leave it empty for no limit."
         case .invalidAPIDollarLimit:
-            "Claude API 本機 USD 上限必須是 US$0.01 到 US$100000 之間的有限金額。"
+            "A Claude API local USD limit must be a finite amount between US$0.01 and US$100000."
         case .apiMonthlyLimitRequired(let profileID):
-            "Claude 帳戶 \(profileID.uuidString) 尚未設定本機 API 月上限；設定前不會啟用 API 執行。"
+            "Claude account \(profileID.uuidString) has no local monthly API limit set. API runs remain disabled until one is configured."
         case .apiDisabled:
-            "此 Claude 帳戶已停用後續 API 執行。"
+            "Further API runs are disabled for this Claude account."
         case .apiMonthlyLimitReached:
-            "AgentBridge 本機 Claude API 月上限已用完；本次不會呼叫模型服務。"
+            "The AgentBridge local Claude API monthly limit has been used. No model service was called."
         case .apiReconciliationConfirmationRequired:
-            "手動結算前必須明確確認金額已對照 Anthropic provider 帳單。"
+            "Before manual settlement, explicitly confirm that the amount was checked against the Anthropic bill."
         case .apiReconciliationNotFound(let sessionID):
-            "找不到工作階段 \(sessionID.uuidString) 的未結算 Claude API 預留紀錄。"
+            "Could not find session \(sessionID.uuidString) has no unsettled Claude API reservation record."
         case .runLimitReached(let window, let used, let limit):
-            "已達 AgentBridge 本機\(window.displayName)執行上限（\(used)/\(limit)）；請等候用量離開此期間或調整本機上限。"
+            "AgentBridge local \(window.displayName) run limit reached (\(used)/\(limit)); wait for usage to leave this window or adjust the local limit."
         case .persistence(let message):
-            "無法安全讀寫本機用量控制：\(message)"
+            "Could not safely read or write local usage controls: \(message)"
         }
     }
 }
@@ -113,10 +113,10 @@ public enum UsageLimitWindow: String, Codable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .fiveHours: "近 5 小時"
-        case .rolling24Hours: "近 24 小時"
-        case .rollingSevenDays: "近 7 天"
-        case .currentSession: "目前工作階段"
+        case .fiveHours: "Last 5 Hours"
+        case .rolling24Hours: "Last 24 Hours"
+        case .rollingSevenDays: "Last 7 Days"
+        case .currentSession: "Current Session"
         }
     }
 }
@@ -359,7 +359,7 @@ public final class UsageControlStore: @unchecked Sendable {
                 document.entries[entryIndex].settings = settings
             } else {
                 guard document.entries.count < 256 else {
-                    throw UsageControlError.persistence("帳戶設定數量已達上限。")
+                    throw UsageControlError.persistence("The maximum number of account profiles has been reached.")
                 }
                 document.entries.append(UsageControlEntry(
                     provider: provider,
@@ -420,9 +420,9 @@ public final class UsageControlStore: @unchecked Sendable {
         defer { instanceLock.unlock() }
         return try PrivateLockFile.withLock(at: lockURL, error: { failure in
             switch failure {
-            case .unavailable: UsageControlError.persistence("無法開啟鎖定檔。")
-            case .notPrivateFile: UsageControlError.persistence("鎖定檔不是安全的一般檔案。")
-            case .lockFailed: UsageControlError.persistence("無法鎖定本機用量設定。")
+            case .unavailable: UsageControlError.persistence("Could not open the lock file.")
+            case .notPrivateFile: UsageControlError.persistence("The lock file is not a secure regular file.")
+            case .lockFailed: UsageControlError.persistence("Could not lock the local usage settings.")
             }
         }, operation)
     }
@@ -431,13 +431,13 @@ public final class UsageControlStore: @unchecked Sendable {
         let descriptor = open(fileURL.path, O_RDONLY | O_NOFOLLOW)
         guard descriptor >= 0 else {
             if errno == ENOENT { return UsageControlDocument() }
-            throw UsageControlError.persistence("無法安全開啟用量設定檔。")
+            throw UsageControlError.persistence("Could not safely open the usage settings file.")
         }
         defer { _ = close(descriptor) }
         var metadata = stat()
         guard fstat(descriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
               metadata.st_size >= 0, metadata.st_size <= off_t(Self.maximumFileSize) else {
-            throw UsageControlError.persistence("用量設定檔格式或大小不安全。")
+            throw UsageControlError.persistence("The usage settings file format or size is unsafe.")
         }
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 32_768)
@@ -445,18 +445,18 @@ public final class UsageControlStore: @unchecked Sendable {
             let count = read(descriptor, &buffer, buffer.count)
             if count < 0 {
                 if errno == EINTR { continue }
-                throw UsageControlError.persistence("無法讀取用量設定檔。")
+                throw UsageControlError.persistence("Could not read the usage settings file.")
             }
             if count == 0 { break }
             data.append(contentsOf: buffer.prefix(count))
             guard data.count <= Self.maximumFileSize else {
-                throw UsageControlError.persistence("用量設定檔超過大小上限。")
+                throw UsageControlError.persistence("The usage settings file exceeds the size limit.")
             }
         }
         do {
             let document = try decoder.decode(UsageControlDocument.self, from: data)
             guard document.schemaVersion == 1, document.entries.count <= 256 else {
-                throw UsageControlError.persistence("用量設定檔版本或項目數不支援。")
+                throw UsageControlError.persistence("The usage settings file version or number of entries is unsupported.")
             }
             for entry in document.entries { try entry.settings.validate() }
             guard document.auditHistory.count <= Self.maximumAuditRecords,
@@ -465,13 +465,13 @@ public final class UsageControlStore: @unchecked Sendable {
                           && !$0.details.isEmpty && $0.details.count <= 16
                           && $0.details.allSatisfy { !$0.isEmpty && $0.utf8.count <= 256 }
                   }) else {
-                throw UsageControlError.persistence("用量設定稽核紀錄格式不正確。")
+                throw UsageControlError.persistence("The usage settings audit record is malformed.")
             }
             return document
         } catch let error as UsageControlError {
             throw error
         } catch {
-            throw UsageControlError.persistence("用量設定檔格式錯誤。")
+            throw UsageControlError.persistence("The usage settings file is malformed.")
         }
     }
 
@@ -480,14 +480,14 @@ public final class UsageControlStore: @unchecked Sendable {
         do {
             data = try encoder.encode(document)
         } catch {
-            throw UsageControlError.persistence("無法編碼用量設定。")
+            throw UsageControlError.persistence("Could not encode the usage settings.")
         }
         guard data.count <= Self.maximumFileSize else {
-            throw UsageControlError.persistence("用量設定檔超過大小上限。")
+            throw UsageControlError.persistence("The usage settings file exceeds the size limit.")
         }
         let temporaryURL = rootURL.appendingPathComponent(".usage-controls-\(UUID().uuidString.lowercased()).tmp")
         let descriptor = open(temporaryURL.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode_t(0o600))
-        guard descriptor >= 0 else { throw UsageControlError.persistence("無法建立暫存用量設定檔。") }
+        guard descriptor >= 0 else { throw UsageControlError.persistence("Could not create a temporary usage settings file.") }
         defer {
             _ = close(descriptor)
             try? fileManager.removeItem(at: temporaryURL)
@@ -500,26 +500,26 @@ public final class UsageControlStore: @unchecked Sendable {
                     let count = write(descriptor, baseAddress.advanced(by: offset), bytes.count - offset)
                     if count < 0 {
                         if errno == EINTR { continue }
-                        throw UsageControlError.persistence("無法寫入用量設定檔。")
+                        throw UsageControlError.persistence("Could not write the usage settings file.")
                     }
-                    guard count > 0 else { throw UsageControlError.persistence("用量設定檔寫入未完成。") }
+                    guard count > 0 else { throw UsageControlError.persistence("The usage settings file write did not complete.") }
                     offset += count
                 }
             }
-            guard fsync(descriptor) == 0 else { throw UsageControlError.persistence("無法同步用量設定檔。") }
+            guard fsync(descriptor) == 0 else { throw UsageControlError.persistence("Could not synchronize the usage settings file.") }
             if fileManager.fileExists(atPath: fileURL.path) {
                 var existing = stat()
                 guard lstat(fileURL.path, &existing) == 0, (existing.st_mode & S_IFMT) == S_IFREG else {
-                    throw UsageControlError.persistence("用量設定檔不能是符號連結或非一般檔案。")
+                    throw UsageControlError.persistence("The usage settings file cannot be a symlink or a non-regular file.")
                 }
             }
             guard rename(temporaryURL.path, fileURL.path) == 0 else {
-                throw UsageControlError.persistence("無法安全更新用量設定檔。")
+                throw UsageControlError.persistence("Could not safely update the usage settings file.")
             }
         } catch let error as UsageControlError {
             throw error
         } catch {
-            throw UsageControlError.persistence("無法儲存用量設定檔。")
+            throw UsageControlError.persistence("Could not save the usage settings file.")
         }
     }
 
@@ -648,11 +648,11 @@ public enum APICostLedgerError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .invalidAmount:
-            "Claude API 本機 USD 預算必須是有限且大於零的金額。"
+            "A Claude API local USD budget must be a finite amount greater than zero."
         case .unresolvedCall:
-            "前一次 Claude API 執行的費用尚未確認；為避免累積未知支出，請先在用量面板的「手動結算」或 `agentbridge budget reconcile` 結算後再執行。帳單尚未顯示時，可用完整預留金額保守結算。"
+            "The previous Claude API run has an unconfirmed charge. To avoid accumulating unknown charges, settle it under Manual settlement in the usage panel or with `agentbridge budget reconcile` before running again. If the bill isn't available yet, you can settle conservatively at the full reserved amount."
         case .dollarLimitReached(let scope, let limitUSD, let committedUSD):
-            String(format: "Claude API 本機%@上限不足：US$%.2f / US$%.2f（包含新執行的預留金額）。本次不會呼叫模型服務。", scope, committedUSD, limitUSD)
+            String(format: "Claude API local %@ limit is insufficient: US$%.2f / US$%.2f (including the new run's reservation). The model service will not be called.", scope, committedUSD, limitUSD)
         }
     }
 }

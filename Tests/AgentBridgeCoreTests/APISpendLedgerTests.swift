@@ -226,7 +226,7 @@ final class APISpendLedgerTests: XCTestCase {
             guard case APICostLedgerError.dollarLimitReached(let scope, let limit, let committed) = error else {
                 return XCTFail("Unexpected API daily cap error: \(error)")
             }
-            XCTAssertEqual(scope, "UTC 每日")
+            XCTAssertEqual(scope, "UTC daily")
             XCTAssertEqual(limit, 10)
             XCTAssertEqual(committed, 11)
         }
@@ -237,7 +237,7 @@ final class APISpendLedgerTests: XCTestCase {
             guard case APICostLedgerError.dollarLimitReached(let scope, _, let committed) = error else {
                 return XCTFail("Unexpected API session cap error: \(error)")
             }
-            XCTAssertEqual(scope, "目前工作階段")
+            XCTAssertEqual(scope, "Current Session")
             XCTAssertEqual(committed, 6)
         }
         // A refused reservation records nothing.

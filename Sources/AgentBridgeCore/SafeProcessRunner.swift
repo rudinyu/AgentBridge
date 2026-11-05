@@ -86,7 +86,7 @@ public final class SafeProcessRunner: Sendable {
         onLaunched: (@Sendable () -> Bool)? = nil
     ) async throws -> ProcessResult {
         guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else {
-            throw AgentBridgeError.invalidInput("互動模式需要在 Terminal 中執行。")
+            throw AgentBridgeError.invalidInput("Interactive mode must run in Terminal.")
         }
         let spec = ProcessSpec(
             executableURL: executableURL,
@@ -122,7 +122,7 @@ public final class SafeProcessRunner: Sendable {
         }
         guard spec.executableURL.isFileURL,
               FileManager.default.isExecutableFile(atPath: spec.executableURL.path) else {
-            throw AgentBridgeError.processLaunchFailed("執行檔不存在或不可執行。")
+            throw AgentBridgeError.processLaunchFailed("The executable is missing or is not executable.")
         }
 
         var stdoutPipe = [Int32](repeating: -1, count: 2)
@@ -132,7 +132,7 @@ public final class SafeProcessRunner: Sendable {
             guard pipe(&stdoutPipe) == 0, pipe(&stderrPipe) == 0,
                   socketpair(AF_UNIX, SOCK_STREAM, 0, &inputPair) == 0 else {
                 Self.closeAll(stdoutPipe + stderrPipe + inputPair)
-                throw AgentBridgeError.processLaunchFailed("無法建立子程序 I/O 通道。")
+                throw AgentBridgeError.processLaunchFailed("Could not create the child process I/O channel.")
             }
             var noSignal: Int32 = 1
             _ = setsockopt(inputPair[0], SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
@@ -144,7 +144,7 @@ public final class SafeProcessRunner: Sendable {
         var actions: posix_spawn_file_actions_t?
         guard posix_spawn_file_actions_init(&actions) == 0 else {
             Self.closeAll(stdoutPipe + stderrPipe + inputPair)
-            throw AgentBridgeError.processLaunchFailed("無法初始化執行通道。")
+            throw AgentBridgeError.processLaunchFailed("Could not initialize the run channel.")
         }
         defer { posix_spawn_file_actions_destroy(&actions) }
         if !interactive {
@@ -168,7 +168,7 @@ public final class SafeProcessRunner: Sendable {
         var attributes: posix_spawnattr_t?
         guard posix_spawnattr_init(&attributes) == 0 else {
             Self.closeAll(stdoutPipe + stderrPipe + inputPair)
-            throw AgentBridgeError.processLaunchFailed("無法設定子程序隔離。")
+            throw AgentBridgeError.processLaunchFailed("Could not configure child process isolation.")
         }
         defer { posix_spawnattr_destroy(&attributes) }
         var defaultSignals = sigset_t()
@@ -222,14 +222,14 @@ public final class SafeProcessRunner: Sendable {
                 _ = kill(-processID, SIGKILL)
                 var status: Int32 = 0
                 _ = waitpid(processID, &status, 0)
-                throw AgentBridgeError.processLaunchFailed("無法把 Terminal 前景控制權交給 Claude。")
+                throw AgentBridgeError.processLaunchFailed("Could not give Claude foreground control in Terminal.")
             }
             if let onLaunched, !onLaunched() {
                 _ = kill(-processID, SIGKILL)
                 var status: Int32 = 0
                 _ = waitpid(processID, &status, 0)
                 if previousForegroundGroup >= 0 { _ = Self.setForegroundProcessGroup(previousForegroundGroup) }
-                throw AgentBridgeError.persistence("無法記錄互動工作階段的啟動狀態。")
+                throw AgentBridgeError.persistence("Could not record the interactive session startup state.")
             }
             _ = kill(processID, SIGCONT)
         }

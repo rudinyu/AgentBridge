@@ -24,7 +24,7 @@ extension MainWindowView {
                     activityTimeline
                 }
             } else {
-                ContentUnavailableView("選擇或建立工作階段", systemImage: "bubble.left.and.bubble.right", description: Text("先選擇 Git 儲存庫，再開始一段固定版本的專案對話。"))
+                ContentUnavailableView("Select or Create a Session", systemImage: "bubble.left.and.bubble.right", description: Text("Choose a Git repository first, then start a project conversation pinned to a commit."))
                     .frame(maxWidth: .infinity, maxHeight: model.terminal.terminalLaunch == nil ? .infinity : 110)
             }
             if !model.setupWizard.isPresented, let launch = model.terminal.terminalLaunch {
@@ -59,13 +59,13 @@ extension MainWindowView {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             } else {
-                Button("本機終端機") { model.terminal.openLocalShell() }
+                Button("Local Terminal") { model.terminal.openLocalShell() }
                     .disabled(model.terminal.terminalLaunch != nil)
             }
             if session.provider != .local && session.policy.accessMode == .interactiveManualApproval {
-                Button("開啟內嵌終端機") { model.terminal.openEmbeddedInteractiveTerminal() }
+                Button("Open Embedded Terminal") { model.terminal.openEmbeddedInteractiveTerminal() }
                     .disabled(model.terminal.terminalRunning)
-                if session.status == .running { Button("取消工作階段") { model.cancelSession(session.id) } }
+                if session.status == .running { Button("Cancel Session") { model.cancelSession(session.id) } }
             }
         }
         .padding(12)
@@ -76,52 +76,52 @@ extension MainWindowView {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    Label("專案共用記憶", systemImage: "brain.head.profile")
+                    Label("Shared Project Memory", systemImage: "brain.head.profile")
                         .font(.subheadline.weight(.semibold))
                     Spacer()
                     if let memory = model.memorySnapshot {
-                        Text(String(format: model.localized("修訂 %@ · %@ 則對話%@"),
+                        Text(String(format: model.localized("Revision %@ · %@ turns%@"),
                                     String(memory.revision),
                                     String(memory.turns.count),
-                                    memory.wasTruncated ? model.localized(" · 顯示最近內容") : ""))
+                                    memory.wasTruncated ? model.localized(" · showing recent content") : ""))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 if let memory = model.memorySnapshot {
-                    Text(String(format: model.localized("來源 %@ · 固定提交 %@"),
+                    Text(String(format: model.localized("Source %@ · Pinned commit %@"),
                                 URL(fileURLWithPath: memory.scope.repositoryPath).lastPathComponent,
                                 String(memory.scope.snapshotCommit.prefix(12))))
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
                 if let profile = model.boundProfile(for: session), !profile.allowsSharedMemory {
-                    Label("此帳戶未同意把記憶傳給助理。開啟左側「允許此帳戶載入與保存」後才會共用。", systemImage: "lock.fill")
+                    Label("This account has not consented to sharing memory with assistants. Enable “Allow this account to load and save shared project memory” on the left to share it.", systemImage: "lock.fill")
                         .font(.caption).foregroundStyle(.orange)
                 }
-                DisclosureGroup("記憶備註與終端機交接") {
+                DisclosureGroup("Memory Notes and Terminal Handoff") {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("AgentBridge 會自動保存 App 聊天中成功完成的回合。內嵌 Terminal 的 TUI 內容不會自動匯入；請在這裡手動記下要交給另一個助理的重點。")
+                        Text("AgentBridge automatically saves successfully completed turns from app chats. TUI content in the embedded terminal is not imported; write key points here when handing work to another assistant.")
                             .font(.caption).foregroundStyle(.secondary)
                         TextEditor(text: $model.memoryNotes)
                             .font(.system(.caption, design: .monospaced))
                             .frame(minHeight: 54, maxHeight: 90)
                         HStack {
-                            Button("儲存備註") { model.saveMemoryNotes() }
-                            Button("清除此提交的記憶…", role: .destructive) { model.confirmClearMemory = true }
+                            Button("Save Notes") { model.saveMemoryNotes() }
+                            Button("Clear Memory for This Commit…", role: .destructive) { model.confirmClearMemory = true }
                             Spacer()
                         }
                     }
                     .padding(.top, 5)
                 }
-                DisclosureGroup("明確交接至另一個提交版本") {
+                DisclosureGroup("Explicit handoff to another commit") {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("只會複製你選取的 App 聊天回合與備註。目標工作階段綁定的帳戶必須允許共用記憶；交接會以來源與目標提交版本標記，並作為明確的未信任歷史內容附加到目標提示。")
+                        Text("Only the App chat turns and notes you select are copied. The target session’s bound account must allow shared memory. The handoff records its source and target commits and is added to the target prompt as explicit untrusted historical context.")
                             .font(.caption2).foregroundStyle(.secondary)
                         if model.memoryHandoffTargets.isEmpty {
-                            Text("需要同一個儲存庫的另一個不同提交版本工作階段。")
+                            Text("Choose another session for the same repository at a different commit.")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else {
-                            Picker("目標工作階段", selection: $model.memoryHandoffTargetSessionID) {
-                                Text("選擇目標").tag(UUID?.none)
+                            Picker("Target session", selection: $model.memoryHandoffTargetSessionID) {
+                                Text("Choose a target").tag(UUID?.none)
                                 ForEach(model.memoryHandoffTargets) { target in
                                     Text("\(target.provider.rawValue.capitalized) · \(target.snapshotCommit.prefix(12)) · \(model.profileName(for: target))")
                                         .tag(Optional(target.id))
@@ -132,7 +132,7 @@ extension MainWindowView {
                                     .font(.caption2).foregroundStyle(.orange)
                             }
                             if let turns = model.memorySnapshot?.turns, !turns.isEmpty {
-                                Text("選取要帶入的對話回合")
+                                Text("Select conversation turns to carry forward")
                                     .font(.caption.weight(.semibold))
                                 ForEach(turns) { turn in
                                     Toggle(isOn: Binding(
@@ -147,14 +147,14 @@ extension MainWindowView {
                                     }
                                 }
                             }
-                            Toggle("包含目前已儲存的專案備註", isOn: $model.includeMemoryNotes)
+                            Toggle("Include the currently saved project notes", isOn: $model.includeMemoryNotes)
                                 .font(.caption)
-                            Button("建立明確記憶交接") { model.carryForwardSelectedMemory() }
+                            Button("Create explicit memory handoff") { model.carryForwardSelectedMemory() }
                                 .disabled(model.memoryHandoffTargetSessionID == nil || !model.selectedMemoryTargetCanReceiveHandoff || (model.selectedMemoryTurnIDs.isEmpty && !model.includeMemoryNotes))
                         }
                         if !model.projectMemoryHandoffs.isEmpty {
                             Divider()
-                            Text("此儲存庫的交接記錄")
+                            Text("Handoffs for this repository")
                                 .font(.caption.weight(.semibold))
                             ForEach(model.projectMemoryHandoffs.prefix(5)) { handoff in
                                 Text("\(handoff.sourceCommit.prefix(12)) → \(handoff.targetCommit.prefix(12)) · \(handoff.turns.count) turns · \(handoff.createdAt.formatted(date: .abbreviated, time: .shortened))")
@@ -296,11 +296,11 @@ extension MainWindowView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     if let turns = model.memorySnapshot?.turns, !turns.isEmpty {
                         ForEach(turns) { turn in
-                            messageBubble(label: model.localized("你"), text: turn.userText, alignment: .trailing, color: Color.accentColor.opacity(0.12), id: "user-\(turn.id)")
+                            messageBubble(label: model.localized("You"), text: turn.userText, alignment: .trailing, color: Color.accentColor.opacity(0.12), id: "user-\(turn.id)")
                             messageBubble(label: turn.provider.rawValue.capitalized, text: turn.assistantText, alignment: .leading, color: Color(nsColor: .controlBackgroundColor), id: "assistant-\(turn.id)")
                         }
                     } else {
-                        ContentUnavailableView("開始專案對話", systemImage: "text.bubble", description: Text("成功完成的對話會依來源儲存庫與固定提交版本寫入共用記憶。"))
+                        ContentUnavailableView("Start a Project Conversation", systemImage: "text.bubble", description: Text("Successfully completed conversations are saved to shared memory for this source repository and pinned commit."))
                             .frame(maxWidth: .infinity, minHeight: 180)
                     }
                     if model.selectedSessionIsRunning {
@@ -339,18 +339,18 @@ extension MainWindowView {
     func composer(_ session: SessionRecord) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if model.isClaudeAPIRunContext {
-                Label("Claude API 會產生費用；每次執行都要輸入預算與確認。", systemImage: "exclamationmark.triangle.fill")
+                Label("Claude API calls incur charges; enter a budget and confirm every run.", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(.orange)
                 HStack {
-                    TextField("本次預算（USD）", text: $model.apiBudget).frame(width: 160)
-                    SecureField("Anthropic API key（只保留在記憶體）", text: $model.apiKey)
-                    Toggle("確認這次付費呼叫", isOn: $model.confirmAPIRun).toggleStyle(.checkbox)
+                    TextField("Budget for This Run (USD)", text: $model.apiBudget).frame(width: 160)
+                    SecureField("Anthropic API Key (held in memory only)", text: $model.apiKey)
+                    Toggle("Confirm This Paid Call", isOn: $model.confirmAPIRun).toggleStyle(.checkbox)
                 }
                 if let reservedUSD = model.apiReservationPreviewUSD {
-                    Text(String(format: model.localized("執行前會預留 US$%.2f（本次預算的兩倍）；結算實際費用後釋放差額。"), reservedUSD))
+                    Text(String(format: model.localized("Reserves US$%.2f (twice this run's budget) before launch; the difference is released when the actual cost is settled."), reservedUSD))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
-                Text("取消執行無法撤回已產生的 Anthropic 費用。")
+                Text("Cancelling a run cannot reverse Anthropic charges that have already accrued.")
                     .font(.caption2).foregroundStyle(.orange)
             }
             HStack(alignment: .bottom, spacing: 10) {
@@ -369,24 +369,24 @@ extension MainWindowView {
                         else { Label(model.localized("Preview context"), systemImage: "text.magnifyingglass") }
                     }
                     .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (session.provider == .local && model.localModelSettingsAreDirty) || isLoadingContextPreview)
-                    Button(model.localized(model.isClaudeAPIRunContext ? "執行 Claude API" : (session.provider == .local ? "Send to local model" : "傳送"))) {
+                    Button(model.localized(model.isClaudeAPIRunContext ? "Run Claude API" : (session.provider == .local ? "Send to local model" : "Send"))) {
                         submitProjectPrompt(session)
                     }
                         .buttonStyle(.borderedProminent)
                         .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || isLoadingContextPreview || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.settings.usageMode == .api && session.provider != .local && (!model.isClaudeAPIRunContext || model.usage.budgetSnapshot == nil)) || (model.isClaudeAPIRunContext && model.usage.usageControls.disableFutureAPI) || (session.provider == .local && model.localModelSettingsAreDirty))
-                    if model.selectedSessionIsRunning { Button("取消") { model.cancelRun() } }
+                    if model.selectedSessionIsRunning { Button("Cancel") { model.cancelRun() } }
                 }
             }
             Text(model.localized(session.provider == .local
                 ? "Prompts and responses are stored in shared memory only after a successful turn. Context compression preserves recent turns and the exact current request."
-                : "提示和回應只在成功完成後進入共用記憶；金鑰不會保存。"))
+                : "Prompts and responses enter shared memory only after a successful completion. The key is not saved."))
                 .font(.caption2).foregroundStyle(.secondary)
             if session.provider == .local && model.localModelSettingsAreDirty {
                 Label(model.localized("Save local model settings before sending."), systemImage: "exclamationmark.triangle")
                     .font(.caption2).foregroundStyle(.orange)
             }
             if session.sourceWasDirty {
-                Text("來源有未提交變更；此對話固定的工作區不包含那些變更。")
+                Text("The source has uncommitted changes. This conversation's pinned workspace does not include them.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
         }
@@ -444,15 +444,15 @@ extension MainWindowView {
 
     func interactivePanel(_ session: SessionRecord) -> some View {
         VStack(spacing: 8) {
-            ContentUnavailableView("互動工作階段", systemImage: "terminal", description: Text("此工作階段使用 provider 原生互動終端。它不會自動匯入 TUI 對話；請將重點記在上方的共用記憶備註。"))
+            ContentUnavailableView("Interactive Session", systemImage: "terminal", description: Text("This session uses the provider's native interactive terminal. TUI conversations are not imported automatically; write key points in the shared memory notes above."))
                 .frame(maxHeight: 200)
             HStack {
-                Text("已核准的指令可能存取工作區外的檔案或網路。")
+                Text("Approved commands may access files outside the workspace or the network.")
                     .font(.caption).foregroundStyle(.orange)
                 Spacer()
-                Button("開啟內嵌終端機") { model.terminal.openEmbeddedInteractiveTerminal() }
+                Button("Open Embedded Terminal") { model.terminal.openEmbeddedInteractiveTerminal() }
                     .disabled(model.terminal.terminalRunning)
-                if session.status == .running { Button("取消工作階段") { model.cancelSession(session.id) } }
+                if session.status == .running { Button("Cancel Session") { model.cancelSession(session.id) } }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

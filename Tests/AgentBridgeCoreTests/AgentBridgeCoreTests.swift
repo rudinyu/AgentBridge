@@ -621,7 +621,7 @@ final class AgentBridgeCoreTests: XCTestCase {
             try await manager.validateWorkspace(for: session, accessMode: .interactiveManualApproval)
             XCTFail("A read-only session accepted the interactive policy.")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("權限"))
+            XCTAssertTrue(error.localizedDescription.contains("permissions"))
         }
     }
 

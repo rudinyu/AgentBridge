@@ -70,23 +70,23 @@ public enum BudgetLedgerError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .invalidMonthlyLimit:
-            "每月 API 預算上限必須是有限且大於零的金額。"
+            "The monthly API budget limit must be a finite amount greater than zero."
         case .invalidRequestedBudget:
-            "這次 API 執行的預算必須是有限且大於零的金額。"
+            "The budget for this API run must be a finite amount greater than zero."
         case .authorizationRequired:
-            "呼叫 API 前必須明確授權這次執行及其預算。"
+            "Explicitly authorize this run and its budget before calling the API."
         case .insufficientBudget(let requiredUSD, let availableUSD):
-            String(format: "預算不足：本次需預留 US$%.6f，目前可用 US$%.6f。", requiredUSD, availableUSD)
+            String(format: "Insufficient budget: this run requires a reservation of US$%.6f, available now: US$%.6f.", requiredUSD, availableUSD)
         case .reservationNotFound(let id):
-            "找不到預算預留紀錄 \(id.uuidString)。"
+            "Could not find budget reservation \(id.uuidString)."
         case .invalidActualCost:
-            "API 實際費用必須是有限且大於或等於零的金額。"
+            "The actual API charge must be a finite amount greater than or equal to zero."
         case .conflictingReconciliation(let id):
-            "預算預留紀錄 \(id.uuidString) 已使用不同費用完成結算。"
+            "Budget reservation record \(id.uuidString) was settled with a different amount."
         case .invalidLedger:
-            "預算紀錄格式錯誤或與目前的預算上限不一致；為避免超支，已停止新的 API 執行。"
+            "The budget record is malformed or does not match the current limit. New API runs stopped to prevent overspending."
         case .persistence(let message):
-            "無法安全讀寫預算紀錄：\(message)"
+            "Could not safely read or write the budget record: \(message)"
         }
     }
 }
@@ -130,11 +130,11 @@ public final class APISpendLedger: @unchecked Sendable {
     ) throws {
         guard rootURL.isFileURL, rootURL.path.hasPrefix("/"),
               !rootURL.path.split(separator: "/", omittingEmptySubsequences: true).contains("..") else {
-            throw BudgetLedgerError.persistence("預算資料夾路徑無效。")
+            throw BudgetLedgerError.persistence("The budget directory path is invalid.")
         }
         let standardizedRoot = rootURL.standardizedFileURL
         guard standardizedRoot.path != "/" else {
-            throw BudgetLedgerError.persistence("不能將檔案系統根目錄用作預算資料夾。")
+            throw BudgetLedgerError.persistence("The filesystem root cannot be used as a budget directory.")
         }
         self.rootURL = standardizedRoot
 
@@ -229,7 +229,7 @@ public final class APISpendLedger: @unchecked Sendable {
             try Self.bind(caps.monthly, to: &document)
             try Self.checkCaps(document, sessionID: sessionID, requested: requested, caps: caps, now: now)
             guard document.reservations.count < Self.maximumReservations else {
-                throw BudgetLedgerError.persistence("預算紀錄數量已達安全上限。")
+                throw BudgetLedgerError.persistence("The number of budget records has reached the safety limit.")
             }
             let reservation = StoredSpendReservation(
                 id: UUID(),
@@ -339,14 +339,14 @@ public final class APISpendLedger: @unchecked Sendable {
             let totals = try windowTotals(document.reservations.filter { $0.utcDay == day })
             let committed = try checkedAdd(checkedAdd(totals.used, totals.reserved), reserved)
             guard committed <= cap.micros else {
-                throw APICostLedgerError.dollarLimitReached(scope: "UTC 每日", limitUSD: cap.usd, committedUSD: usd(committed))
+                throw APICostLedgerError.dollarLimitReached(scope: "UTC daily", limitUSD: cap.usd, committedUSD: usd(committed))
             }
         }
         if let cap = caps.session {
             let totals = try windowTotals(document.reservations.filter { $0.sessionID == sessionID })
             let committed = try checkedAdd(checkedAdd(totals.used, totals.reserved), reserved)
             guard committed <= cap.micros else {
-                throw APICostLedgerError.dollarLimitReached(scope: "目前工作階段", limitUSD: cap.usd, committedUSD: usd(committed))
+                throw APICostLedgerError.dollarLimitReached(scope: "Current Session", limitUSD: cap.usd, committedUSD: usd(committed))
             }
         }
         let totals = try monthlyTotals(document, month: monthKey(now))
@@ -590,7 +590,7 @@ public final class APISpendLedger: @unchecked Sendable {
         do {
             return try encoder.encode(document)
         } catch {
-            throw BudgetLedgerError.persistence("無法編碼預算紀錄。")
+            throw BudgetLedgerError.persistence("Could not encode the budget record.")
         }
     }
 
@@ -690,7 +690,7 @@ public final class APISpendLedger: @unchecked Sendable {
         }
         guard directoryDescriptor >= 0 else {
             if errno == ENOENT { return nil }
-            throw BudgetLedgerError.persistence("無法安全開啟預算紀錄檔。")
+            throw BudgetLedgerError.persistence("Could not safely open the budget record file.")
         }
         defer { _ = close(directoryDescriptor) }
         guard let data = try AgentBridgePrivateJSONDocument.read(

@@ -14,7 +14,7 @@ extension BridgeService {
                 return AuthAssessment(
                     provider: .local,
                     confirmedSubscription: false,
-                    message: "本機模型伺服器可連線；此狀態不是訂閱或雲端帳戶驗證。",
+                    message: "The local model server is reachable; this status is not a subscription or cloud account check.",
                     accountLabel: localSettings.model.isEmpty ? nil : localSettings.model,
                     planName: nil,
                     localEndpointReachable: true
@@ -45,14 +45,14 @@ extension BridgeService {
         cancellation: CancellationFlag = CancellationFlag()
     ) async throws -> ProcessResult {
         guard provider != .local else {
-            throw AgentBridgeError.sessionMismatch("本機模型沒有訂閱用量終端；請使用本機模型連線檢查。")
+            throw AgentBridgeError.sessionMismatch("Local models have no subscription usage terminal; use the local model connection check.")
         }
         let settings = try store.loadSettings()
         guard settings.usageMode == .subscription else {
-            throw AgentBridgeError.sessionMismatch("官方 usage TUI 只支援訂閱登入；請先切回訂閱模式。")
+            throw AgentBridgeError.sessionMismatch("The official usage TUI supports subscription sign-in only. Switch back to subscription mode first.")
         }
         guard settings.defaultProvider == provider else {
-            throw AgentBridgeError.sessionMismatch("目前 App 預設 provider 已變更；請從目前的訂閱用量面板重新開啟 usage TUI。")
+            throw AgentBridgeError.sessionMismatch("The app's default provider has changed. Reopen the usage TUI from the current subscription usage panel.")
         }
         let profile = try accountProfile(id: profileID)
         guard profile.provider == provider else {
@@ -60,7 +60,7 @@ extension BridgeService {
         }
         let selectedProfile = try accountProfileStore.selected(provider: provider)
         guard selectedProfile.id == profile.id else {
-            throw AgentBridgeError.sessionMismatch("目前選取的帳戶已變更；請從該帳戶的訂閱用量面板重新開啟 usage TUI。")
+            throw AgentBridgeError.sessionMismatch("The selected account has changed. Reopen the usage TUI from that account's subscription usage panel.")
         }
 
         let executable = try RuntimeEnvironment.resolveExecutable(
@@ -115,10 +115,10 @@ extension BridgeService {
         maximumMCPToolCallsPerServer: Int? = nil
     ) async throws -> ProviderOutput {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AgentBridgeError.invalidInput("請輸入要交給助理的內容。")
+            throw AgentBridgeError.invalidInput("Enter content to send to the assistant.")
         }
         guard prompt.utf8.count <= 256_000 else {
-            throw AgentBridgeError.invalidInput("提示內容最多 256 KiB。")
+            throw AgentBridgeError.invalidInput("Prompts can contain up to 256 KiB.")
         }
         if let maximumMCPToolCallsPerServer, !(1...128).contains(maximumMCPToolCallsPerServer) {
             throw AgentBridgeError.invalidInput("The per-run MCP tool-call cap must be between 1 and 128.")
@@ -126,12 +126,12 @@ extension BridgeService {
         let initialSession = try loadSession(sessionID)
         if initialSession.provider == .local {
             guard apiRequest == nil else {
-                throw AgentBridgeError.sessionMismatch("本機模型不使用 Claude API 預算或 API 金鑰。")
+                throw AgentBridgeError.sessionMismatch("Local models do not use a Claude API budget or API key.")
             }
             guard extensionIDs?.isEmpty ?? true,
                   expectedExtensionFingerprint == nil,
                   maximumMCPToolCallsPerServer == nil else {
-                throw AgentBridgeError.sessionMismatch("本機模型目前不支援 Skills、MCP 或其他專案工具；本次尚未啟動。")
+                throw AgentBridgeError.sessionMismatch("Local models do not support Skills, MCP or other project tools yet; nothing was started.")
             }
         }
         let lease = try store.acquireRunLease(for: sessionID)
@@ -141,7 +141,7 @@ extension BridgeService {
         guard session.provider == .codex || session.provider == .claude || session.provider == .local,
               session.policy.accessMode == .readOnly,
               session.policy.workspaceReadOnly else {
-            throw AgentBridgeError.sessionMismatch("工作階段不是唯讀模式。")
+            throw AgentBridgeError.sessionMismatch("The session is not in read-only mode.")
         }
         let profile = try requireBoundProfile(for: session, allowUnselected: allowBoundProfileWithoutGlobalSelection)
         if session.provider == .local {
@@ -157,14 +157,14 @@ extension BridgeService {
         }
         let apiMode = settings.usageMode == .api
         guard apiMode == (apiRequest != nil) else {
-            if apiMode { throw AgentBridgeError.sessionMismatch("API 模式每次執行都需要輸入單次預算、API 金鑰及明確確認。") }
-            throw AgentBridgeError.sessionMismatch("請先在設定中選擇 API 模式，或使用訂閱登入模式。")
+            if apiMode { throw AgentBridgeError.sessionMismatch("Each API run requires a per-run budget, an API key, and explicit confirmation.") }
+            throw AgentBridgeError.sessionMismatch("Choose API mode in Settings first, or use subscription sign-in mode.")
         }
         if apiMode {
-            guard session.provider == .claude else { throw AgentBridgeError.sessionMismatch("API 模式目前只支援 Claude。") }
-            guard session.providerSessionID == nil else { throw AgentBridgeError.sessionMismatch("API 模式不支援續用訂閱模式的工作階段。") }
+            guard session.provider == .claude else { throw AgentBridgeError.sessionMismatch("API mode currently supports Claude only.") }
+            guard session.providerSessionID == nil else { throw AgentBridgeError.sessionMismatch("API mode cannot resume a subscription-mode session.") }
             guard let apiRequest, apiRequest.explicitlyAuthorized else {
-                throw AgentBridgeError.sessionMismatch("API 執行需要明確確認本次付費預算。")
+                throw AgentBridgeError.sessionMismatch("An API run requires explicit confirmation of its paid budget.")
             }
             guard apiRequest.requestedBudgetUSD.isFinite,
                   apiRequest.requestedBudgetUSD >= 0.01,
@@ -172,7 +172,7 @@ extension BridgeService {
                   abs(((apiRequest.requestedBudgetUSD * 100).rounded() / 100) - apiRequest.requestedBudgetUSD) < 0.000_000_1,
                   !apiRequest.apiKey.isEmpty,
                   !apiRequest.apiKey.contains("\0") else {
-                throw AgentBridgeError.invalidInput("API 模式需要有效 API 金鑰，以及 US$0.01 至 US$140、最多兩位小數的單次預算。")
+                throw AgentBridgeError.invalidInput("API mode requires a valid API key and a per-run budget between US$0.01 and US$140 with at most two decimal places.")
             }
         }
         try authorizeManagedRun(
@@ -237,7 +237,7 @@ extension BridgeService {
         } else {
             let assessment = try await checkAuthentication(profile: profile, executable: executable)
             guard assessment.confirmedSubscription else {
-                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "auth.refused", message: "未確認訂閱登入；\(assessment.message)"))
+                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "auth.refused", message: "Subscription sign-in not confirmed; \(assessment.message)"))
                 throw AgentBridgeError.unauthenticated(session.provider, assessment.message)
             }
         }
@@ -269,12 +269,12 @@ extension BridgeService {
             // Do not consume cancellation requests after this boundary.
             try activeExtensionRuntimeStore.validateCurrentInvocation(extensionInvocation)
             if let reservation {
-                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "api.run.authorized", message: "已明確授權 Claude API 執行；單次上限 US$\(String(format: "%.2f", apiRequest?.requestedBudgetUSD ?? 0))，保留預算 US$\(String(format: "%.2f", reservation.reservedUSD))。實際費用仍以供應商帳單為準。"))
+                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "api.run.authorized", message: "Claude API run explicitly authorized; per-run cap US$\(String(format: "%.2f", apiRequest?.requestedBudgetUSD ?? 0)), reserved budget US$\(String(format: "%.2f", reservation.reservedUSD)). Actual charges are determined by the provider bill."))
             } else {
                 let extensionText = extensionInvocation.skills.isEmpty && extensionInvocation.mcpServers.isEmpty
-                    ? "未使用已啟用的 Skills 或 MCP 工具。"
+                    ? "No enabled Skills or MCP tools are used."
                     : "Extension fingerprint \(extensionInvocation.fingerprint.prefix(12)); Skills \(extensionInvocation.skills.count), MCP servers \(extensionInvocation.mcpServers.count)."
-                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "run.started", message: "以訂閱登入開始唯讀執行。\(extensionText) 每回合使用 AgentBridge 逐字稿與共享記憶組成新上下文，不續接 CLI 原生歷史。提示內容不會寫入稽核檔。"))
+                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "run.started", message: "Started a read-only run with subscription sign-in.\(extensionText) Each turn builds fresh context from the AgentBridge transcript and shared memory and does not resume native CLI history. Prompt content is not written to audit files."))
             }
             try? store.appendEvent(AuditEvent(
                 sessionID: sessionID,
@@ -285,7 +285,7 @@ extension BridgeService {
                 try? store.appendEvent(AuditEvent(
                     sessionID: sessionID,
                     kind: "memory.loaded",
-                    message: "已載入共享記憶 revision \(memoryContext.revision)，包含 \(memoryContext.includedTurnCount) 個先前回合\(memoryContext.wasTruncated ? "（內容已截短）" : "")."
+                    message: "Loaded shared memory revision \(memoryContext.revision), with \(memoryContext.includedTurnCount) earlier turn(s)\(memoryContext.wasTruncated ? " (content truncated)" : "")."
                 ))
             }
 
@@ -319,8 +319,8 @@ extension BridgeService {
             if let reservation {
                 try activeSpendLedger?.reconcile(reservationID: reservation.id, actualUSD: output.actualCostUSD)
                 if let actual = output.actualCostUSD, actual > reservation.requestedUSD {
-                    try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "api.budget.exceeded", message: "Claude 回報費用高於單次上限；本次輸出不會標示為成功。費用以供應商帳單為準。"))
-                    throw AgentBridgeError.providerFailed(.claude, "供應商回報費用超過單次上限。")
+                    try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "api.budget.exceeded", message: "Claude reported a charge above the per-run limit. This output will not be marked successful. The provider bill is authoritative."))
+                    throw AgentBridgeError.providerFailed(.claude, "The provider reported a charge above the per-run limit.")
                 }
             }
             activeSession.providerSessionID = nil
@@ -330,10 +330,10 @@ extension BridgeService {
             let storedText = String(output.text.prefix(200_000))
             try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "run.output", message: storedText))
             if reservation != nil {
-                let costText = output.actualCostUSD.map { "供應商回報 US$\(String(format: "%.4f", $0))。" } ?? "供應商未提供實際費用；保留預算不退回。"
+                let costText = output.actualCostUSD.map { "Provider reported US$\(String(format: "%.4f", $0))." } ?? "The provider did not report the actual charge. The reserved budget will not be returned."
                 try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "api.run.completed", message: costText))
             } else {
-                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "run.completed", message: processResult.outputWasTruncated ? "回應成功；部分非必要 CLI 輸出超過緩衝上限。" : "回應完成。"))
+                try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "run.completed", message: processResult.outputWasTruncated ? "The response succeeded, but some nonessential CLI output exceeded the buffer limit." : "Response finished."))
             }
             if let taskID {
                 try? finishTrackedRun(taskID: taskID, status: .completed, summary: "Provider CLI reported a completed response.")
@@ -348,7 +348,7 @@ extension BridgeService {
                         knownSecrets: apiRequest.map { [$0.apiKey] } ?? []
                     )
                 } catch {
-                    try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "memory.save.failed", message: "本次成功回應未能寫入共享記憶。"))
+                    try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "memory.save.failed", message: "This successful response could not be written to shared memory."))
                 }
             }
             return output
@@ -384,7 +384,7 @@ extension BridgeService {
         }
         try LocalModelClient.validateSettings(settings)
         guard !settings.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AgentBridgeError.invalidInput("請先在本機模型設定中選擇一個模型。")
+            throw AgentBridgeError.invalidInput("Select a model in Local Model Settings first.")
         }
         try await workspaceManager.validateWorkspace(for: session, accessMode: .readOnly)
         let (providerPrompt, memoryContext, compression) = try promptWithSharedMemory(
@@ -395,7 +395,7 @@ extension BridgeService {
             localSettings: settings
         )
         guard providerPrompt.utf8.count <= LocalModelClient.maximumResponseBytes else {
-            throw AgentBridgeError.invalidInput("本機模型提示超過 2 MiB 上限；請縮短目前要求或減少固定背景內容。")
+            throw AgentBridgeError.invalidInput("The local model prompt exceeds the 2 MiB limit; shorten the current request or reduce pinned background content.")
         }
 
         _ = store.consumeCancellationRequest(for: session.id)
@@ -416,7 +416,7 @@ extension BridgeService {
                 try store.appendEvent(AuditEvent(
                     sessionID: session.id,
                     kind: "memory.loaded",
-                    message: "已載入共享記憶 revision \(memoryContext.revision)，\(Self.contextCompressionAuditSummary(compression.report))"
+                    message: "Loaded shared memory revision \(memoryContext.revision), \(Self.contextCompressionAuditSummary(compression.report))"
                 ))
             }
             let response = try await localModelClient.generate(
@@ -454,7 +454,7 @@ extension BridgeService {
                     try? store.appendEvent(AuditEvent(
                         sessionID: session.id,
                         kind: "memory.save.failed",
-                        message: "本機模型回覆完成，但共享記憶已達安全儲存上限或無法保存；既有記憶未被改寫。"
+                        message: "The local model reply completed, but shared memory reached its safe storage limit or could not be saved; existing memory was not rewritten."
                     ))
                 }
             }
@@ -493,22 +493,22 @@ extension BridgeService {
         maximumMCPToolCallsPerServer: Int? = nil
     ) async throws -> ProviderOutput {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPrompt.isEmpty else { throw AgentBridgeError.invalidInput("請輸入要交給助理的內容。") }
-        guard trimmedPrompt.utf8.count <= 256_000 else { throw AgentBridgeError.invalidInput("提示內容最多 256 KiB。") }
+        guard !trimmedPrompt.isEmpty else { throw AgentBridgeError.invalidInput("Enter content to send to the assistant.") }
+        guard trimmedPrompt.utf8.count <= 256_000 else { throw AgentBridgeError.invalidInput("Prompts can contain up to 256 KiB.") }
         if let maximumMCPToolCallsPerServer, !(1...128).contains(maximumMCPToolCallsPerServer) {
             throw AgentBridgeError.invalidInput("The per-run MCP tool-call cap must be between 1 and 128.")
         }
 
         let initialSession = try loadSession(sessionID)
         guard initialSession.provider != .local else {
-            throw AgentBridgeError.sessionMismatch("本機模型目前只支援唯讀專案對話；尚未執行變更。")
+            throw AgentBridgeError.sessionMismatch("Local models currently support only read-only project conversations; no changes were run.")
         }
 
         let lease = try store.acquireRunLease(for: sessionID)
         defer { withExtendedLifetime(lease) {} }
         let settings = try store.loadSettings()
         guard settings.usageMode == .subscription else {
-            throw AgentBridgeError.sessionMismatch("隔離變更只支援已確認的訂閱登入；不會啟動 Claude API 付費操作。")
+            throw AgentBridgeError.sessionMismatch("Isolated changes support only a confirmed subscription sign-in; no paid Claude API operation will start.")
         }
         let session = try loadSession(sessionID)
         try requireIsolatedChangesSession(session)
@@ -520,7 +520,7 @@ extension BridgeService {
             try? store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: "change.run.blocked",
-                message: "未提供目前已核准的工作計畫識別碼與檢視摘要；檔案尚未寫入。"
+                message: "The currently approved work plan identifier and review digest were not provided; no files were written."
             ))
             throw AgentBridgeError.changePlanRequired
         }
@@ -536,7 +536,7 @@ extension BridgeService {
             try store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: "auth.refused",
-                message: "未確認 \(session.provider.rawValue) 訂閱登入；\(assessment.message)"
+                message: "Could not confirm \(session.provider.rawValue) subscription sign-in; \(assessment.message)"
             ))
             throw AgentBridgeError.unauthenticated(session.provider, assessment.message)
         }
@@ -619,13 +619,13 @@ extension BridgeService {
             try store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: "change.run.started",
-                message: "已在隔離工作區開始 \(session.provider.rawValue) 變更執行；計畫摘要雜湊 \(plan.reviewDigest)。不會寫入來源儲存庫。"
+                message: "Started \(session.provider.rawValue) change run in the isolated workspace; plan summary hash \(plan.reviewDigest). The source repository will not be written."
             ))
             if let memoryContext {
                 try? store.appendEvent(AuditEvent(
                     sessionID: sessionID,
                     kind: "memory.loaded",
-                    message: "已載入共享記憶 revision \(memoryContext.revision)，包含 \(memoryContext.includedTurnCount) 個先前回合\(memoryContext.wasTruncated ? "（內容已截短）" : "")."
+                    message: "Loaded shared memory revision \(memoryContext.revision), with \(memoryContext.includedTurnCount) earlier turn(s)\(memoryContext.wasTruncated ? " (content truncated)" : "")."
                 ))
             }
             let (processResult, parsedOutput) = try await adapter.runChanges(
@@ -656,7 +656,7 @@ extension BridgeService {
             try store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: "change.run.completed",
-                message: processResult.outputWasTruncated ? "隔離變更執行成功；部分非必要 CLI 輸出超過緩衝上限。" : "隔離變更執行完成；使用者可檢視檔案差異。"
+                message: processResult.outputWasTruncated ? "Isolated change run succeeded; some non-essential CLI output exceeded the buffer limit." : "Isolated change run completed; you can review the file diffs."
             ))
             try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "run.output", message: String(output.text.prefix(200_000))))
             let currentChangeDiff = try await workspaceManager.diff(for: activeSession)
@@ -677,7 +677,7 @@ extension BridgeService {
                         assistantText: output.text
                     )
                 } catch {
-                    try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "memory.save.failed", message: "本次成功回應未能寫入共享記憶。"))
+                    try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "memory.save.failed", message: "This successful response could not be written to shared memory."))
                 }
             }
             return output
@@ -719,7 +719,7 @@ extension BridgeService {
         let commandArguments: [String]
         if let customExecutableURL {
             guard customCommandApproved else {
-                throw AgentBridgeError.verificationCommandRejected("自訂程式必須先由使用者檢視並明確核准。")
+                throw AgentBridgeError.verificationCommandRejected("A custom program must first be reviewed and explicitly approved by the user.")
             }
             let candidate = customExecutableURL.standardizedFileURL
             guard customExecutableURL.isFileURL,
@@ -727,23 +727,23 @@ extension BridgeService {
                   !candidate.path.contains("\0"),
                   !candidate.path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
                   FileManager.default.isExecutableFile(atPath: candidate.path) else {
-                throw AgentBridgeError.verificationCommandRejected("請選擇可執行的絕對路徑。")
+                throw AgentBridgeError.verificationCommandRejected("Choose an executable absolute path.")
             }
             guard arguments.count <= 128,
                   arguments.allSatisfy({ !$0.contains("\0") && $0.utf8.count <= 8_192 }),
                   arguments.reduce(0, { $0 + $1.utf8.count }) <= 64 * 1_024 else {
-                throw AgentBridgeError.verificationCommandRejected("自訂參數超過大小限制或包含無效字元。")
+                throw AgentBridgeError.verificationCommandRejected("The custom arguments exceed the size limit or contain invalid characters.")
             }
             executableURL = candidate
             commandArguments = arguments
         } else {
             guard arguments.isEmpty, !customCommandApproved else {
-                throw AgentBridgeError.verificationCommandRejected("預設驗證不接受額外參數或自訂指令核准旗標。")
+                throw AgentBridgeError.verificationCommandRejected("The default verification does not accept extra arguments or a custom-command approval flag.")
             }
             let script = workingDirectory.appendingPathComponent(".codex/ci.sh")
             var metadata = stat()
             guard lstat(script.path, &metadata) == 0 else {
-                if errno != ENOENT { throw AgentBridgeError.verificationCommandRejected("無法安全檢查 .codex/ci.sh。") }
+                if errno != ENOENT { throw AgentBridgeError.verificationCommandRejected("Could not safely inspect .codex/ci.sh.") }
                 let result = VerificationResult(
                     command: nil,
                     exitCode: nil,
@@ -752,7 +752,7 @@ extension BridgeService {
                     standardError: "",
                     wasCancelled: false,
                     timedOut: false,
-                    skippedReason: "隔離工作區沒有可執行的 .codex/ci.sh。"
+                    skippedReason: "The isolated workspace has no executable .codex/ci.sh."
                 )
                 session.verificationPassed = nil
                 session.verificationDiffDigest = nil
@@ -766,7 +766,7 @@ extension BridgeService {
             }
             guard (metadata.st_mode & S_IFMT) == S_IFREG,
                   FileManager.default.isExecutableFile(atPath: script.path) else {
-                throw AgentBridgeError.verificationCommandRejected(".codex/ci.sh 必須是一般且可執行的檔案。")
+                throw AgentBridgeError.verificationCommandRejected(".codex/ci.sh must be a regular, executable file.")
             }
             executableURL = script
             commandArguments = []
@@ -799,7 +799,7 @@ extension BridgeService {
             try store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: "verification.recovered_stale_session",
-                message: "已取得工作階段執行鎖；先前的執行狀態沒有作用中的程序，已記錄為失敗後開始驗證。"
+                message: "Acquired the session run lock; the previous run state had no active process, so it was recorded as failed before verification started."
             ))
         }
         _ = store.consumeCancellationRequest(for: sessionID)
@@ -812,7 +812,7 @@ extension BridgeService {
         try store.appendEvent(AuditEvent(
             sessionID: sessionID,
             kind: "verification.started",
-            message: "執行 \(OutputRedactor.redact(executableURL.path)) \(OutputRedactor.redact(argumentsForAudit(commandArguments)))，工作目錄 \(workingDirectory.path)。"
+            message: "Running \(OutputRedactor.redact(executableURL.path)) \(OutputRedactor.redact(argumentsForAudit(commandArguments))), working directory \(workingDirectory.path)."
         ))
 
         do {
@@ -860,7 +860,7 @@ extension BridgeService {
             try store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: kind,
-                message: "結束代碼 \(processResult.exitCode)，耗時 \(String(format: "%.3f", duration)) 秒，標準輸出 \(result.standardOutput.utf8.count) 位元組，錯誤輸出 \(result.standardError.utf8.count) 位元組。"
+                message: "Exit code \(processResult.exitCode), took \(String(format: "%.3f", duration)) s, standard output \(result.standardOutput.utf8.count) bytes, error output \(result.standardError.utf8.count) bytes."
             ))
             return result
         } catch {
@@ -881,7 +881,7 @@ extension BridgeService {
             try? store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: wasCancelled ? "verification.cancelled" : "verification.failed",
-                message: "驗證未完成；耗時 \(String(format: "%.3f", duration)) 秒。\(OutputRedactor.redact(error.localizedDescription))"
+                message: "Verification did not finish; took \(String(format: "%.3f", duration)) s.\(OutputRedactor.redact(error.localizedDescription))"
             ))
             if wasCancelled {
                 return VerificationResult(
@@ -916,34 +916,34 @@ extension BridgeService {
     ) async throws -> ProcessResult {
         let initialSession = try loadSession(sessionID)
         guard initialSession.provider != .local else {
-            throw AgentBridgeError.sessionMismatch("本機模型不支援 Terminal 或互動控制；尚未啟動程序。")
+            throw AgentBridgeError.sessionMismatch("Local models do not support Terminal or interactive control; no process was started.")
         }
         let lease = try store.acquireRunLease(for: sessionID)
         defer { withExtendedLifetime(lease) {} }
         let settings = try store.loadSettings()
         guard settings.usageMode == .subscription else {
-            throw AgentBridgeError.sessionMismatch("原生互動終端只使用訂閱登入模式；API 付費模式不支援互動終端。")
+            throw AgentBridgeError.sessionMismatch("The native interactive terminal uses subscription sign-in only. Paid API mode does not support it.")
         }
         var session = try loadSession(sessionID)
         guard session.provider == .codex || session.provider == .claude,
               session.policy.accessMode == .interactiveManualApproval,
               !session.policy.workspaceReadOnly else {
-            throw AgentBridgeError.sessionMismatch("請建立互動手動核准模式的工作階段。")
+            throw AgentBridgeError.sessionMismatch("Create a session with interactive manual approval.")
         }
         let profile = try requireBoundSelectedProfile(for: session)
         if let profileID, profileID != profile.id {
-            throw AgentBridgeError.sessionMismatch("Terminal 啟動設定與工作階段綁定帳戶不同；請建立新的工作階段。")
+            throw AgentBridgeError.sessionMismatch("The Terminal launch settings use a different account from the one bound to the session. Create a new session.")
         }
         try authorizeManagedRun(session: session, profile: profile, usageMode: .subscription)
         try await workspaceManager.validateWorkspace(for: session, accessMode: .interactiveManualApproval)
         let executable = try RuntimeEnvironment.resolveExecutable(provider: session.provider, configuredPath: settings.binaryPath(for: session.provider))
         let assessment = try await checkAuthentication(profile: profile, executable: executable)
         guard assessment.confirmedSubscription else {
-            try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "auth.refused", message: "未確認 \(session.provider.rawValue) 訂閱登入；\(assessment.message)"))
+            try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "auth.refused", message: "Could not confirm \(session.provider.rawValue) subscription sign-in; \(assessment.message)"))
             throw AgentBridgeError.unauthenticated(session.provider, assessment.message)
         }
         _ = store.consumeCancellationRequest(for: sessionID)
-        onProgress?("正在 Terminal 啟動 \(session.provider.rawValue) 互動工作階段。")
+        onProgress?("Launching in Terminal: \(session.provider.rawValue) Interactive Session.")
         let workspacePath = session.workspacePath
         var contextFileURL: URL?
         defer {
@@ -954,14 +954,14 @@ extension BridgeService {
             session.updatedAt = Date()
             let invocationSession = session
             try store.saveSession(session)
-            try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "interactive.launching", message: "正在 Terminal 啟動 \(session.provider.rawValue)；終端機操作與輸出不會被保存。"))
+            try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "interactive.launching", message: "Launching in Terminal: \(session.provider.rawValue); terminal activity and output will not be saved."))
             let temp = try makePrivateTemporaryDirectory(label: "interactive-\(sessionID.uuidString.lowercased())")
             defer { try? FileManager.default.removeItem(at: temp) }
             var environment = try providerEnvironment(profile: profile, privateTemporaryDirectory: temp)
             environment["TERM"] = "xterm-256color"
             contextFileURL = try writeInteractiveMemoryContext(session: invocationSession, profile: profile)
             if contextFileURL != nil {
-                try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "memory.loaded", message: "已提供共享記憶檔案給互動終端；終端機歷史不會被保存。"))
+                try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "memory.loaded", message: "A shared memory file was provided to the interactive terminal. Terminal history is not saved."))
             }
             let result = try await adapter.runInteractive(
                 provider: session.provider,
@@ -980,8 +980,8 @@ extension BridgeService {
                     launchedSession.updatedAt = Date()
                     do {
                         try store.saveSession(launchedSession)
-                        try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "interactive.started", message: "\(invocationSession.provider.rawValue) 已在 Terminal 啟動；未保存終端機操作或輸出。"))
-                        onProgress?("\(invocationSession.provider.rawValue) 互動工作階段已在 Terminal 中啟動。")
+                        try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "interactive.started", message: "\(invocationSession.provider.rawValue) launched in Terminal; terminal activity and output are not saved."))
+                        onProgress?("\(invocationSession.provider.rawValue) interactive session started in Terminal.")
                         return true
                     } catch {
                         return false
@@ -994,8 +994,8 @@ extension BridgeService {
             session.status = .completed
             session.updatedAt = Date()
             try store.saveSession(session)
-            try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "interactive.completed", message: "\(session.provider.rawValue) 互動工作階段已結束；未保存終端機記錄。結束代碼 \(result.exitCode)。"))
-            onProgress?("\(session.provider.rawValue) 互動工作階段已結束。")
+            try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "interactive.completed", message: "\(session.provider.rawValue) interactive session ended; no terminal log was saved. Exit code \(result.exitCode)."))
+            onProgress?("\(session.provider.rawValue) interactive session ended.")
             return result
         } catch {
             session = (try? loadSession(sessionID)) ?? session
@@ -1028,7 +1028,7 @@ extension BridgeService {
         defer { try? FileManager.default.removeItem(at: temp) }
         var environment = try providerEnvironment(profile: profile, privateTemporaryDirectory: temp)
         environment["TERM"] = "xterm-256color"
-        onProgress?("請在官方 \(profile.provider.rawValue) 登入畫面完成這個新帳戶的登入。")
+        onProgress?("Complete sign-in for this new account on the official \(profile.provider.rawValue) sign-in screen.")
         let result = try await runner.runInteractive(
             executableURL: executable,
             arguments: arguments,
@@ -1039,7 +1039,7 @@ extension BridgeService {
         )
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
         guard result.exitCode == 0 else {
-            throw AgentBridgeError.providerFailed(profile.provider, "官方登入程序結束代碼 \(result.exitCode)。")
+            throw AgentBridgeError.providerFailed(profile.provider, "Official sign-in process exit code \(result.exitCode).")
         }
         return result
     }
@@ -1053,12 +1053,12 @@ extension BridgeService {
         if !allowUnselected {
             let selected = try accountProfileStore.selected(provider: session.provider)
             guard selected.id == boundID else {
-                throw AgentBridgeError.sessionMismatch("目前選取的帳戶與工作階段綁定帳戶不同；請建立新的隔離工作區後再執行。")
+                throw AgentBridgeError.sessionMismatch("The selected account differs from the account bound to the session. Create a new isolated workspace before running.")
             }
         }
         let profile = try accountProfile(id: boundID)
         guard profile.provider == session.provider else {
-            throw AgentBridgeError.sessionMismatch("工作階段綁定了不同供應商的帳戶。")
+            throw AgentBridgeError.sessionMismatch("The session is bound to an account from a different provider.")
         }
         return profile
     }
@@ -1080,7 +1080,7 @@ extension BridgeService {
         apiKey: String? = nil
     ) throws -> [String: String] {
         guard profile.provider != .local else {
-            throw AgentBridgeError.sessionMismatch("本機模型不會讀取 Codex 或 Claude CLI 環境與登入資料夾。")
+            throw AgentBridgeError.sessionMismatch("Local models do not read the Codex or Claude CLI environment or sign-in folders.")
         }
         var environment = RuntimeEnvironment.sanitized(
             base: baseEnvironment,
@@ -1092,7 +1092,7 @@ extension BridgeService {
         let permittedKey = profile.provider == .codex ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"
         guard Set(overrides.keys).isSubset(of: [permittedKey]),
               overrides.values.allSatisfy({ $0.hasPrefix("/") && !$0.contains("\0") }) else {
-            throw AccountProfileError.persistence("供應商環境變數覆寫不符合帳戶資料夾規則。")
+            throw AccountProfileError.persistence("The provider environment override does not match the account directory rules.")
         }
         environment.merge(overrides, uniquingKeysWith: { _, new in new })
         return environment

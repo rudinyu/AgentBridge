@@ -28,7 +28,7 @@ public final class BridgeService: @unchecked Sendable {
         runtimeProxyExecutableURL: URL? = nil
     ) throws {
         guard let workspaceRootURL = store.workspaceRootURL else {
-            throw AgentBridgeError.invalidInput("尚未設定工作區資料根目錄；請在 App 選擇資料夾，或先執行 `agentbridge workspace set /absolute/path/to/root`。")
+            throw AgentBridgeError.invalidInput("No workspace data root is set. Choose a folder in the app, or run `agentbridge workspace set /absolute/path/to/root` first.")
         }
         self.store = store
         self.runner = runner
@@ -152,10 +152,10 @@ public final class BridgeService: @unchecked Sendable {
         accountProfileID: UUID? = nil
     ) async throws -> SessionRecord {
         guard try store.loadSettings().usageMode != .api || provider == .claude || provider == .local else {
-            throw AgentBridgeError.sessionMismatch("API 模式只支援 Claude；請先切換至訂閱登入模式以使用 Codex。")
+            throw AgentBridgeError.sessionMismatch("API mode supports Claude only. Switch to subscription sign-in mode to use Codex.")
         }
         guard provider != .local || accessMode == .readOnly else {
-            throw AgentBridgeError.sessionMismatch("本機模型目前只支援唯讀專案工作階段；尚未建立工作區。")
+            throw AgentBridgeError.sessionMismatch("Local models currently support only read-only project sessions; no workspace was created.")
         }
         let selectedProfile: AccountProfile
         if let accountProfileID {
@@ -191,11 +191,11 @@ public final class BridgeService: @unchecked Sendable {
         try AuditStore.createPrivateDirectory(root)
         let url = root.appendingPathComponent("\(label)-\(UUID().uuidString.lowercased())", isDirectory: true)
         guard mkdir(url.path, mode_t(0o700)) == 0 else {
-            throw AgentBridgeError.persistence("無法建立全新的私有 usage TUI 工作資料夾。")
+            throw AgentBridgeError.persistence("Could not create a new private usage TUI working directory.")
         }
         guard chmod(url.path, mode_t(0o700)) == 0 else {
             try? FileManager.default.removeItem(at: url)
-            throw AgentBridgeError.persistence("無法設定 usage TUI 工作資料夾權限。")
+            throw AgentBridgeError.persistence("Could not set permissions on the usage TUI working directory.")
         }
         return url
     }

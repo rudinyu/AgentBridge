@@ -27,7 +27,7 @@ extension BridgeService {
 
     private func rawDiscussion(id: UUID) throws -> DiscussionRecord {
         guard let record = try discussionStore.record(id: id) else {
-            throw AgentBridgeError.sessionMismatch("找不到這個討論。")
+            throw AgentBridgeError.sessionMismatch("Could not find this discussion.")
         }
         return record
     }
@@ -95,7 +95,7 @@ extension BridgeService {
         accountProfileID: UUID? = nil
     ) throws -> DiscussionRecord {
         guard let dataRoot = store.workspaceRootURL else {
-            throw AgentBridgeError.invalidInput("尚未設定工作區資料根目錄；請先選擇使用者資料資料夾。")
+            throw AgentBridgeError.invalidInput("No workspace data root is configured; choose a user data folder first.")
         }
         let profileID: UUID
         if let accountProfileID {
@@ -115,7 +115,7 @@ extension BridgeService {
         try store.appendEvent(AuditEvent(
             sessionID: saved.id,
             kind: "discussion.created",
-            message: "已建立不綁定 Git 專案的討論；對話記憶由 AgentBridge 管理。"
+            message: "Created a discussion not bound to a Git project; AgentBridge manages its conversation memory."
         ))
         return saved
     }
@@ -130,12 +130,12 @@ extension BridgeService {
         var record = try rawDiscussion(id: id)
         try recoverStaleDiscussionRun(&record)
         guard !record.status.isInFlight else {
-            throw AgentBridgeError.sessionMismatch("討論仍在執行；請先停止目前回合再切換帳戶。")
+            throw AgentBridgeError.sessionMismatch("The discussion is still running; stop the current turn before switching accounts.")
         }
         let profile = try accountProfile(id: accountProfileID)
         guard profile.provider == provider else { throw AccountProfileError.providerMismatch(accountProfileID, provider) }
         guard record.provider != provider || record.accountProfileID != accountProfileID else { return record }
-        guard record.revision < Int.max else { throw AgentBridgeError.persistence("討論版本計數已達上限。") }
+        guard record.revision < Int.max else { throw AgentBridgeError.persistence("The discussion revision counter has reached its limit.") }
         record.provider = provider
         record.accountProfileID = accountProfileID
         record.revision += 1
@@ -144,7 +144,7 @@ extension BridgeService {
         try store.appendEvent(AuditEvent(
             sessionID: id,
             kind: "discussion.target.changed",
-            message: "討論目標已切換為 \(provider.rawValue) 帳戶 \(accountProfileID.uuidString.lowercased())；不會續接其他帳戶或供應商的原生對話。"
+            message: "Discussion target switched to \(provider.rawValue) Account \(accountProfileID.uuidString.lowercased()); native conversations from other accounts or providers will not be resumed."
         ))
         return saved
     }
@@ -158,7 +158,7 @@ extension BridgeService {
     ) async throws -> ProviderOutput {
         let cleanedPrompt = try Self.boundedDiscussionText(OutputRedactor.redact(prompt))
         guard !cleanedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AgentBridgeError.invalidInput("請輸入要討論的內容。")
+            throw AgentBridgeError.invalidInput("Enter something to discuss.")
         }
 
         let lease = try store.acquireRunLease(for: id)
@@ -166,25 +166,25 @@ extension BridgeService {
         var record = try rawDiscussion(id: id)
         try recoverStaleDiscussionRun(&record)
         guard !record.status.isInFlight else {
-            throw AgentBridgeError.sessionMismatch("討論已標示為執行中；請重新開啟後再試。")
+            throw AgentBridgeError.sessionMismatch("The discussion is marked as running; reopen it and try again.")
         }
         let profile = try requireDiscussionProfile(record)
         let effectiveIsShareable = isShareable && profile.allowsSharedMemory
         guard record.turns.count < DiscussionStore.maximumTurnsPerDiscussion else {
-            throw AgentBridgeError.invalidInput("此討論已達逐字稿安全回合上限；原有回合已保留，請另開討論繼續。")
+            throw AgentBridgeError.invalidInput("This discussion has reached its safe transcript turn limit; existing turns are kept. Start a new discussion to continue.")
         }
         guard record.usageProfileIDs.count < 128 || record.usageProfileIDs.contains(profile.id) else {
-            throw AgentBridgeError.invalidInput("此討論已使用太多不同帳戶，請另開討論。")
+            throw AgentBridgeError.invalidInput("This discussion has used too many different accounts; start a new discussion.")
         }
         guard record.revision < Int.max - 1 else {
-            throw AgentBridgeError.persistence("討論版本計數已達上限。")
+            throw AgentBridgeError.persistence("The discussion revision counter has reached its limit.")
         }
 
         let bridgeSettings = try store.loadSettings()
         if profile.provider == .local {
             try LocalModelClient.validateSettings(bridgeSettings.localModel)
             guard !bridgeSettings.localModel.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw AgentBridgeError.invalidInput("請先在本機模型設定中選擇一個模型。")
+                throw AgentBridgeError.invalidInput("Select a model in Local Model Settings first.")
             }
         }
 
@@ -213,7 +213,7 @@ extension BridgeService {
         record.status = .running
         record.updatedAt = Date()
         record = try discussionStore.save(record)
-        try store.appendEvent(AuditEvent(sessionID: id, kind: "discussion.turn.started", message: "已開始討論回合；提示內容不會寫入稽核事件。"))
+        try store.appendEvent(AuditEvent(sessionID: id, kind: "discussion.turn.started", message: "Discussion turn started; prompt content is not written to audit events."))
 
         var activeRecord = record
         var runStarted = false
@@ -225,7 +225,7 @@ extension BridgeService {
                 ? LocalModelClient.maximumResponseBytes
                 : 512 * 1_024
             guard providerPrompt.utf8.count <= maximumPromptBytes else {
-                throw AgentBridgeError.invalidInput("討論上下文超過安全大小上限；請縮短目前要求或固定備註。")
+                throw AgentBridgeError.invalidInput("The discussion context exceeds its safe size limit; shorten the current request or pinned notes.")
             }
             let emitter = ProgressEmitter(sessionID: id, store: store, callback: onProgress)
             if compression.report.originalTurnCount > 0 || compression.report.compressionApplied {
@@ -266,13 +266,13 @@ extension BridgeService {
                 }
                 let assessment = try await checkDiscussionAuthentication(profile: profile, executable: executable)
                 guard assessment.confirmedSubscription else {
-                    try store.appendEvent(AuditEvent(sessionID: id, kind: "auth.refused", message: "未確認訂閱登入；\(assessment.message)"))
+                    try store.appendEvent(AuditEvent(sessionID: id, kind: "auth.refused", message: "Subscription sign-in not confirmed; \(assessment.message)"))
                     throw AgentBridgeError.unauthenticated(profile.provider, assessment.message)
                 }
                 try store.appendEvent(AuditEvent(
                     sessionID: id,
                     kind: "run.started",
-                    message: "account_profile_id=\(profile.id.uuidString.lowercased()); 以官方訂閱登入開始不綁定 Git 的唯讀討論。未啟用 MCP、Skills、擴充功能或原生對話續接。"
+                    message: "account_profile_id=\(profile.id.uuidString.lowercased()); started a read-only discussion not bound to Git with the official subscription sign-in. MCP, Skills, extensions and native conversation resume are not enabled."
                 ))
                 runStarted = true
                 let (processResult, output) = try await adapter.runDiscussion(
@@ -290,7 +290,7 @@ extension BridgeService {
             }
             let output = ProviderOutput(text: try Self.boundedDiscussionText(parsedOutput.text), providerSessionID: nil)
             guard let turnIndex = activeRecord.turns.firstIndex(where: { $0.id == turnID }) else {
-                throw AgentBridgeError.persistence("討論回合在執行期間已消失。")
+                throw AgentBridgeError.persistence("The discussion turn disappeared while running.")
             }
             activeRecord.turns[turnIndex].assistantText = output.text
             activeRecord.revision += 1
@@ -301,8 +301,8 @@ extension BridgeService {
             try store.appendEvent(AuditEvent(
                 sessionID: id,
                 kind: profile.provider == .local ? "local.run.completed" : "run.completed",
-                message: localUsageSummary.map { "討論回合完成。 \($0)" }
-                    ?? (processOutputWasTruncated ? "討論完成；部分非必要 CLI 輸出超過緩衝上限。" : "討論回合完成。")
+                message: localUsageSummary.map { "Discussion turn completed. \($0)" }
+                    ?? (processOutputWasTruncated ? "Discussion completed; some non-essential CLI output exceeded the buffer limit." : "Discussion turn completed.")
             ))
             return output
         } catch {
@@ -323,7 +323,7 @@ extension BridgeService {
     public func cancelDiscussion(id: UUID) throws {
         let record = try discussion(id: id)
         guard record.status == .running else {
-            throw AgentBridgeError.sessionMismatch("這個討論目前沒有執行中的回合。")
+            throw AgentBridgeError.sessionMismatch("This discussion has no running turn.")
         }
         let activeLease: SessionRunLease?
         do {
@@ -336,10 +336,10 @@ extension BridgeService {
             defer { withExtendedLifetime(activeLease) {} }
             var interrupted = try rawDiscussion(id: id)
             try recoverStaleDiscussionRun(&interrupted)
-            throw AgentBridgeError.sessionMismatch("這個討論沒有作用中的程序；已保留逐字稿並標記中斷回合。")
+            throw AgentBridgeError.sessionMismatch("This discussion has no active process; the transcript is kept and the interrupted turn is marked.")
         }
         try store.requestCancellation(forRunID: id)
-        try store.appendEvent(AuditEvent(sessionID: id, kind: "discussion.cancel.requested", message: "已要求停止目前討論回合。"))
+        try store.appendEvent(AuditEvent(sessionID: id, kind: "discussion.cancel.requested", message: "Requested to stop the current discussion turn."))
     }
 
     public func prepareDiscussionProjectHandoff(
@@ -356,7 +356,7 @@ extension BridgeService {
         var record = try rawDiscussion(id: discussionID)
         try recoverStaleDiscussionRun(&record)
         guard !record.status.isInFlight else {
-            throw AgentBridgeError.sessionMismatch("討論仍在執行；完成或停止目前回合後再準備專案交接。")
+            throw AgentBridgeError.sessionMismatch("The discussion is still running; finish or stop the current turn before preparing a project handoff.")
         }
         // Reviewed previews from an older discussion revision can no longer
         // be applied, and consumed previews are also inert. Retire those before
@@ -367,17 +367,17 @@ extension BridgeService {
             $0.consumedSessionID != nil || $0.discussionRevision != currentDiscussionRevision
         }
         guard accessMode == .readOnly || accessMode == .isolatedChanges else {
-            throw AgentBridgeError.invalidInput("討論交接目前只支援唯讀或隔離變更工作階段。")
+            throw AgentBridgeError.invalidInput("Discussion handoffs currently support only read-only or isolated-change sessions.")
         }
         guard targetProvider != .local || accessMode == .readOnly else {
-            throw AgentBridgeError.sessionMismatch("本機模型只支援唯讀專案工作階段；未建立交接預覽。")
+            throw AgentBridgeError.sessionMismatch("Local models support only read-only project sessions; no handoff preview was created.")
         }
         guard record.handoffs.count < DiscussionStore.maximumHandoffsPerDiscussion else {
-            throw AgentBridgeError.invalidInput("此討論已達交接預覽數量上限。")
+            throw AgentBridgeError.invalidInput("This discussion has reached its handoff preview limit.")
         }
         let targetSettings = try store.loadSettings()
         guard targetSettings.usageMode != .api || targetProvider == .claude || targetProvider == .local else {
-            throw AgentBridgeError.sessionMismatch("目前全域模式為 API；請先切換至訂閱登入模式，再為 Codex 建立專案工作階段。討論本身仍使用訂閱登入。")
+            throw AgentBridgeError.sessionMismatch("The global mode is API; switch to subscription sign-in mode before creating a Codex project session. The discussion itself still uses subscription sign-in.")
         }
         let destinationProfile = try accountProfile(id: targetProfileID)
         guard destinationProfile.provider == targetProvider else {
@@ -403,14 +403,14 @@ extension BridgeService {
         }
         let selectedIDs = selectedTurnIDs ?? Set(eligibleTurns.map(\.id))
         guard selectedIDs.count <= DiscussionStore.maximumTurnsPerHandoff else {
-            throw AgentBridgeError.invalidInput("選取的討論回合數量超過上限。")
+            throw AgentBridgeError.invalidInput("Too many discussion turns are selected.")
         }
         let selectedTurns = eligibleTurns.filter { selectedIDs.contains($0.id) }
         guard selectedTurns.count == selectedIDs.count else {
-            throw AgentBridgeError.sessionMismatch("所選回合已取消分享、來源帳戶不同意，或目標帳戶不允許共享記憶。")
+            throw AgentBridgeError.sessionMismatch("A selected turn is no longer shared, its source account does not consent, or the target account does not allow shared memory.")
         }
         if !selectedTurns.isEmpty, !destinationProfile.allowsSharedMemory {
-            throw AgentBridgeError.sessionMismatch("目標帳戶尚未允許共享記憶；請取消選取交接內容，或先檢視並啟用此帳戶的記憶同意設定。")
+            throw AgentBridgeError.sessionMismatch("The target account does not allow shared memory yet; deselect the handoff content, or review and enable this account's memory consent first.")
         }
         let handoff = DiscussionProjectHandoff(
             discussionID: discussionID,
@@ -427,7 +427,7 @@ extension BridgeService {
             }
         )
         guard handoff.hasValidDigest() else {
-            throw AgentBridgeError.persistence("無法產生有效的討論交接摘要。")
+            throw AgentBridgeError.persistence("Could not produce a valid discussion handoff summary.")
         }
         record.handoffs.append(handoff)
         record.updatedAt = Date()
@@ -435,7 +435,7 @@ extension BridgeService {
         try store.appendEvent(AuditEvent(
             sessionID: discussionID,
             kind: "discussion.handoff.prepared",
-            message: "已準備 \(mode.rawValue) 專案交接預覽，包含 \(handoff.selectedTurns.count) 個已同意回合（摘要 \(handoff.reviewedDigest)）；尚未建立或連結專案。"
+            message: "Prepared \(mode.rawValue) project handoff preview with \(handoff.selectedTurns.count) consented turns (summary \(handoff.reviewedDigest)); no project has been created or linked yet."
         ))
         return record.handoffs.first(where: { $0.id == handoff.id }) ?? handoff
     }
@@ -446,17 +446,17 @@ extension BridgeService {
         explicitConfirmation: Bool
     ) async throws -> SessionRecord {
         guard explicitConfirmation else {
-            throw AgentBridgeError.sessionMismatch("建立或連結專案前必須明確確認已檢視交接內容。")
+            throw AgentBridgeError.sessionMismatch("You must explicitly confirm that you reviewed the handoff before creating or linking a project.")
         }
         guard let (recordID, _, initialHandoff) = try findDiscussionHandoff(id: handoffID) else {
-            throw AgentBridgeError.sessionMismatch("找不到這份討論交接預覽。")
+            throw AgentBridgeError.sessionMismatch("Could not find this discussion handoff preview.")
         }
         let lease = try store.acquireRunLease(for: recordID)
         defer { withExtendedLifetime(lease) {} }
         var record = try rawDiscussion(id: recordID)
         try recoverStaleDiscussionRun(&record)
         guard let handoffIndex = record.handoffs.firstIndex(where: { $0.id == handoffID }) else {
-            throw AgentBridgeError.sessionMismatch("討論交接預覽已不存在。")
+            throw AgentBridgeError.sessionMismatch("The discussion handoff preview no longer exists.")
         }
         let handoff = record.handoffs[handoffIndex]
         guard handoff.discussionID == record.id,
@@ -464,30 +464,30 @@ extension BridgeService {
               handoff.hasValidDigest(),
               handoff.reviewedDigest == reviewedDigest.lowercased(),
               handoff.reviewedDigest == initialHandoff.reviewedDigest else {
-            throw AgentBridgeError.sessionMismatch("討論或交接內容在檢視後已改變；請重新產生交接預覽。")
+            throw AgentBridgeError.sessionMismatch("The discussion or handoff content changed after review; generate the handoff preview again.")
         }
         guard handoff.consumedSessionID == nil else {
-            throw AgentBridgeError.sessionMismatch("這份交接預覽已用於建立或連結專案。")
+            throw AgentBridgeError.sessionMismatch("This handoff preview was already used to create or link a project.")
         }
         guard !record.status.isInFlight else {
-            throw AgentBridgeError.sessionMismatch("討論仍在執行；請完成或停止回合後再轉入專案。")
+            throw AgentBridgeError.sessionMismatch("The discussion is still running; finish or stop the turn before moving it into a project.")
         }
         guard record.linkedSessionIDs.count < 64 else {
-            throw AgentBridgeError.invalidInput("此討論已連結太多專案工作階段。")
+            throw AgentBridgeError.invalidInput("This discussion is linked to too many project sessions.")
         }
         let currentSettings = try store.loadSettings()
         guard currentSettings.usageMode != .api || handoff.targetProvider == .claude || handoff.targetProvider == .local else {
-            throw AgentBridgeError.sessionMismatch("目前全域模式為 API；請先切換至訂閱登入模式，再為 Codex 建立專案工作階段。")
+            throw AgentBridgeError.sessionMismatch("The global mode is API; switch to subscription sign-in mode before creating a Codex project session.")
         }
         let targetProfile = try accountProfile(id: handoff.targetProfileID)
         guard targetProfile.provider == handoff.targetProvider,
               handoff.selectedTurns.isEmpty || targetProfile.allowsSharedMemory else {
-            throw AgentBridgeError.sessionMismatch("目標帳戶的共享記憶同意已變更；請重新檢視交接。")
+            throw AgentBridgeError.sessionMismatch("The target account's shared-memory consent has changed; review the handoff again.")
         }
         for turn in handoff.selectedTurns {
             let sourceProfile = try accountProfile(id: turn.sourceAccountProfileID)
             guard sourceProfile.provider == turn.provider, sourceProfile.allowsSharedMemory else {
-                throw AgentBridgeError.sessionMismatch("來源帳戶的共享記憶同意已變更；請重新檢視交接。")
+                throw AgentBridgeError.sessionMismatch("The source account's shared-memory consent has changed; review the handoff again.")
             }
         }
 
@@ -511,7 +511,7 @@ extension BridgeService {
         case .attachExisting:
             let current = try await workspaceManager.inspectProjectRepository(path: handoff.destinationPath)
             guard current.commit == handoff.expectedRepositoryCommit else {
-                throw AgentBridgeError.sessionMismatch("目標儲存庫在預覽後已移動到其他提交；請重新檢視交接。")
+                throw AgentBridgeError.sessionMismatch("The target repository moved to another commit after the preview; review the handoff again.")
             }
             attachSnapshot = current
             if !importedMemoryTurns.isEmpty {
@@ -570,7 +570,7 @@ extension BridgeService {
             accountProfileID: handoff.targetProfileID
         )
         guard session.snapshotCommit == snapshot.commit else {
-            throw AgentBridgeError.sessionMismatch("專案工作階段未固定在已檢視的目標提交。")
+            throw AgentBridgeError.sessionMismatch("The project session is not pinned to the reviewed target commit.")
         }
         record.handoffs[handoffIndex].consumedSessionID = session.id
         if !record.linkedSessionIDs.contains(session.id) { record.linkedSessionIDs.append(session.id) }
@@ -580,7 +580,7 @@ extension BridgeService {
         try store.appendEvent(AuditEvent(
             sessionID: recordID,
             kind: "discussion.project.linked",
-            message: "已將原討論連結至 \(handoff.mode.rawValue) 專案工作階段 \(session.id.uuidString.lowercased())；原討論及其逐字稿保留。"
+            message: "Linked the original discussion to \(handoff.mode.rawValue) ProjectSession \(session.id.uuidString.lowercased()); the original discussion and its transcript are kept."
         ))
         transitionFinalized = true
         return session
@@ -604,8 +604,8 @@ extension BridgeService {
             sessionID: record.id,
             kind: recoveredTransition ? "discussion.transition.recovered" : "discussion.run.recovered",
             message: recoveredTransition
-                ? "前一次專案交接中斷；原討論保留並可繼續。"
-                : "前一個討論回合已中斷；保留逐字稿並允許繼續。"
+                ? "The previous project handoff was interrupted; the original discussion is kept and can continue."
+                : "The previous discussion turn was interrupted; the transcript is kept and you can continue."
         ))
     }
 
@@ -669,24 +669,24 @@ extension BridgeService {
         let text = OutputRedactor.redact(value)
         let maximumBytes = DiscussionStore.maximumTextBytes
         guard text.utf8.count <= maximumBytes else {
-            throw AgentBridgeError.invalidInput("討論回合文字超過 \(maximumBytes / 1_024) KiB 儲存上限；已保留原文，請縮短後再送出。")
+            throw AgentBridgeError.invalidInput("The discussion turn text exceeds the \(maximumBytes / 1_024) KiB storage limit; the original text is kept. Shorten it and send again.")
         }
         return text
     }
 
     private func makeFreshDiscussionTemporaryDirectory(label: String) throws -> URL {
         guard let workspaceRoot = store.workspaceRootURL else {
-            throw AgentBridgeError.invalidInput("尚未設定工作區資料根目錄；請先選擇使用者資料資料夾。")
+            throw AgentBridgeError.invalidInput("No workspace data root is configured; choose a user data folder first.")
         }
         let root = workspaceRoot.appendingPathComponent("tmp", isDirectory: true)
         try AuditStore.createPrivateDirectory(root)
         let url = root.appendingPathComponent("\(label)-\(UUID().uuidString.lowercased())", isDirectory: true)
         guard mkdir(url.path, mode_t(0o700)) == 0 else {
-            throw AgentBridgeError.persistence("無法建立全新的討論工作資料夾。")
+            throw AgentBridgeError.persistence("Could not create a fresh discussion working folder.")
         }
         guard chmod(url.path, mode_t(0o700)) == 0 else {
             try? FileManager.default.removeItem(at: url)
-            throw AgentBridgeError.persistence("無法設定討論工作資料夾權限。")
+            throw AgentBridgeError.persistence("Could not set permissions on the discussion working folder.")
         }
         return url
     }

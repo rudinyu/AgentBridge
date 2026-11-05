@@ -298,7 +298,7 @@ public final class SharedMemoryStore: @unchecked Sendable {
         repositoryPath: String = "/tmp/agentbridge-memory-import-preflight"
     ) throws {
         guard turns.count <= maximumStoredTurns else {
-            throw AgentBridgeError.invalidInput("所選交接回合超過共享記憶的安全儲存上限；未建立專案。")
+            throw AgentBridgeError.invalidInput("The selected handoff turns exceed the shared-memory safe storage limit; no project was created.")
         }
         let normalizedTurns = try Self.cleanedTurns(turns)
         let sampleScope = try SharedMemoryScope(
@@ -313,7 +313,7 @@ public final class SharedMemoryStore: @unchecked Sendable {
     public func setNotes(scope: SharedMemoryScope, notes: String, knownSecrets: [String] = []) throws {
         let redactedNotes = Self.redact(notes, knownSecrets: knownSecrets)
         guard try Self.encodedJSONString(redactedNotes).count <= Self.maximumStoredNotesBytes else {
-            throw AgentBridgeError.invalidInput("共享記憶備註超過安全儲存上限；原內容未被縮短。")
+            throw AgentBridgeError.invalidInput("The shared-memory notes exceed the safe storage limit; the original content was not shortened.")
         }
 
         try withLockedDirectory { directoryDescriptor in
@@ -686,7 +686,7 @@ public final class SharedMemoryStore: @unchecked Sendable {
             let userText = redact(turn.userText, knownSecrets: [])
             let assistantText = redact(turn.assistantText, knownSecrets: [])
             guard try encodeTextPair(userText, assistantText).count <= maximumStoredTurnTextBytes else {
-                throw AgentBridgeError.invalidInput("共享記憶單一回合超過安全儲存上限；原內容未被縮短。")
+                throw AgentBridgeError.invalidInput("A single shared-memory turn exceeds the safe storage limit; the original content was not shortened.")
             }
             return SharedMemoryTurn(
                 id: turn.id,

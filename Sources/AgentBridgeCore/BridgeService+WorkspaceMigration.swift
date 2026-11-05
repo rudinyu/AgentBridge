@@ -6,13 +6,13 @@ extension BridgeService {
     /// currently configured user root. Source data is never removed or replaced.
     public func prepareWorkspaceRootMigration(memorySourceRoots: [URL]) async throws -> [SessionRecord] {
         guard store.workspaceRootURL != nil else {
-            throw AgentBridgeError.invalidInput("尚未設定工作區資料根目錄；請在 App 選擇資料夾，或先執行 `agentbridge workspace set /absolute/path/to/root`。")
+            throw AgentBridgeError.invalidInput("No workspace data root is set. Choose a folder in the app, or run `agentbridge workspace set /absolute/path/to/root` first.")
         }
         let fileManager = FileManager.default
         try AuditStore.createPrivateDirectory(store.workspacesURL, fileManager: fileManager)
         let sessions = try store.loadSessions()
         guard !sessions.contains(where: { $0.status == .running }) else {
-            throw AgentBridgeError.sessionMismatch("工作階段仍在執行；請先停止所有工作階段，再變更資料根目錄。")
+            throw AgentBridgeError.sessionMismatch("A session is still running. Stop all sessions before changing the data root.")
         }
         for var discussion in try discussionStore.list() where discussion.status.isInFlight {
             let lease = try store.acquireRunLease(for: discussion.id)
@@ -20,7 +20,7 @@ extension BridgeService {
             try recoverStaleDiscussionRun(&discussion)
         }
         guard try discussionStore.list().allSatisfy({ !$0.status.isInFlight }) else {
-            throw AgentBridgeError.sessionMismatch("討論仍在執行；請先完成或停止所有討論，再變更資料根目錄。")
+            throw AgentBridgeError.sessionMismatch("A discussion is still running; finish or stop all discussions before changing the data root.")
         }
 
         var migratedSessions: [SessionRecord] = []
@@ -31,20 +31,20 @@ extension BridgeService {
             var sourceMetadata = stat()
             if lstat(source.path, &sourceMetadata) != 0 {
                 if errno == ENOENT { continue }
-                throw AgentBridgeError.sessionMismatch("無法安全檢查既有隔離工作區；資料根目錄未變更。")
+                throw AgentBridgeError.sessionMismatch("Could not safely inspect an existing isolated workspace; the data root was not changed.")
             }
             guard (sourceMetadata.st_mode & S_IFMT) == S_IFDIR else {
-                throw AgentBridgeError.sessionMismatch("既有隔離工作區不是一般資料夾；資料根目錄未變更。")
+                throw AgentBridgeError.sessionMismatch("An existing isolated workspace is not a regular folder; the data root was not changed.")
             }
 
             try await workspaceManager.validateWorkspace(for: session, accessMode: session.policy.accessMode)
             var destinationMetadata = stat()
             if lstat(destination.path, &destinationMetadata) == 0 {
                 guard try directoriesAreEquivalent(source, destination) else {
-                    throw AgentBridgeError.persistence("目標資料根目錄已存在不同內容的工作區 \(session.id.uuidString.lowercased())；來源保持不變，請選擇空資料夾或自行處理衝突。")
+                    throw AgentBridgeError.persistence("The destination data root already contains a different workspace \(session.id.uuidString.lowercased()); the source is unchanged. Choose an empty folder or resolve the conflict yourself.")
                 }
             } else if errno != ENOENT {
-                throw AgentBridgeError.persistence("無法安全檢查目標隔離工作區；來源保持不變。")
+                throw AgentBridgeError.persistence("Could not safely inspect a destination isolated workspace; the source remains unchanged.")
             } else {
                 let staging = store.workspacesURL.appendingPathComponent(
                     ".migration-\(session.id.uuidString.lowercased())-\(UUID().uuidString.lowercased())",
@@ -53,13 +53,13 @@ extension BridgeService {
                 do {
                     try fileManager.copyItem(at: source, to: staging)
                     guard chmod(staging.path, mode_t(0o700)) == 0 else {
-                        throw AgentBridgeError.persistence("無法保護複製的隔離工作區。")
+                        throw AgentBridgeError.persistence("Could not secure the copied isolated workspace.")
                     }
                     try fileManager.moveItem(at: staging, to: destination)
                 } catch {
                     try? fileManager.removeItem(at: staging)
                     if let error = error as? AgentBridgeError { throw error }
-                    throw AgentBridgeError.persistence("無法複製現有隔離工作區；來源資料保持不變。")
+                    throw AgentBridgeError.persistence("Could not copy an existing isolated workspace; source data remains unchanged.")
                 }
             }
 
@@ -92,10 +92,10 @@ extension BridgeService {
             var rootMetadata = stat()
             guard lstat(sourceRoot.path, &rootMetadata) == 0 else {
                 if errno == ENOENT { continue }
-                throw AgentBridgeError.persistence("無法安全讀取舊的共享記憶資料夾。")
+                throw AgentBridgeError.persistence("Could not safely read the old shared memory folder.")
             }
             guard (rootMetadata.st_mode & S_IFMT) == S_IFDIR else {
-                throw AgentBridgeError.persistence("舊的共享記憶資料夾不是一般資料夾；來源資料保持不變。")
+                throw AgentBridgeError.persistence("The old shared memory folder is not a regular folder; source data remains unchanged.")
             }
 
             let names = try fileManager.contentsOfDirectory(atPath: sourceRoot.path).sorted()
@@ -110,12 +110,12 @@ extension BridgeService {
                 if lstat(destination.path, &destinationMetadata) == 0 {
                     guard (destinationMetadata.st_mode & S_IFMT) == S_IFREG,
                           try readMemoryDocument(destination) == sourceData else {
-                        throw AgentBridgeError.persistence("目標資料根目錄已有不同內容的共享記憶檔 \(name)；來源保持不變，請選擇空資料夾或自行處理衝突。")
+                        throw AgentBridgeError.persistence("The destination data root already contains a different shared memory file \(name); the source is unchanged. Choose an empty folder or resolve the conflict yourself.")
                     }
                     continue
                 }
                 guard errno == ENOENT else {
-                    throw AgentBridgeError.persistence("無法安全檢查目標共享記憶檔。")
+                    throw AgentBridgeError.persistence("Could not safely inspect the destination shared memory file.")
                 }
                 try writeNewMemoryDocument(sourceData, to: destination)
             }
@@ -124,7 +124,7 @@ extension BridgeService {
 
     private func copyDiscussionRecords(from sourceRoots: [URL]) throws {
         guard let destinationRoot = store.workspaceRootURL else {
-            throw AgentBridgeError.invalidInput("尚未設定工作區資料根目錄；無法複製討論記錄。")
+            throw AgentBridgeError.invalidInput("No workspace data root is configured; cannot copy discussion records.")
         }
         let destinationPath = destinationRoot.standardizedFileURL.path
         let uniqueSources = Dictionary(grouping: sourceRoots.map(\.standardizedFileURL), by: \.path)
@@ -133,22 +133,22 @@ extension BridgeService {
             var metadata = stat()
             if lstat(sourceRoot.path, &metadata) != 0 {
                 if errno == ENOENT { continue }
-                throw AgentBridgeError.persistence("無法安全檢查舊的討論資料夾；來源資料保持不變。")
+                throw AgentBridgeError.persistence("Could not safely inspect the old discussions folder; source data is unchanged.")
             }
             guard (metadata.st_mode & S_IFMT) == S_IFDIR else {
-                throw AgentBridgeError.persistence("舊的討論資料夾不是一般資料夾；來源資料保持不變。")
+                throw AgentBridgeError.persistence("The old discussions folder is not a regular folder; source data is unchanged.")
             }
             let source = try DiscussionStore(rootURL: sourceRoot)
             let records = try source.list()
             guard records.allSatisfy({ !$0.status.isInFlight }) else {
-                throw AgentBridgeError.sessionMismatch("舊工作區仍有執行中的討論；來源資料保持不變。")
+                throw AgentBridgeError.sessionMismatch("The old workspace still has running discussions; source data is unchanged.")
             }
             for original in records {
                 var migrated = original
                 migrated.dataRootPath = destinationPath
                 if let existing = try discussionStore.record(id: migrated.id) {
                     guard existing == migrated else {
-                        throw AgentBridgeError.persistence("目標資料根目錄已有不同內容的討論記錄 \(migrated.id.uuidString.lowercased())；來源保持不變，請先處理衝突。")
+                        throw AgentBridgeError.persistence("The destination data root already has a different discussion record \(migrated.id.uuidString.lowercased()); the source is unchanged. Resolve the conflict first.")
                     }
                 } else {
                     _ = try discussionStore.create(migrated)
@@ -159,7 +159,7 @@ extension BridgeService {
 
     private func copyTaskBoardRecords(from sourceRoots: [URL]) throws {
         guard let destinationRoot = store.workspaceRootURL else {
-            throw AgentBridgeError.invalidInput("尚未設定工作區資料根目錄；無法複製任務看板。")
+            throw AgentBridgeError.invalidInput("No workspace data root is configured; cannot copy the task board.")
         }
         let destinationPath = destinationRoot.standardizedFileURL.appendingPathComponent("task-board", isDirectory: true).path
         let uniqueSources = Dictionary(grouping: sourceRoots.map(\.standardizedFileURL), by: \.path)
@@ -168,16 +168,16 @@ extension BridgeService {
             var metadata = stat()
             if lstat(sourceRoot.path, &metadata) != 0 {
                 if errno == ENOENT { continue }
-                throw AgentBridgeError.persistence("無法安全檢查舊的任務看板資料夾；來源資料保持不變。")
+                throw AgentBridgeError.persistence("Could not safely inspect the old task-board folder; source data is unchanged.")
             }
             guard (metadata.st_mode & S_IFMT) == S_IFDIR else {
-                throw AgentBridgeError.persistence("舊的任務看板資料夾不是一般資料夾；來源資料保持不變。")
+                throw AgentBridgeError.persistence("The old task-board folder is not a regular folder; source data is unchanged.")
             }
             let records = try ParallelTaskBoard(rootURL: sourceRoot).list()
             do {
                 try parallelTaskBoard.importTasks(records)
             } catch {
-                throw AgentBridgeError.persistence("目標資料根目錄已有不同內容的任務看板記錄；來源保持不變，請先處理衝突。")
+                throw AgentBridgeError.persistence("The destination data root already has different task-board records; the source is unchanged. Resolve the conflict first.")
             }
         }
     }
@@ -185,7 +185,7 @@ extension BridgeService {
     private func readMemoryDocument(_ url: URL) throws -> Data {
         let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW)
         guard descriptor >= 0 else {
-            throw AgentBridgeError.persistence("無法安全讀取共享記憶文件；來源資料保持不變。")
+            throw AgentBridgeError.persistence("Could not safely read a shared memory document; source data remains unchanged.")
         }
         defer { _ = close(descriptor) }
         var metadata = stat()
@@ -193,7 +193,7 @@ extension BridgeService {
               (metadata.st_mode & S_IFMT) == S_IFREG,
               metadata.st_size >= 0,
               metadata.st_size <= off_t(SharedMemoryStore.maximumStoredBytes + 1_024) else {
-            throw AgentBridgeError.persistence("共享記憶文件不是有效的一般檔案；來源資料保持不變。")
+            throw AgentBridgeError.persistence("A shared memory document is not a valid regular file; source data remains unchanged.")
         }
         var data = Data()
         data.reserveCapacity(Int(metadata.st_size))
@@ -205,10 +205,10 @@ extension BridgeService {
             if count == 0 { break }
             if count < 0 {
                 if errno == EINTR { continue }
-                throw AgentBridgeError.persistence("無法讀取共享記憶文件；來源資料保持不變。")
+                throw AgentBridgeError.persistence("Could not read a shared memory document; source data remains unchanged.")
             }
             guard data.count + count <= SharedMemoryStore.maximumStoredBytes + 1_024 else {
-                throw AgentBridgeError.persistence("共享記憶文件超過大小上限；來源資料保持不變。")
+                throw AgentBridgeError.persistence("A shared memory document exceeds its size limit; source data remains unchanged.")
             }
             data.append(contentsOf: buffer.prefix(count))
         }
@@ -220,11 +220,11 @@ extension BridgeService {
         let destinationName = url.lastPathComponent
         guard !destinationName.isEmpty, destinationName != ".", destinationName != "..",
               !destinationName.contains("/") else {
-            throw AgentBridgeError.persistence("無法安全複製共享記憶文件；來源資料保持不變。")
+            throw AgentBridgeError.persistence("Could not safely copy a shared memory document; source data remains unchanged.")
         }
         let directoryDescriptor = open(directoryURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard directoryDescriptor >= 0 else {
-            throw AgentBridgeError.persistence("無法安全開啟共享記憶資料夾；來源資料保持不變。")
+            throw AgentBridgeError.persistence("Could not safely open the shared-memory folder; source data is unchanged.")
         }
         defer { _ = close(directoryDescriptor) }
 
@@ -236,7 +236,7 @@ extension BridgeService {
             mode_t(0o600)
         )
         guard descriptor >= 0 else {
-            throw AgentBridgeError.persistence("無法安全建立共享記憶暫存文件；來源資料保持不變。")
+            throw AgentBridgeError.persistence("Could not safely create a temporary shared-memory document; source data is unchanged.")
         }
 
         var temporaryIdentity: (device: dev_t, inode: ino_t)?
@@ -265,21 +265,21 @@ extension BridgeService {
         var metadata = stat()
         guard fstat(descriptor, &metadata) == 0,
               (metadata.st_mode & S_IFMT) == S_IFREG else {
-            throw AgentBridgeError.persistence("無法保護共享記憶暫存文件。")
+            throw AgentBridgeError.persistence("Could not protect the temporary shared-memory document.")
         }
         temporaryIdentity = (metadata.st_dev, metadata.st_ino)
         guard fchmod(descriptor, mode_t(0o600)) == 0 else {
-            throw AgentBridgeError.persistence("無法保護共享記憶暫存文件。")
+            throw AgentBridgeError.persistence("Could not protect the temporary shared-memory document.")
         }
 
         try Self.writeAll(data, to: descriptor)
         guard fsync(descriptor) == 0 else {
-            throw AgentBridgeError.persistence("無法同步共享記憶暫存文件。")
+            throw AgentBridgeError.persistence("Could not sync the temporary shared-memory document.")
         }
 
         guard linkat(directoryDescriptor, temporaryName, directoryDescriptor, destinationName, 0) == 0 else {
             if errno == EEXIST, try readMemoryDocument(url) == data { return }
-            throw AgentBridgeError.persistence("無法安全發佈共享記憶文件；來源資料保持不變。")
+            throw AgentBridgeError.persistence("Could not safely publish the shared-memory document; source data is unchanged.")
         }
         publishedDestination = true
 
@@ -288,16 +288,16 @@ extension BridgeService {
               (publishedMetadata.st_mode & S_IFMT) == S_IFREG,
               publishedMetadata.st_dev == metadata.st_dev,
               publishedMetadata.st_ino == metadata.st_ino else {
-            throw AgentBridgeError.persistence("無法驗證已發佈的共享記憶文件；來源資料保持不變。")
+            throw AgentBridgeError.persistence("Could not verify the published shared-memory document; source data is unchanged.")
         }
         guard fsync(directoryDescriptor) == 0 else {
-            throw AgentBridgeError.persistence("無法同步共享記憶資料夾。")
+            throw AgentBridgeError.persistence("Could not sync the shared-memory folder.")
         }
         guard unlinkat(directoryDescriptor, temporaryName, 0) == 0 else {
-            throw AgentBridgeError.persistence("無法清理共享記憶暫存文件。")
+            throw AgentBridgeError.persistence("Could not clean up the temporary shared-memory document.")
         }
         guard fsync(directoryDescriptor) == 0 else {
-            throw AgentBridgeError.persistence("無法同步共享記憶資料夾。")
+            throw AgentBridgeError.persistence("Could not sync the shared-memory folder.")
         }
         publishedDestination = false
     }

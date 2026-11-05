@@ -289,7 +289,7 @@ final class ChangeWorkflowTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(result.durationSeconds, 0)
 
         let events = try fixture.service.events(sessionID: fixture.session.id)
-        XCTAssertTrue(events.contains(where: { $0.kind == "verification.completed" && $0.message.contains("結束代碼 0") }))
+        XCTAssertTrue(events.contains(where: { $0.kind == "verification.completed" && $0.message.contains("Exit code 0") }))
         XCTAssertTrue(events.contains(where: { $0.kind == "verification.started" && $0.message.contains("printf") }))
     }
 

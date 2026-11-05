@@ -10,7 +10,7 @@ extension BridgeService {
     ) throws -> ChangePlan {
         let initialSession = try loadSession(sessionID)
         guard initialSession.provider != .local else {
-            throw AgentBridgeError.sessionMismatch("本機模型目前不支援隔離變更或工作計畫。")
+            throw AgentBridgeError.sessionMismatch("Local models do not support isolated changes or work plans yet.")
         }
         let lease = try store.acquireRunLease(for: sessionID)
         defer { withExtendedLifetime(lease) {} }
@@ -24,7 +24,7 @@ extension BridgeService {
               (1...32).contains(trimmedSteps.count),
               trimmedSteps.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2_000 && !$0.contains("\0") }),
               !trimmedTitle.contains("\0"), !trimmedSummary.contains("\0") else {
-            throw AgentBridgeError.invalidChangePlan("標題、摘要及 1 至 32 個步驟都必須有內容，且符合大小限制。")
+            throw AgentBridgeError.invalidChangePlan("The title, summary and 1 to 32 steps must all have content and fit the size limits.")
         }
         let plan = ChangePlan(
             sessionID: sessionID,
@@ -43,7 +43,7 @@ extension BridgeService {
         try store.appendEvent(AuditEvent(
             sessionID: sessionID,
             kind: "change.plan.created",
-            message: "已建立待檢視的變更計畫（摘要雜湊 \(plan.reviewDigest)，步驟 \(plan.steps.count) 項）；尚未授權檔案寫入。"
+            message: "Created a change plan awaiting review (summary hash \(plan.reviewDigest), \(plan.steps.count) steps); file writes are not authorized yet."
         ))
         return plan
     }
@@ -56,7 +56,7 @@ extension BridgeService {
         try requireIsolatedChangesSession(session)
         guard let plan = session.changePlan, plan.sessionID == sessionID, plan.id == planID,
               plan.reviewDigest == reviewedDigest.lowercased() else {
-            throw AgentBridgeError.invalidChangePlan("計畫內容已改變或檢視識別碼不符；請重新檢視目前計畫。")
+            throw AgentBridgeError.invalidChangePlan("The plan content changed or the review identifier does not match; review the current plan again.")
         }
         session.approvedChangePlanDigest = plan.reviewDigest
         session.updatedAt = Date()
@@ -64,7 +64,7 @@ extension BridgeService {
         try store.appendEvent(AuditEvent(
             sessionID: sessionID,
             kind: "change.plan.approved",
-            message: "使用者已明確檢視並核准變更計畫（摘要雜湊 \(plan.reviewDigest)）。"
+            message: "The user explicitly reviewed and approved the change plan (summary hash \(plan.reviewDigest))."
         ))
         return plan
     }
@@ -89,7 +89,7 @@ extension BridgeService {
         try store.appendEvent(AuditEvent(
             sessionID: sessionID,
             kind: "change.files.restored",
-            message: "已還原隔離工作區中 \(filePaths.count) 個使用者選取的檔案；來源儲存庫未變更。"
+            message: "Restored \(filePaths.count) user-selected files in the isolated workspace; the source repository was not changed."
         ))
     }
 
@@ -105,7 +105,7 @@ extension BridgeService {
         try store.appendEvent(AuditEvent(
             sessionID: sessionID,
             kind: "change.workspace.restored",
-            message: "已還原整個隔離工作區至基準提交；來源儲存庫未變更。"
+            message: "Restored the whole isolated workspace to the base commit; the source repository was not changed."
         ))
     }
 
@@ -118,7 +118,7 @@ extension BridgeService {
         try store.appendEvent(AuditEvent(
             sessionID: sessionID,
             kind: "change.patch.exported",
-            message: "已匯出 \(diff.files.count) 個檔案的差異補丁（\(diff.patch.count) 位元組）；未修改來源儲存庫。"
+            message: "Exported a patch for \(diff.files.count) files (\(diff.patch.count) bytes); the source repository was not modified."
         ))
         return diff.patch
     }
@@ -132,14 +132,14 @@ extension BridgeService {
         try requireSuccessfulChangeVerification(session)
         let diff = try await workspaceManager.diff(for: session)
         try requireSuccessfulChangeVerification(session, diff: diff)
-        guard !diff.files.isEmpty else { throw AgentBridgeError.invalidInput("工作區沒有可接受的變更。") }
+        guard !diff.files.isEmpty else { throw AgentBridgeError.invalidInput("The workspace has no changes to accept.") }
         session.changesAcceptedAt = Date()
         session.updatedAt = Date()
         try store.saveSession(session)
         try store.appendEvent(AuditEvent(
             sessionID: sessionID,
             kind: "change.accepted",
-            message: "使用者已接受已驗證的隔離變更，包含 \(diff.files.count) 個檔案；來源儲存庫仍未修改。"
+            message: "The user accepted verified isolated changes covering \(diff.files.count) files; the source repository is still unmodified."
         ))
         return session
     }
@@ -165,7 +165,7 @@ extension BridgeService {
             try store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: "change.applied_to_branch",
-                message: "使用者已將 \(result.changedFileCount) 個檔案套用到本機分支 \(result.branchName) 的隔離工作樹 \(result.worktreePath)。未建立提交、推送或合併。"
+                message: "The user applied \(result.changedFileCount) files to an isolated worktree for local branch \(result.branchName) at \(result.worktreePath). No commit, push or merge was made."
             ))
             return result
         } catch let error as AgentBridgeError {
@@ -184,7 +184,7 @@ extension BridgeService {
         guard session.provider == .codex || session.provider == .claude,
               session.policy.accessMode == .isolatedChanges,
               !session.policy.workspaceReadOnly else {
-            throw AgentBridgeError.sessionMismatch("請建立隔離變更模式的工作階段；唯讀與原生互動工作階段不會執行此操作。")
+            throw AgentBridgeError.sessionMismatch("Create an isolated-change session; read-only and native interactive sessions do not run this operation.")
         }
     }
 

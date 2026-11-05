@@ -61,13 +61,13 @@ struct RunGate {
                     try store.appendEvent(AuditEvent(
                         sessionID: runID,
                         kind: "usage.subscription.reserved",
-                        message: "account_profile_id=\(profile.id.uuidString.lowercased()); AgentBridge 本機用量預檢通過；此次執行嘗試已計入本機計數。"
+                        message: "account_profile_id=\(profile.id.uuidString.lowercased()); AgentBridge local usage preflight passed. This run attempt was added to the local count."
                     ))
                 } else {
                     try store.appendEvent(AuditEvent(
                         sessionID: runID,
                         kind: "usage.api.reserved",
-                        message: "AgentBridge 本機 Claude API 用量預檢通過；此次付費執行嘗試已計入本機計數。"
+                        message: "AgentBridge local Claude API usage preflight passed. This paid run attempt was added to the local count."
                     ))
                 }
             } catch let error as UsageControlError {

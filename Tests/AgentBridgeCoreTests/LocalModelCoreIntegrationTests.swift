@@ -53,7 +53,7 @@ final class LocalModelCoreIntegrationTests: XCTestCase {
 
         let builtIn = try store.selected(provider: .local)
         XCTAssertEqual(builtIn.id, AccountProfile.defaultID(for: .local))
-        XCTAssertEqual(builtIn.name, "本機模型")
+        XCTAssertEqual(builtIn.name, "Local model")
         XCTAssertTrue(builtIn.allowsSharedMemory)
         XCTAssertEqual(try store.environmentOverrides(for: builtIn), [:])
 

@@ -36,7 +36,7 @@ final class TerminalModel {
             return
         }
         guard let session = app.selectedSession, session.policy.accessMode == .interactiveManualApproval else {
-            app.errorMessage = "請先建立互動手動核准模式的工作階段。"
+            app.errorMessage = "Create a session with interactive manual approval first."
             return
         }
         let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
@@ -45,7 +45,7 @@ final class TerminalModel {
             arguments: ["interactive", session.id.uuidString.lowercased(), "--profile", profileID.uuidString.lowercased()],
             workingDirectory: session.workspacePath
         ) else {
-            app.errorMessage = "找不到 AgentBridge 命令列輔助程式。請先使用 scripts/package-app.sh 建立 .app。"
+            app.errorMessage = "The AgentBridge command-line helper was not found. Run scripts/package-app.sh to build the .app first."
             return
         }
         terminalIsProfileLogin = false
@@ -58,7 +58,7 @@ final class TerminalModel {
         closeTerminalAfterCancellation = false
         terminalLaunch = spec
         terminalRunning = true
-        app.status = "已在 App 內啟動互動終端機。終端機文字不會自動加入共用記憶。"
+        app.status = "The interactive terminal opened in the app. Terminal text is not added to shared memory automatically."
     }
 
     func openSubscriptionUsageTUI() {
@@ -67,11 +67,11 @@ final class TerminalModel {
             return
         }
         guard app.settings.usageMode == .subscription else {
-            app.errorMessage = "官方 usage TUI 只支援訂閱登入。"
+            app.errorMessage = "The official usage TUI supports subscription sign-in only."
             return
         }
         guard terminalLaunch == nil else {
-            app.errorMessage = "請先關閉目前的 App 終端機。"
+            app.errorMessage = "Close the current app terminal first."
             return
         }
         let provider = app.settings.defaultProvider
@@ -81,11 +81,11 @@ final class TerminalModel {
         }
         guard let profileID = app.selectedProfileIDs[provider],
               let profile = app.accountProfiles[provider]?.first(where: { $0.id == profileID }) else {
-            app.errorMessage = "找不到目前選取的帳戶設定。"
+            app.errorMessage = "The currently selected account settings could not be found."
             return
         }
         guard let spec = terminalLaunchSpec(
-            title: "官方用量 · \(provider.rawValue.capitalized) · \(profile.name)",
+            title: "Official Usage · \(provider.rawValue.capitalized) · \(profile.name)",
             arguments: [
                 "usage-tui",
                 "--provider", provider.rawValue,
@@ -93,7 +93,7 @@ final class TerminalModel {
             ],
             workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
         ) else {
-            app.errorMessage = "找不到 AgentBridge 命令列輔助程式。請先使用 scripts/package-app.sh 建立 .app。"
+            app.errorMessage = "The AgentBridge command-line helper was not found. Run scripts/package-app.sh to build the .app first."
             return
         }
         terminalIsProfileLogin = false
@@ -108,13 +108,13 @@ final class TerminalModel {
         usageCommandRequest = 0
         terminalLaunch = spec
         terminalRunning = true
-        app.status = "已啟動所選帳戶的官方 CLI 用量終端；請等待可輸入提示符並完成登入，再送出 /usage。"
+        app.status = "The official CLI usage terminal opened for the selected account. Wait for the input prompt and finish signing in before sending /usage."
     }
 
     func requestUsageCommand() {
         guard canSendUsageCommand else { return }
         usageCommandRequest &+= 1
-        app.status = "已在目前官方 CLI 終端送出固定的 /usage 指令。"
+        app.status = "The fixed /usage command was sent to the current official CLI terminal."
     }
 
     func usageScreenDidUpdate(_ screenText: String, capturedAt: Date) -> Bool {
@@ -137,7 +137,7 @@ final class TerminalModel {
     }
 
     func openProfileLoginTerminal() {
-        guard let profile = app.selectedAccountProfile else { app.errorMessage = "找不到所選帳戶設定。"; return }
+        guard let profile = app.selectedAccountProfile else { app.errorMessage = "The selected account settings could not be found."; return }
         openProfileLoginTerminal(for: profile)
     }
 
@@ -159,11 +159,11 @@ final class TerminalModel {
             return
         }
         guard let spec = terminalLaunchSpec(
-            title: "登入 · \(profile.provider.rawValue.capitalized) · \(profile.name)",
+            title: "Sign In · \(profile.provider.rawValue.capitalized) · \(profile.name)",
             arguments: ["profile-login", profile.id.uuidString.lowercased()],
             workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
         ) else {
-            app.reportOperationError("找不到 AgentBridge 命令列輔助程式。請先使用 scripts/package-app.sh 建立 .app。")
+            app.reportOperationError("The AgentBridge command-line helper was not found. Run scripts/package-app.sh to build the .app first.")
             return
         }
         terminalIsProfileLogin = true
@@ -176,15 +176,15 @@ final class TerminalModel {
         closeTerminalAfterCancellation = false
         terminalLaunch = spec
         terminalRunning = true
-        app.status = "已在 App 內開啟官方 CLI 登入流程。登入由你在終端機完成。"
+        app.status = "The official CLI sign-in flow opened in the app. Complete sign-in in the terminal."
         app.setupWizard.errorMessage = nil
     }
 
     func openLocalShell() {
-        guard let session = app.selectedSession else { app.errorMessage = "請先選擇工作階段。"; return }
-        guard terminalLaunch == nil else { app.errorMessage = "請先關閉目前的 App 終端機。"; return }
+        guard let session = app.selectedSession else { app.errorMessage = "Select a session first."; return }
+        guard terminalLaunch == nil else { app.errorMessage = "Close the current app terminal first."; return }
         let spec = TerminalLaunchSpec(
-            title: "本機終端 · \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)",
+            title: "Local Terminal · \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)",
             executablePath: "/bin/sh",
             arguments: ["-f"],
             environment: sanitizedTerminalEnvironment(),
@@ -200,17 +200,17 @@ final class TerminalModel {
         terminalTitle = spec.title
         terminalLaunch = spec
         terminalRunning = true
-        app.status = "已在隔離工作區開啟本機 shell。Shell 命令仍以目前使用者權限執行。"
+        app.status = "The local shell opened in the isolated workspace. Shell commands still run with your current user permissions."
     }
 
     func closeEmbeddedTerminal() {
         if terminalRunning {
             if terminalNeedsManualStop {
-                app.status = "請先在終端機按 Control-C 結束目前程序，再關閉終端面板。"
+                app.status = "Press Control-C in the terminal to end the current process before closing the terminal panel."
                 return
             }
             guard let sessionID = activeTerminalSessionID else {
-                app.status = "請先結束終端機中的工作，再關閉面板。"
+                app.status = "Finish the terminal task before closing the panel."
                 return
             }
             closeTerminalAfterCancellation = true
@@ -224,7 +224,7 @@ final class TerminalModel {
         activeTerminalProfileID = nil
         activeTerminalSessionID = nil
         terminalNeedsManualStop = false
-        app.status = "已關閉 App 內終端機。"
+        app.status = "The in-app terminal closed."
     }
 
     func terminalDidTerminate(exitCode: Int32?) {
@@ -232,9 +232,9 @@ final class TerminalModel {
         terminalIsUsageTUI = false
         activeUsageProvider = nil
         if let exitCode, exitCode == 0 {
-            app.status = "終端機工作已完成。"
+            app.status = "The terminal task completed."
         } else {
-            app.status = "終端機工作已結束\(exitCode.map { "（代碼 \($0)）" } ?? "")。"
+            app.status = "Terminal task ended\(exitCode.map { " (exit code \($0))" } ?? "")."
         }
         if terminalIsProfileLogin, let profileID = activeTerminalProfileID,
            let profile = app.accountProfiles.values.flatMap({ $0 }).first(where: { $0.id == profileID }) {
