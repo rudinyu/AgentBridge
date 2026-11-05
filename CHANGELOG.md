@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The App no longer reads its data on the main thread every two seconds. The periodic refresh now loads sessions, audit events, discussions and the rest in the background and applies the result on the main thread, which went from about 122 ms to about 2 ms per refresh with 1,500 sessions and 20,000 events. A synchronous refresh that runs meanwhile discards an older background result. Shared-memory snapshots and handoffs are now Equatable, so reloading them unchanged no longer notifies the views.
+- Added `AgentBridgeAppTests`: the App had no tests. It covers the localization display logic (including a round trip of every Traditional Chinese table entry) and the refresh behaviour.
 - Every child process AgentBridge starts (git, the provider CLIs, verification scripts) no longer waits an extra 0.75 s after it exits. The runner waited out its process-group cleanup grace period even when nothing else was left in the group; it now skips the wait when only the exited leader remains, and still cleans up stray descendants. This speeds up viewing diffs, applying changes and verification, and cuts the full test suite from about 737 s to about 30 s.
 
 ## 0.11.0 — 2026-11-05

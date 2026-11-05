@@ -62,6 +62,8 @@ final class AppModel {
     var isSwitchingTarget = false
 
     private(set) var service: BridgeService?
+    @ObservationIgnored private(set) var refreshGeneration = 0
+    @ObservationIgnored private var isRefreshingInBackground = false
     private var store: AuditStore?
     @ObservationIgnored private var activeRunFlags: [UUID: CancellationFlag] = [:]
     @ObservationIgnored private var autonomousCancellationFlags: [UUID: CancellationFlag] = [:]
@@ -133,6 +135,21 @@ final class AppModel {
             errorMessage = error.localizedDescription
             setupWizard.initialize(workspaceRootConfigured: workspaceRootIsConfigured)
         }
+    }
+
+    /// An `AppModel` backed by an explicit store and service, for tests. It never
+    /// reads the user's real data root or saved preferences.
+    init(store: AuditStore, service: BridgeService) {
+        appLanguage = .english
+        setupWizard.attach(to: self)
+        usage.attach(to: self)
+        chats.attach(to: self)
+        changes.attach(to: self)
+        extensions.attach(to: self)
+        terminal.attach(to: self)
+        self.store = store
+        self.service = service
+        workspaceRootPath = store.workspaceRootURL?.path ?? ""
     }
 
     func reportOperationError(_ message: String) {
@@ -231,11 +248,42 @@ final class AppModel {
         return accountProfiles[session.provider]?.first(where: { $0.id == profileID })
     }
 
+    /// Reads the current data and applies it right away. Use it after an action
+    /// that changed something and whose result the caller is about to read.
     func refresh(forceUsageStatistics: Bool = false) {
+        guard let service else { return }
+        refreshGeneration += 1
+        apply(RefreshReads.load(service: service, selectedSessionID: selectedSessionID), forceUsageStatistics: forceUsageStatistics)
+    }
+
+    /// The periodic refresh. The disk reads run off the main thread and only
+    /// their result is applied here, so a large store cannot stall the window
+    /// every few seconds. A synchronous `refresh()` that runs meanwhile already
+    /// applied newer data, so a result loaded before it is dropped.
+    func refreshInBackground() {
+        guard let service, !isRefreshingInBackground else { return }
+        isRefreshingInBackground = true
+        let generation = refreshGeneration
+        let selected = selectedSessionID
+        Task.detached(priority: .utility) { [weak self] in
+            let reads = RefreshReads.load(service: service, selectedSessionID: selected)
+            await MainActor.run { [weak self] in
+                self?.finishBackgroundRefresh(reads, loadedAt: generation)
+            }
+        }
+    }
+
+    func finishBackgroundRefresh(_ reads: RefreshReads, loadedAt generation: Int) {
+        isRefreshingInBackground = false
+        guard generation == refreshGeneration else { return }
+        apply(reads, forceUsageStatistics: false)
+    }
+
+    private func apply(_ reads: RefreshReads, forceUsageStatistics: Bool) {
         guard let service else { return }
         do {
             let previousSelectedSessionID = selectedSessionID
-            var loadedSettings = try service.settings()
+            var loadedSettings = try reads.settings.get()
             if loadedSettings.defaultProvider == .codex, loadedSettings.usageMode == .api {
                 loadedSettings.usageMode = .subscription
                 try service.saveSettings(loadedSettings)
@@ -255,17 +303,19 @@ final class AppModel {
             if persistedLocalModelChanged { invalidateLocalModelConnectionState() }
             codexPath = settings.codexBinaryPath ?? ""
             claudePath = settings.claudeBinaryPath ?? ""
+            let profiles = try reads.accountProfiles.get()
+            let selectedIDs = try reads.selectedProfileIDs.get()
             for provider in AgentProvider.allCases {
-                accountProfiles[provider] = try service.accountProfiles(provider: provider)
-                selectedProfileIDs[provider] = try service.selectedAccountProfile(provider: provider).id
+                accountProfiles[provider] = profiles[provider]
+                selectedProfileIDs[provider] = selectedIDs[provider]
             }
             chats.reconcileNewDiscussionTarget()
-            sessions = try service.sessions()
-            chats.refreshDiscussions()
-            taskRecords = try service.taskRecords()
-            extensions.extensionDescriptors = try service.extensionDescriptors()
+            sessions = try reads.sessions.get()
+            chats.applyDiscussions(reads.discussions)
+            taskRecords = try reads.taskRecords.get()
+            extensions.extensionDescriptors = try reads.extensionDescriptors.get()
             do {
-                autonomousRuns = try service.autonomousRuns().sorted { $0.plan.createdAt > $1.plan.createdAt }
+                autonomousRuns = try reads.autonomousRuns.get().sorted { $0.plan.createdAt > $1.plan.createdAt }
                 if selectedAutonomousRunID == nil || !autonomousRuns.contains(where: { $0.id == selectedAutonomousRunID }) {
                     selectedAutonomousRunID = autonomousRuns.first?.id
                 }
@@ -273,21 +323,39 @@ final class AppModel {
                 autonomousError = error.localizedDescription
             }
             do {
-                extensions.activeExtensionConfigurations = try service.activeExtensionConfigurations()
+                extensions.activeExtensionConfigurations = try reads.activeExtensions.get()
             } catch {
                 extensions.activeExtensionError = error.localizedDescription
             }
             if selectedSessionID == nil, let first = sessions.first {
                 selectedSessionID = first.id
-                refreshSelectedEvents()
-            } else if selectedSessionID != nil {
-                refreshSelectedEvents()
+            }
+            if let selectedSessionID {
+                applySelectedSessionReads(reads, for: selectedSessionID)
             }
             if previousSelectedSessionID != selectedSessionID {
                 changes.loadChangePlanDraftFromSelectedSession()
             }
             try usage.refresh(service: service, force: forceUsageStatistics)
         } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Applies the events, shared memory and handoffs read for `sessionID`. A
+    /// read made for a different session, because the selection changed while it
+    /// was loading, is skipped; the next refresh reads the right one.
+    private func applySelectedSessionReads(_ reads: RefreshReads, for sessionID: UUID) {
+        guard reads.sessionID == sessionID, let selected = reads.selected else { return }
+        switch selected {
+        case .success(let session):
+            events = session.events
+            outputText = events.last(where: { $0.kind == "run.output" })?.message ?? ""
+            if memorySnapshot?.scope.key != session.memory.scope.key { memoryNotes = session.memory.notes }
+            memorySnapshot = session.memory
+            projectMemoryHandoffs = session.handoffs
+            refreshChangeDiffIfNeeded(for: sessionID)
+        case .failure(let error):
             errorMessage = error.localizedDescription
         }
     }
@@ -307,23 +375,27 @@ final class AppModel {
             memorySnapshot = snapshot
             projectMemoryHandoffs = try service.projectMemoryHandoffs(sessionID: selectedSessionID)
             taskRecords = try service.taskRecords()
-            if selectedSession?.policy.accessMode == .isolatedChanges,
-               activeRunFlags[selectedSessionID] == nil,
-               selectedSession?.status != .running {
-                Task { @MainActor [weak self] in
-                    guard let self, let service = self.service else { return }
-                    do {
-                        let diff = try await service.changesDiff(sessionID: selectedSessionID)
-                        if self.selectedSessionID == selectedSessionID { self.changes.changeDiff = diff }
-                    } catch {
-                        if self.selectedSessionID == selectedSessionID { self.errorMessage = error.localizedDescription }
-                    }
-                }
-            } else {
-                changes.changeDiff = nil
-            }
+            refreshChangeDiffIfNeeded(for: selectedSessionID)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshChangeDiffIfNeeded(for selectedSessionID: UUID) {
+        if selectedSession?.policy.accessMode == .isolatedChanges,
+           activeRunFlags[selectedSessionID] == nil,
+           selectedSession?.status != .running {
+            Task { @MainActor [weak self] in
+                guard let self, let service = self.service else { return }
+                do {
+                    let diff = try await service.changesDiff(sessionID: selectedSessionID)
+                    if self.selectedSessionID == selectedSessionID { self.changes.changeDiff = diff }
+                } catch {
+                    if self.selectedSessionID == selectedSessionID { self.errorMessage = error.localizedDescription }
+                }
+            }
+        } else {
+            changes.changeDiff = nil
         }
     }
 

@@ -55,8 +55,13 @@ final class DiscussionModel {
             discussions = []
             return
         }
+        applyDiscussions(Result { try service.discussions() })
+    }
+
+    /// Applies a read of the discussion list, made here or off the main thread.
+    func applyDiscussions(_ result: Result<[DiscussionRecord], Error>) {
         do {
-            discussions = try service.discussions()
+            discussions = try result.get()
             if let selectedDiscussionID,
                !discussions.contains(where: { $0.id == selectedDiscussionID }) {
                 self.selectedDiscussionID = nil

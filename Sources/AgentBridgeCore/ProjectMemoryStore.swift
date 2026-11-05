@@ -54,7 +54,7 @@ public struct ProjectMemoryRepositoryScope: Codable, Hashable, Sendable {
 }
 
 /// One explicitly selected source memory turn copied into a commit handoff.
-public struct ProjectMemoryHandoffTurn: Codable, Identifiable, Sendable {
+public struct ProjectMemoryHandoffTurn: Codable, Identifiable, Equatable, Sendable {
     public let id: UUID
     public let provider: AgentProvider
     public let timestamp: Date
@@ -74,7 +74,7 @@ public struct ProjectMemoryHandoffTurn: Codable, Identifiable, Sendable {
 
 /// A handoff summary retains source and target commits, and the provider/account
 /// that explicitly initiated the carry-forward.
-public struct ProjectMemoryHandoff: Codable, Identifiable, Sendable {
+public struct ProjectMemoryHandoff: Codable, Identifiable, Equatable, Sendable {
     public let id: UUID
     public let sourceCommit: String
     public let targetCommit: String

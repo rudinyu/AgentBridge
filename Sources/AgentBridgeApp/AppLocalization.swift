@@ -122,6 +122,11 @@ enum AppLocalization {
         return templates.sorted { $0.weight > $1.weight }.map(\.template)
     }
 
+    /// The Traditional Chinese table, for tests that check every entry.
+    static var chineseTable: [String: String] {
+        loadStrings(table: "Localizable", subdirectory: "zh-Hant.lproj")
+    }
+
     private static func loadStrings(table: String, subdirectory: String) -> [String: String] {
         guard let url = Bundle.module.url(forResource: table, withExtension: "strings", subdirectory: subdirectory),
               let data = try? Data(contentsOf: url),

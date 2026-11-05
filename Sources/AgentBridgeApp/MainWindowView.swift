@@ -78,7 +78,7 @@ struct MainWindowView: View {
             if !isPresented { model.errorMessage = nil }
         }
         .onAppear { model.refresh() }
-        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in model.refresh() }
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in model.refreshInBackground() }
     }
 
     var workspaceRootSetup: some View {

@@ -75,7 +75,7 @@ public struct SharedMemoryScope: Codable, Hashable, Sendable {
     }
 }
 
-public struct SharedMemoryTurn: Codable, Identifiable, Sendable {
+public struct SharedMemoryTurn: Codable, Identifiable, Equatable, Sendable {
     public let id: UUID
     public let provider: AgentProvider
     public let userText: String
@@ -91,7 +91,7 @@ public struct SharedMemoryTurn: Codable, Identifiable, Sendable {
     }
 }
 
-public struct SharedMemorySnapshot: Sendable {
+public struct SharedMemorySnapshot: Equatable, Sendable {
     public let scope: SharedMemoryScope
     public let turns: [SharedMemoryTurn]
     public let notes: String
