@@ -51,37 +51,41 @@ extension AgentBridgeCLI {
             }
             if handoffs.isEmpty { print("This repository has no explicit memory handoffs yet.") }
         case "carry-forward":
-            guard arguments.count >= 3,
-                  let sourceID = UUID(uuidString: arguments[1]),
-                  let targetID = UUID(uuidString: arguments[2]) else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge memory carry-forward SOURCE-SESSION TARGET-SESSION [--turn TURN-ID ...] [--notes]")
-            }
-            var selectedTurnIDs = Set<UUID>()
-            var includeNotes = false
-            var index = 3
-            while index < arguments.count {
-                switch arguments[index] {
-                case "--turn":
-                    index += 1
-                    guard index < arguments.count, let id = UUID(uuidString: arguments[index]) else {
-                        throw AgentBridgeError.invalidInput("--turn needs a valid turn UUID.")
-                    }
-                    selectedTurnIDs.insert(id)
-                case "--notes": includeNotes = true
-                default: throw AgentBridgeError.invalidInput("Unknown memory carry-forward option \(arguments[index]).")
-                }
-                index += 1
-            }
-            let handoff = try service.carryForwardProjectMemory(
-                sourceSessionID: sourceID,
-                targetSessionID: targetID,
-                selectedTurnIDs: selectedTurnIDs,
-                includeNotes: includeNotes
-            )
-            print("Created explicit handoff \(handoff.id.uuidString.lowercased()): \(handoff.sourceCommit) -> \(handoff.targetCommit).")
-            print("Only the selected App memory is copied; the next shared-memory prompt allowed at the target commit receives it as untrusted, size-bounded history.")
+            try memoryCarryForward(arguments, service: service)
         default:
             throw AgentBridgeError.invalidInput("Unknown memory subcommand.")
         }
+    }
+
+    static func memoryCarryForward(_ arguments: [String], service: BridgeService) throws {
+        guard arguments.count >= 3,
+              let sourceID = UUID(uuidString: arguments[1]),
+              let targetID = UUID(uuidString: arguments[2]) else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge memory carry-forward SOURCE-SESSION TARGET-SESSION [--turn TURN-ID ...] [--notes]")
+        }
+        var selectedTurnIDs = Set<UUID>()
+        var includeNotes = false
+        var index = 3
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--turn":
+                index += 1
+                guard index < arguments.count, let id = UUID(uuidString: arguments[index]) else {
+                    throw AgentBridgeError.invalidInput("--turn needs a valid turn UUID.")
+                }
+                selectedTurnIDs.insert(id)
+            case "--notes": includeNotes = true
+            default: throw AgentBridgeError.invalidInput("Unknown memory carry-forward option \(arguments[index]).")
+            }
+            index += 1
+        }
+        let handoff = try service.carryForwardProjectMemory(
+            sourceSessionID: sourceID,
+            targetSessionID: targetID,
+            selectedTurnIDs: selectedTurnIDs,
+            includeNotes: includeNotes
+        )
+        print("Created explicit handoff \(handoff.id.uuidString.lowercased()): \(handoff.sourceCommit) -> \(handoff.targetCommit).")
+        print("Only the selected App memory is copied; the next shared-memory prompt allowed at the target commit receives it as untrusted, size-bounded history.")
     }
 }

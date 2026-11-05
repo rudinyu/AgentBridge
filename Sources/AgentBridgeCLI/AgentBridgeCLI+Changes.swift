@@ -9,71 +9,11 @@ extension AgentBridgeCLI {
         }
         switch action {
         case "plan":
-            guard arguments.count >= 2, let sessionID = UUID(uuidString: arguments[1]) else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge changes plan SESSION-ID --title TITLE --summary SUMMARY --step STEP [--step STEP ...]")
-            }
-            var title: String?
-            var summary: String?
-            var steps: [String] = []
-            var index = 2
-            while index < arguments.count {
-                let option = arguments[index]
-                index += 1
-                guard index < arguments.count else { throw AgentBridgeError.invalidInput("\(option) needs a value.") }
-                switch option {
-                case "--title": title = arguments[index]
-                case "--summary": summary = arguments[index]
-                case "--step": steps.append(arguments[index])
-                default: throw AgentBridgeError.invalidInput("Unknown changes plan option \(option).")
-                }
-                index += 1
-            }
-            guard let title, let summary else { throw AgentBridgeError.invalidInput("Specify --title and --summary.") }
-            let plan = try service.createChangePlan(sessionID: sessionID, title: title, summary: summary, steps: steps)
-            print("Plan awaiting review: \(plan.id.uuidString.lowercased())")
-            print("Title: \(plan.title)\nSummary: \(plan.summary)\nSteps:")
-            for (offset, step) in plan.steps.enumerated() { print("  \(offset + 1). \(step)") }
-            print("Review digest: \(plan.reviewDigest)")
-            print("The plan is not approved; it does not authorize writes yet.")
+            try await changesPlan(arguments, service: service)
         case "approve":
-            guard arguments.count == 4,
-                  let sessionID = UUID(uuidString: arguments[1]),
-                  let planID = UUID(uuidString: arguments[2]) else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge changes approve SESSION-ID PLAN-ID REVIEW-DIGEST")
-            }
-            let session = try requireSession(sessionID, service: service)
-            guard let plan = session.changePlan, plan.id == planID, plan.reviewDigest == arguments[3].lowercased() else {
-                throw AgentBridgeError.invalidChangePlan("The plan ID or digest does not match what is currently saved.")
-            }
-            print("Review the plan below item by item. Change runs unlock only after you approve it explicitly:")
-            print("\(plan.title)\n\(plan.summary)")
-            for (offset, step) in plan.steps.enumerated() { print("  \(offset + 1). \(step)") }
-            print("Type the exact text APPROVE \(plan.reviewDigest) to approve:")
-            guard readLine(strippingNewline: true) == "APPROVE \(plan.reviewDigest)" else {
-                throw AgentBridgeError.invalidChangePlan("The full review digest was not entered; the plan is still not approved.")
-            }
-            _ = try service.approveChangePlan(sessionID: sessionID, planID: planID, reviewedDigest: plan.reviewDigest)
-            print("Explicitly approved the current work plan.")
+            try await changesApprove(arguments, service: service)
         case "run":
-            guard arguments.count == 4,
-                  let sessionID = UUID(uuidString: arguments[1]),
-                  let planID = UUID(uuidString: arguments[2]) else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge changes run SESSION-ID PLAN-ID REVIEW-DIGEST < prompt.txt")
-            }
-            let prompt = try readPromptFromStandardInput(maximumBytes: 256_000)
-            let cancellation = CancellationFlag()
-            let signalSources = makeCancellationSignalSources(cancellation)
-            defer { signalSources.forEach { $0.cancel() } }
-            let output = try await service.runChanges(
-                sessionID: sessionID,
-                prompt: prompt,
-                planID: planID,
-                reviewedDigest: arguments[3].lowercased(),
-                cancellation: cancellation
-            ) { progress in
-                FileHandle.standardError.write(Data("• \(OutputRedactor.redact(progress))\n".utf8))
-            }
-            FileHandle.standardOutput.write(Data((OutputRedactor.redact(output.text) + "\n").utf8))
+            try await changesRun(arguments, service: service)
         case "diff":
             guard arguments.count == 2, let sessionID = UUID(uuidString: arguments[1]) else {
                 throw AgentBridgeError.invalidInput("Usage: agentbridge changes diff SESSION-ID")
@@ -109,46 +49,7 @@ extension AgentBridgeCLI {
             try writeNewPrivateFile(patch, to: destination)
             print("Exported a \(patch.count)-byte patch to \(destination.path).")
         case "verify":
-            guard arguments.count >= 2, let sessionID = UUID(uuidString: arguments[1]) else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge changes verify SESSION-ID [--custom /absolute/executable --approve-custom [--arg ARG ...]]")
-            }
-            var customPath: URL?
-            var approved = false
-            var verifierArguments: [String] = []
-            var index = 2
-            while index < arguments.count {
-                switch arguments[index] {
-                case "--custom":
-                    index += 1
-                    guard index < arguments.count, customPath == nil else { throw AgentBridgeError.invalidInput("--custom needs one absolute executable path.") }
-                    customPath = URL(fileURLWithPath: arguments[index])
-                case "--approve-custom": approved = true
-                case "--arg":
-                    index += 1
-                    guard index < arguments.count else { throw AgentBridgeError.invalidInput("--arg needs one argument value.") }
-                    verifierArguments.append(arguments[index])
-                default: throw AgentBridgeError.invalidInput("Unknown changes verify option \(arguments[index]).")
-                }
-                index += 1
-            }
-            guard customPath == nil || approved else {
-                throw AgentBridgeError.verificationCommandRejected("Custom verification also needs --approve-custom; each --arg is passed as a separate argv entry and never goes through a shell.")
-            }
-            let cancellation = CancellationFlag()
-            let signalSources = makeCancellationSignalSources(cancellation)
-            defer { signalSources.forEach { $0.cancel() } }
-            let result = try await service.runVerification(
-                sessionID: sessionID,
-                customExecutableURL: customPath,
-                arguments: verifierArguments,
-                customCommandApproved: customPath != nil && approved,
-                cancellation: cancellation
-            )
-            print("Executable: \(OutputRedactor.redact(result.command?.executablePath ?? "not launched"))")
-            print("Exit code: \(result.exitCode.map(String.init) ?? "not provided"); duration: \(String(format: "%.3f", result.durationSeconds)) s; succeeded: \(result.succeeded ? "yes" : "no")")
-            if let skipped = result.skippedReason { print("Skipped: \(OutputRedactor.redact(skipped))") }
-            if !result.standardOutput.isEmpty { print("\n[stdout]\n\(result.standardOutput)") }
-            if !result.standardError.isEmpty { FileHandle.standardError.write(Data("\n[stderr]\n\(result.standardError)\n".utf8)) }
+            try await changesVerify(arguments, service: service)
         case "accept":
             guard arguments.count == 3, let sessionID = UUID(uuidString: arguments[1]), arguments[2] == "--confirm" else {
                 throw AgentBridgeError.invalidInput("Usage: agentbridge changes accept SESSION-ID --confirm")
@@ -214,5 +115,120 @@ extension AgentBridgeCLI {
                 print("  \(reference.kind.rawValue): \(OutputRedactor.redact(reference.value))")
             }
         }
+    }
+
+    static func changesPlan(_ arguments: [String], service: BridgeService) async throws {
+        guard arguments.count >= 2, let sessionID = UUID(uuidString: arguments[1]) else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge changes plan SESSION-ID --title TITLE --summary SUMMARY --step STEP [--step STEP ...]")
+        }
+        var title: String?
+        var summary: String?
+        var steps: [String] = []
+        var index = 2
+        while index < arguments.count {
+            let option = arguments[index]
+            index += 1
+            guard index < arguments.count else { throw AgentBridgeError.invalidInput("\(option) needs a value.") }
+            switch option {
+            case "--title": title = arguments[index]
+            case "--summary": summary = arguments[index]
+            case "--step": steps.append(arguments[index])
+            default: throw AgentBridgeError.invalidInput("Unknown changes plan option \(option).")
+            }
+            index += 1
+        }
+        guard let title, let summary else { throw AgentBridgeError.invalidInput("Specify --title and --summary.") }
+        let plan = try service.createChangePlan(sessionID: sessionID, title: title, summary: summary, steps: steps)
+        print("Plan awaiting review: \(plan.id.uuidString.lowercased())")
+        print("Title: \(plan.title)\nSummary: \(plan.summary)\nSteps:")
+        for (offset, step) in plan.steps.enumerated() { print("  \(offset + 1). \(step)") }
+        print("Review digest: \(plan.reviewDigest)")
+        print("The plan is not approved; it does not authorize writes yet.")
+    }
+
+    static func changesApprove(_ arguments: [String], service: BridgeService) async throws {
+        guard arguments.count == 4,
+              let sessionID = UUID(uuidString: arguments[1]),
+              let planID = UUID(uuidString: arguments[2]) else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge changes approve SESSION-ID PLAN-ID REVIEW-DIGEST")
+        }
+        let session = try requireSession(sessionID, service: service)
+        guard let plan = session.changePlan, plan.id == planID, plan.reviewDigest == arguments[3].lowercased() else {
+            throw AgentBridgeError.invalidChangePlan("The plan ID or digest does not match what is currently saved.")
+        }
+        print("Review the plan below item by item. Change runs unlock only after you approve it explicitly:")
+        print("\(plan.title)\n\(plan.summary)")
+        for (offset, step) in plan.steps.enumerated() { print("  \(offset + 1). \(step)") }
+        print("Type the exact text APPROVE \(plan.reviewDigest) to approve:")
+        guard readLine(strippingNewline: true) == "APPROVE \(plan.reviewDigest)" else {
+            throw AgentBridgeError.invalidChangePlan("The full review digest was not entered; the plan is still not approved.")
+        }
+        _ = try service.approveChangePlan(sessionID: sessionID, planID: planID, reviewedDigest: plan.reviewDigest)
+        print("Explicitly approved the current work plan.")
+    }
+
+    static func changesRun(_ arguments: [String], service: BridgeService) async throws {
+        guard arguments.count == 4,
+              let sessionID = UUID(uuidString: arguments[1]),
+              let planID = UUID(uuidString: arguments[2]) else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge changes run SESSION-ID PLAN-ID REVIEW-DIGEST < prompt.txt")
+        }
+        let prompt = try readPromptFromStandardInput(maximumBytes: 256_000)
+        let cancellation = CancellationFlag()
+        let signalSources = makeCancellationSignalSources(cancellation)
+        defer { signalSources.forEach { $0.cancel() } }
+        let output = try await service.runChanges(
+            sessionID: sessionID,
+            prompt: prompt,
+            planID: planID,
+            reviewedDigest: arguments[3].lowercased(),
+            cancellation: cancellation
+        ) { progress in
+            FileHandle.standardError.write(Data("• \(OutputRedactor.redact(progress))\n".utf8))
+        }
+        FileHandle.standardOutput.write(Data((OutputRedactor.redact(output.text) + "\n").utf8))
+    }
+
+    static func changesVerify(_ arguments: [String], service: BridgeService) async throws {
+        guard arguments.count >= 2, let sessionID = UUID(uuidString: arguments[1]) else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge changes verify SESSION-ID [--custom /absolute/executable --approve-custom [--arg ARG ...]]")
+        }
+        var customPath: URL?
+        var approved = false
+        var verifierArguments: [String] = []
+        var index = 2
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--custom":
+                index += 1
+                guard index < arguments.count, customPath == nil else { throw AgentBridgeError.invalidInput("--custom needs one absolute executable path.") }
+                customPath = URL(fileURLWithPath: arguments[index])
+            case "--approve-custom": approved = true
+            case "--arg":
+                index += 1
+                guard index < arguments.count else { throw AgentBridgeError.invalidInput("--arg needs one argument value.") }
+                verifierArguments.append(arguments[index])
+            default: throw AgentBridgeError.invalidInput("Unknown changes verify option \(arguments[index]).")
+            }
+            index += 1
+        }
+        guard customPath == nil || approved else {
+            throw AgentBridgeError.verificationCommandRejected("Custom verification also needs --approve-custom; each --arg is passed as a separate argv entry and never goes through a shell.")
+        }
+        let cancellation = CancellationFlag()
+        let signalSources = makeCancellationSignalSources(cancellation)
+        defer { signalSources.forEach { $0.cancel() } }
+        let result = try await service.runVerification(
+            sessionID: sessionID,
+            customExecutableURL: customPath,
+            arguments: verifierArguments,
+            customCommandApproved: customPath != nil && approved,
+            cancellation: cancellation
+        )
+        print("Executable: \(OutputRedactor.redact(result.command?.executablePath ?? "not launched"))")
+        print("Exit code: \(result.exitCode.map(String.init) ?? "not provided"); duration: \(String(format: "%.3f", result.durationSeconds)) s; succeeded: \(result.succeeded ? "yes" : "no")")
+        if let skipped = result.skippedReason { print("Skipped: \(OutputRedactor.redact(skipped))") }
+        if !result.standardOutput.isEmpty { print("\n[stdout]\n\(result.standardOutput)") }
+        if !result.standardError.isEmpty { FileHandle.standardError.write(Data("\n[stderr]\n\(result.standardError)\n".utf8)) }
     }
 }

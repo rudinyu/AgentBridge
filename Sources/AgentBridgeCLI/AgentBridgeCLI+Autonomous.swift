@@ -9,193 +9,13 @@ extension AgentBridgeCLI {
         }
         switch action {
         case "plan":
-            var sourcePath: String?
-            var plannerBinding: (AgentProvider, UUID)?
-            var roleBindings: [AutonomousRole: (AgentProvider, UUID)] = [:]
-            var extensions: [AutonomousRole: [String]] = [:]
-            var maxConcurrentAgents = 3
-            var maxReviewRounds = 2
-            var maxDurationSeconds = 1_800
-            var maxProviderInvocations = 20
-            var shareDependencies = false
-            var shareDiffWithReviewer = false
-            var desktopControlScope: String?
-            var desktopControlSeparateFromGit = false
-            var saveRunSummaryToMemory = false
-            var memoryDestinationProfileID: UUID?
-            var verificationMode: AutonomousVerificationSelection.Mode = .projectCI
-            var verificationExecutable: String?
-            var verificationArguments: [String] = []
-            var emitJSON = false
-            var index = 1
-            while index < arguments.count {
-                let option = arguments[index]
-                index += 1
-                switch option {
-                case "--source":
-                    sourcePath = try nextOptionValue(option, arguments: arguments, index: &index)
-                case "--planner":
-                    plannerBinding = try parseProviderProfile(try nextOptionValue(option, arguments: arguments, index: &index))
-                case "--researcher", "--implementer", "--reviewer":
-                    let role = try autonomousRole(for: option)
-                    roleBindings[role] = try parseProviderProfile(try nextOptionValue(option, arguments: arguments, index: &index))
-                case "--researcher-extension", "--implementer-extension", "--reviewer-extension":
-                    let role: AutonomousRole
-                    switch option {
-                    case "--researcher-extension": role = .researcher
-                    case "--implementer-extension": role = .implementer
-                    default: role = .reviewer
-                    }
-                    extensions[role, default: []].append(try nextOptionValue(option, arguments: arguments, index: &index))
-                case "--max-concurrent":
-                    maxConcurrentAgents = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
-                case "--max-review-rounds":
-                    maxReviewRounds = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
-                case "--max-duration-seconds":
-                    maxDurationSeconds = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
-                case "--max-provider-invocations":
-                    maxProviderInvocations = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
-                case "--share-dependencies": shareDependencies = true
-                case "--share-diff-with-reviewer": shareDiffWithReviewer = true
-                case "--desktop-control-scope": desktopControlScope = try nextOptionValue(option, arguments: arguments, index: &index)
-                case "--confirm-desktop-separate-from-git": desktopControlSeparateFromGit = true
-                case "--save-summary-to-memory": saveRunSummaryToMemory = true
-                case "--memory-destination":
-                    let rawValue = try nextOptionValue(option, arguments: arguments, index: &index)
-                    guard let profileID = UUID(uuidString: rawValue) else { throw AgentBridgeError.invalidInput("--memory-destination requires a profile UUID.") }
-                    memoryDestinationProfileID = profileID
-                case "--verification":
-                    guard let mode = AutonomousVerificationSelection.Mode(rawValue: try nextOptionValue(option, arguments: arguments, index: &index)) else {
-                        throw AgentBridgeError.invalidInput("--verification must be none, projectCI, or custom.")
-                    }
-                    verificationMode = mode
-                case "--verify-command": verificationExecutable = try nextOptionValue(option, arguments: arguments, index: &index)
-                case "--verify-arg": verificationArguments.append(try nextOptionValue(option, arguments: arguments, index: &index))
-                case "--json": emitJSON = true
-                default: throw AgentBridgeError.invalidInput("Unknown autonomous plan option \(option).")
-                }
-            }
-            guard let sourcePath, let plannerBinding,
-                  let researcherBinding = roleBindings[.researcher],
-                  let implementerBinding = roleBindings[.implementer],
-                  let reviewerBinding = roleBindings[.reviewer] else {
-                throw AgentBridgeError.invalidInput("Plan needs --source, --planner PROVIDER:PROFILE-ID, and provider/profile bindings for --researcher, --implementer, and --reviewer.")
-            }
-            guard shareDiffWithReviewer else {
-                throw AgentBridgeError.invalidInput("Add --share-diff-with-reviewer to explicitly allow the exact implementation diff to be reviewed by the selected reviewer profile.")
-            }
-            guard (desktopControlScope != nil) == desktopControlSeparateFromGit else {
-                throw AgentBridgeError.invalidInput("Desktop control requires both --desktop-control-scope and --confirm-desktop-separate-from-git.")
-            }
-            guard saveRunSummaryToMemory == (memoryDestinationProfileID != nil) else {
-                throw AgentBridgeError.invalidInput("Saving a run summary requires both --save-summary-to-memory and --memory-destination PROFILE-ID.")
-            }
-            let goal = try readBoundedStandardInput(maximumBytes: 8_000, label: "Autonomous goal")
-            let planner = try AutonomousRoleBinding(role: .planner, provider: plannerBinding.0, accountProfileID: plannerBinding.1)
-            let bindings = try [
-                AutonomousRoleBinding(role: .researcher, provider: researcherBinding.0, accountProfileID: researcherBinding.1, extensionIDs: extensions[.researcher] ?? []),
-                AutonomousRoleBinding(role: .implementer, provider: implementerBinding.0, accountProfileID: implementerBinding.1, extensionIDs: extensions[.implementer] ?? []),
-                AutonomousRoleBinding(role: .reviewer, provider: reviewerBinding.0, accountProfileID: reviewerBinding.1, extensionIDs: extensions[.reviewer] ?? [])
-            ]
-            let limits = try AutonomousRunLimits(
-                maxConcurrentAgents: maxConcurrentAgents,
-                maxReviewRounds: maxReviewRounds,
-                maxDurationSeconds: maxDurationSeconds,
-                maxProviderInvocations: maxProviderInvocations
-            )
-            let verification: AutonomousVerificationSelection
-            switch verificationMode {
-            case .none:
-                guard verificationExecutable == nil, verificationArguments.isEmpty else {
-                    throw AgentBridgeError.invalidInput("--verify-command and --verify-arg require --verification custom.")
-                }
-                verification = .none
-            case .projectCI:
-                guard verificationExecutable == nil, verificationArguments.isEmpty else {
-                    throw AgentBridgeError.invalidInput("--verify-command and --verify-arg require --verification custom.")
-                }
-                verification = .projectCI
-            case .custom:
-                guard let verificationExecutable else {
-                    throw AgentBridgeError.invalidInput("--verification custom requires --verify-command EXECUTABLE; use repeated --verify-arg for separate argv values.")
-                }
-                verification = try .custom(executablePath: verificationExecutable, arguments: verificationArguments)
-            }
-            let request = try AutonomousRunRequest(
-                goal: goal,
-                sourceRepositoryPath: sourcePath,
-                planner: planner,
-                roleBindings: bindings,
-                limits: limits,
-                shareOutputsWithDependencies: shareDependencies,
-                shareDiffWithReviewer: true,
-                desktopControlScope: desktopControlScope,
-                desktopControlSeparateFromGit: desktopControlSeparateFromGit,
-                saveRunSummaryToMemory: saveRunSummaryToMemory,
-                memoryDestinationProfileID: memoryDestinationProfileID,
-                verification: verification
-            )
-            let record = try await service.prepareAutonomousRun(request)
-            if emitJSON {
-                try printJSON(record)
-            } else {
-                printAutonomousPlan(record)
-                print("Planning started a real provider request using the selected official CLI subscription profile. The plan is not approved yet.")
-            }
+            try await autonomousPlan(arguments, service: service)
         case "approve":
-            guard arguments.count == 5,
-                  let runID = UUID(uuidString: arguments[1]),
-                  arguments[2] == "--digest",
-                  arguments[4] == "--confirm" else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge autonomous approve RUN-ID --digest REVIEW-DIGEST --confirm")
-            }
-            guard let record = try service.autonomousRun(id: runID) else {
-                throw AgentBridgeError.invalidInput("Autonomous run not found.")
-            }
-            guard record.planDigest == arguments[3].lowercased() else {
-                throw AgentBridgeError.invalidInput("The reviewed digest does not match the saved autonomous plan.")
-            }
-            _ = try service.approveAutonomousRun(id: runID, reviewedDigest: record.planDigest)
-            print("Approved the reviewed plan and its bounded repair and verification loop for digest \(record.planDigest).")
+            try await autonomousApprove(arguments, service: service)
         case "run":
-            guard arguments.count == 4,
-                  let runID = UUID(uuidString: arguments[1]),
-                  arguments[2] == "--digest" else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge autonomous run RUN-ID --digest REVIEW-DIGEST")
-            }
-            let cancellation = CancellationFlag()
-            let signalSources = makeCancellationSignalSources(cancellation)
-            defer { signalSources.forEach { $0.cancel() } }
-            let record = try await service.runAutonomousRun(
-                id: runID,
-                reviewedDigest: arguments[3].lowercased(),
-                cancellation: cancellation
-            )
-            try printJSON(record)
+            try await autonomousRun(arguments, service: service)
         case "status":
-            let remainder = Array(arguments.dropFirst())
-            let identifiers = remainder.filter { !$0.hasPrefix("--") }
-            let options = Set(remainder.filter { $0.hasPrefix("--") })
-            guard options.isSubset(of: ["--json"]), identifiers.count <= 1 else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge autonomous status [RUN-ID] [--json]")
-            }
-            let records: [AutonomousRunRecord]
-            if let identifier = identifiers.first {
-                guard let id = UUID(uuidString: identifier) else { throw AgentBridgeError.invalidInput("RUN-ID must be a UUID.") }
-                guard let record = try service.autonomousRun(id: id) else {
-                    throw AgentBridgeError.invalidInput("Autonomous run not found.")
-                }
-                records = [record]
-            } else {
-                records = try service.autonomousRuns()
-            }
-            if options.contains("--json") {
-                try printJSON(records)
-            } else if records.isEmpty {
-                print("No autonomous runs yet.")
-            } else {
-                for record in records { printAutonomousStatus(record) }
-            }
+            try await autonomousStatus(arguments, service: service)
         case "cancel":
             guard arguments.count == 3,
                   let runID = UUID(uuidString: arguments[1]),
@@ -335,5 +155,201 @@ extension AgentBridgeCLI {
         encoder.dateEncodingStrategy = .iso8601
         FileHandle.standardOutput.write(try encoder.encode(value))
         FileHandle.standardOutput.write(Data([0x0A]))
+    }
+
+    static func autonomousPlan(_ arguments: [String], service: BridgeService) async throws {
+        var sourcePath: String?
+        var plannerBinding: (AgentProvider, UUID)?
+        var roleBindings: [AutonomousRole: (AgentProvider, UUID)] = [:]
+        var extensions: [AutonomousRole: [String]] = [:]
+        var maxConcurrentAgents = 3
+        var maxReviewRounds = 2
+        var maxDurationSeconds = 1_800
+        var maxProviderInvocations = 20
+        var shareDependencies = false
+        var shareDiffWithReviewer = false
+        var desktopControlScope: String?
+        var desktopControlSeparateFromGit = false
+        var saveRunSummaryToMemory = false
+        var memoryDestinationProfileID: UUID?
+        var verificationMode: AutonomousVerificationSelection.Mode = .projectCI
+        var verificationExecutable: String?
+        var verificationArguments: [String] = []
+        var emitJSON = false
+        var index = 1
+        while index < arguments.count {
+            let option = arguments[index]
+            index += 1
+            switch option {
+            case "--source":
+                sourcePath = try nextOptionValue(option, arguments: arguments, index: &index)
+            case "--planner":
+                plannerBinding = try parseProviderProfile(try nextOptionValue(option, arguments: arguments, index: &index))
+            case "--researcher", "--implementer", "--reviewer":
+                let role = try autonomousRole(for: option)
+                roleBindings[role] = try parseProviderProfile(try nextOptionValue(option, arguments: arguments, index: &index))
+            case "--researcher-extension", "--implementer-extension", "--reviewer-extension":
+                let role: AutonomousRole
+                switch option {
+                case "--researcher-extension": role = .researcher
+                case "--implementer-extension": role = .implementer
+                default: role = .reviewer
+                }
+                extensions[role, default: []].append(try nextOptionValue(option, arguments: arguments, index: &index))
+            case "--max-concurrent":
+                maxConcurrentAgents = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
+            case "--max-review-rounds":
+                maxReviewRounds = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
+            case "--max-duration-seconds":
+                maxDurationSeconds = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
+            case "--max-provider-invocations":
+                maxProviderInvocations = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
+            case "--share-dependencies": shareDependencies = true
+            case "--share-diff-with-reviewer": shareDiffWithReviewer = true
+            case "--desktop-control-scope": desktopControlScope = try nextOptionValue(option, arguments: arguments, index: &index)
+            case "--confirm-desktop-separate-from-git": desktopControlSeparateFromGit = true
+            case "--save-summary-to-memory": saveRunSummaryToMemory = true
+            case "--memory-destination":
+                let rawValue = try nextOptionValue(option, arguments: arguments, index: &index)
+                guard let profileID = UUID(uuidString: rawValue) else { throw AgentBridgeError.invalidInput("--memory-destination requires a profile UUID.") }
+                memoryDestinationProfileID = profileID
+            case "--verification":
+                guard let mode = AutonomousVerificationSelection.Mode(rawValue: try nextOptionValue(option, arguments: arguments, index: &index)) else {
+                    throw AgentBridgeError.invalidInput("--verification must be none, projectCI, or custom.")
+                }
+                verificationMode = mode
+            case "--verify-command": verificationExecutable = try nextOptionValue(option, arguments: arguments, index: &index)
+            case "--verify-arg": verificationArguments.append(try nextOptionValue(option, arguments: arguments, index: &index))
+            case "--json": emitJSON = true
+            default: throw AgentBridgeError.invalidInput("Unknown autonomous plan option \(option).")
+            }
+        }
+        guard let sourcePath, let plannerBinding,
+              let researcherBinding = roleBindings[.researcher],
+              let implementerBinding = roleBindings[.implementer],
+              let reviewerBinding = roleBindings[.reviewer] else {
+            throw AgentBridgeError.invalidInput("Plan needs --source, --planner PROVIDER:PROFILE-ID, and provider/profile bindings for --researcher, --implementer, and --reviewer.")
+        }
+        guard shareDiffWithReviewer else {
+            throw AgentBridgeError.invalidInput("Add --share-diff-with-reviewer to explicitly allow the exact implementation diff to be reviewed by the selected reviewer profile.")
+        }
+        guard (desktopControlScope != nil) == desktopControlSeparateFromGit else {
+            throw AgentBridgeError.invalidInput("Desktop control requires both --desktop-control-scope and --confirm-desktop-separate-from-git.")
+        }
+        guard saveRunSummaryToMemory == (memoryDestinationProfileID != nil) else {
+            throw AgentBridgeError.invalidInput("Saving a run summary requires both --save-summary-to-memory and --memory-destination PROFILE-ID.")
+        }
+        let goal = try readBoundedStandardInput(maximumBytes: 8_000, label: "Autonomous goal")
+        let planner = try AutonomousRoleBinding(role: .planner, provider: plannerBinding.0, accountProfileID: plannerBinding.1)
+        let bindings = try [
+            AutonomousRoleBinding(role: .researcher, provider: researcherBinding.0, accountProfileID: researcherBinding.1, extensionIDs: extensions[.researcher] ?? []),
+            AutonomousRoleBinding(role: .implementer, provider: implementerBinding.0, accountProfileID: implementerBinding.1, extensionIDs: extensions[.implementer] ?? []),
+            AutonomousRoleBinding(role: .reviewer, provider: reviewerBinding.0, accountProfileID: reviewerBinding.1, extensionIDs: extensions[.reviewer] ?? [])
+        ]
+        let limits = try AutonomousRunLimits(
+            maxConcurrentAgents: maxConcurrentAgents,
+            maxReviewRounds: maxReviewRounds,
+            maxDurationSeconds: maxDurationSeconds,
+            maxProviderInvocations: maxProviderInvocations
+        )
+        let verification: AutonomousVerificationSelection
+        switch verificationMode {
+        case .none:
+            guard verificationExecutable == nil, verificationArguments.isEmpty else {
+                throw AgentBridgeError.invalidInput("--verify-command and --verify-arg require --verification custom.")
+            }
+            verification = .none
+        case .projectCI:
+            guard verificationExecutable == nil, verificationArguments.isEmpty else {
+                throw AgentBridgeError.invalidInput("--verify-command and --verify-arg require --verification custom.")
+            }
+            verification = .projectCI
+        case .custom:
+            guard let verificationExecutable else {
+                throw AgentBridgeError.invalidInput("--verification custom requires --verify-command EXECUTABLE; use repeated --verify-arg for separate argv values.")
+            }
+            verification = try .custom(executablePath: verificationExecutable, arguments: verificationArguments)
+        }
+        let request = try AutonomousRunRequest(
+            goal: goal,
+            sourceRepositoryPath: sourcePath,
+            planner: planner,
+            roleBindings: bindings,
+            limits: limits,
+            shareOutputsWithDependencies: shareDependencies,
+            shareDiffWithReviewer: true,
+            desktopControlScope: desktopControlScope,
+            desktopControlSeparateFromGit: desktopControlSeparateFromGit,
+            saveRunSummaryToMemory: saveRunSummaryToMemory,
+            memoryDestinationProfileID: memoryDestinationProfileID,
+            verification: verification
+        )
+        let record = try await service.prepareAutonomousRun(request)
+        if emitJSON {
+            try printJSON(record)
+        } else {
+            printAutonomousPlan(record)
+            print("Planning started a real provider request using the selected official CLI subscription profile. The plan is not approved yet.")
+        }
+    }
+
+    static func autonomousApprove(_ arguments: [String], service: BridgeService) async throws {
+        guard arguments.count == 5,
+              let runID = UUID(uuidString: arguments[1]),
+              arguments[2] == "--digest",
+              arguments[4] == "--confirm" else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge autonomous approve RUN-ID --digest REVIEW-DIGEST --confirm")
+        }
+        guard let record = try service.autonomousRun(id: runID) else {
+            throw AgentBridgeError.invalidInput("Autonomous run not found.")
+        }
+        guard record.planDigest == arguments[3].lowercased() else {
+            throw AgentBridgeError.invalidInput("The reviewed digest does not match the saved autonomous plan.")
+        }
+        _ = try service.approveAutonomousRun(id: runID, reviewedDigest: record.planDigest)
+        print("Approved the reviewed plan and its bounded repair and verification loop for digest \(record.planDigest).")
+    }
+
+    static func autonomousRun(_ arguments: [String], service: BridgeService) async throws {
+        guard arguments.count == 4,
+              let runID = UUID(uuidString: arguments[1]),
+              arguments[2] == "--digest" else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge autonomous run RUN-ID --digest REVIEW-DIGEST")
+        }
+        let cancellation = CancellationFlag()
+        let signalSources = makeCancellationSignalSources(cancellation)
+        defer { signalSources.forEach { $0.cancel() } }
+        let record = try await service.runAutonomousRun(
+            id: runID,
+            reviewedDigest: arguments[3].lowercased(),
+            cancellation: cancellation
+        )
+        try printJSON(record)
+    }
+
+    static func autonomousStatus(_ arguments: [String], service: BridgeService) async throws {
+        let remainder = Array(arguments.dropFirst())
+        let identifiers = remainder.filter { !$0.hasPrefix("--") }
+        let options = Set(remainder.filter { $0.hasPrefix("--") })
+        guard options.isSubset(of: ["--json"]), identifiers.count <= 1 else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge autonomous status [RUN-ID] [--json]")
+        }
+        let records: [AutonomousRunRecord]
+        if let identifier = identifiers.first {
+            guard let id = UUID(uuidString: identifier) else { throw AgentBridgeError.invalidInput("RUN-ID must be a UUID.") }
+            guard let record = try service.autonomousRun(id: id) else {
+                throw AgentBridgeError.invalidInput("Autonomous run not found.")
+            }
+            records = [record]
+        } else {
+            records = try service.autonomousRuns()
+        }
+        if options.contains("--json") {
+            try printJSON(records)
+        } else if records.isEmpty {
+            print("No autonomous runs yet.")
+        } else {
+            for record in records { printAutonomousStatus(record) }
+        }
     }
 }

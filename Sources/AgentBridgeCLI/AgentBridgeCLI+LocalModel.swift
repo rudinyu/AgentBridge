@@ -24,58 +24,7 @@ extension AgentBridgeCLI {
             print("Context window: \(local.contextWindowTokens) tokens")
             print("Output reserve: \(local.maxOutputTokens) tokens")
         case "configure":
-            guard arguments.count > 1 else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge local configure --backend ollama|openai-compatible --endpoint URL --model NAME [--context-window TOKENS] [--max-output TOKENS]")
-            }
-            var bridgeSettings = try service.settings()
-            var local = bridgeSettings.localModel
-            var seen = Set<String>()
-            var index = 1
-            while index < arguments.count {
-                let option = arguments[index]
-                guard seen.insert(option).inserted else {
-                    throw AgentBridgeError.invalidInput("\(option) cannot be repeated.")
-                }
-                index += 1
-                switch option {
-                case "--backend":
-                    let value = try nextOptionValue(option, arguments: arguments, index: &index)
-                    switch value {
-                    case "ollama": local.backend = .ollama
-                    case "openai-compatible": local.backend = .openAICompatible
-                    default: throw AgentBridgeError.invalidInput("--backend must be ollama or openai-compatible.")
-                    }
-                case "--endpoint":
-                    local.endpoint = try nextOptionValue(option, arguments: arguments, index: &index)
-                case "--model":
-                    local.model = try nextOptionValue(option, arguments: arguments, index: &index)
-                case "--context-window":
-                    let value = try nextOptionValue(option, arguments: arguments, index: &index)
-                    guard let parsed = Int(value), parsed > 0 else {
-                        throw AgentBridgeError.invalidInput("--context-window must be a positive token count.")
-                    }
-                    local.contextWindowTokens = parsed
-                case "--max-output":
-                    let value = try nextOptionValue(option, arguments: arguments, index: &index)
-                    guard let parsed = Int(value), parsed > 0 else {
-                        throw AgentBridgeError.invalidInput("--max-output must be a positive token count.")
-                    }
-                    local.maxOutputTokens = parsed
-                case "--api-key", "--api-key-env":
-                    throw AgentBridgeError.invalidInput("Local models do not use API keys. This option is unsupported.")
-                default:
-                    throw AgentBridgeError.invalidInput("Unknown local configure option \(option).")
-                }
-            }
-            guard (1_024...131_072).contains(local.contextWindowTokens),
-                  (1...32_768).contains(local.maxOutputTokens),
-                  local.contextWindowTokens - local.maxOutputTokens > 512 else {
-                throw AgentBridgeError.invalidInput("The context window must be 1,024–131,072 tokens, the output reserve must be 1–32,768 tokens, and at least 513 tokens must remain beyond the output reserve for input and a safety margin.")
-            }
-            bridgeSettings.localModel = local
-            try service.saveSettings(bridgeSettings)
-            print("Saved the local model settings. AgentBridge never starts a service, downloads a model or switches to a cloud service on its own.")
-            print("Run `agentbridge local test` to test the connection explicitly, or `agentbridge local models` to refresh the model list.")
+            try await localModelConfigure(arguments, service: service)
         case "models":
             guard arguments.count == 1 else { throw AgentBridgeError.invalidInput("Usage: agentbridge local models") }
             let settings = try service.settings().localModel
@@ -99,29 +48,7 @@ extension AgentBridgeCLI {
                 print("The local model is not ready: \(settings.endpoint). Make sure you started the local service and chose an available model.")
             }
         case "preview":
-            guard arguments.count == 3 else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge local preview discussion CHAT-ID|project SESSION-ID < prompt.txt")
-            }
-            let target = arguments[1]
-            guard let id = UUID(uuidString: arguments[2]) else {
-                throw AgentBridgeError.invalidInput("The preview needs a valid chat or session UUID.")
-            }
-            let promptLimit = target == "project" ? 256 * 1_024 : DiscussionStore.maximumTextBytes
-            let prompt = try readPromptFromStandardInput(maximumBytes: promptLimit)
-            guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw AgentBridgeError.invalidInput("The prompt cannot be empty.")
-            }
-            let settings = try service.settings().localModel
-            let preview: ContextCompressionPreview
-            switch target {
-            case "discussion":
-                preview = try service.previewDiscussionContext(id: id, currentPrompt: prompt, settings: settings)
-            case "project":
-                preview = try service.previewProjectContext(sessionID: id, currentPrompt: prompt, settings: settings)
-            default:
-                throw AgentBridgeError.invalidInput("The preview target must be discussion or project.")
-            }
-            printContextCompressionPreview(preview, settings: settings)
+            try await localModelPreview(arguments, service: service)
         default:
             throw AgentBridgeError.invalidInput("Unknown local subcommand \(action). Usage: agentbridge local settings|configure|models|test|preview …")
         }
@@ -166,5 +93,86 @@ extension AgentBridgeCLI {
                 print("Protected context: \(refusalReason)")
             }
         }
+    }
+
+    static func localModelConfigure(_ arguments: [String], service: BridgeService) async throws {
+        guard arguments.count > 1 else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge local configure --backend ollama|openai-compatible --endpoint URL --model NAME [--context-window TOKENS] [--max-output TOKENS]")
+        }
+        var bridgeSettings = try service.settings()
+        var local = bridgeSettings.localModel
+        var seen = Set<String>()
+        var index = 1
+        while index < arguments.count {
+            let option = arguments[index]
+            guard seen.insert(option).inserted else {
+                throw AgentBridgeError.invalidInput("\(option) cannot be repeated.")
+            }
+            index += 1
+            switch option {
+            case "--backend":
+                let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                switch value {
+                case "ollama": local.backend = .ollama
+                case "openai-compatible": local.backend = .openAICompatible
+                default: throw AgentBridgeError.invalidInput("--backend must be ollama or openai-compatible.")
+                }
+            case "--endpoint":
+                local.endpoint = try nextOptionValue(option, arguments: arguments, index: &index)
+            case "--model":
+                local.model = try nextOptionValue(option, arguments: arguments, index: &index)
+            case "--context-window":
+                let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                guard let parsed = Int(value), parsed > 0 else {
+                    throw AgentBridgeError.invalidInput("--context-window must be a positive token count.")
+                }
+                local.contextWindowTokens = parsed
+            case "--max-output":
+                let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                guard let parsed = Int(value), parsed > 0 else {
+                    throw AgentBridgeError.invalidInput("--max-output must be a positive token count.")
+                }
+                local.maxOutputTokens = parsed
+            case "--api-key", "--api-key-env":
+                throw AgentBridgeError.invalidInput("Local models do not use API keys. This option is unsupported.")
+            default:
+                throw AgentBridgeError.invalidInput("Unknown local configure option \(option).")
+            }
+        }
+        guard (1_024...131_072).contains(local.contextWindowTokens),
+              (1...32_768).contains(local.maxOutputTokens),
+              local.contextWindowTokens - local.maxOutputTokens > 512 else {
+            throw AgentBridgeError.invalidInput("The context window must be 1,024–131,072 tokens, the output reserve must be 1–32,768 tokens, and at least 513 tokens must remain beyond the output reserve for input and a safety margin.")
+        }
+        bridgeSettings.localModel = local
+        try service.saveSettings(bridgeSettings)
+        print("Saved the local model settings. AgentBridge never starts a service, downloads a model or switches to a cloud service on its own.")
+        print("Run `agentbridge local test` to test the connection explicitly, or `agentbridge local models` to refresh the model list.")
+    }
+
+    static func localModelPreview(_ arguments: [String], service: BridgeService) async throws {
+        guard arguments.count == 3 else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge local preview discussion CHAT-ID|project SESSION-ID < prompt.txt")
+        }
+        let target = arguments[1]
+        guard let id = UUID(uuidString: arguments[2]) else {
+            throw AgentBridgeError.invalidInput("The preview needs a valid chat or session UUID.")
+        }
+        let promptLimit = target == "project" ? 256 * 1_024 : DiscussionStore.maximumTextBytes
+        let prompt = try readPromptFromStandardInput(maximumBytes: promptLimit)
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AgentBridgeError.invalidInput("The prompt cannot be empty.")
+        }
+        let settings = try service.settings().localModel
+        let preview: ContextCompressionPreview
+        switch target {
+        case "discussion":
+            preview = try service.previewDiscussionContext(id: id, currentPrompt: prompt, settings: settings)
+        case "project":
+            preview = try service.previewProjectContext(sessionID: id, currentPrompt: prompt, settings: settings)
+        default:
+            throw AgentBridgeError.invalidInput("The preview target must be discussion or project.")
+        }
+        printContextCompressionPreview(preview, settings: settings)
     }
 }

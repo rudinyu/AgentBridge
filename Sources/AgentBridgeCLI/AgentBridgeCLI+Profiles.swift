@@ -21,35 +21,7 @@ extension AgentBridgeCLI {
                 }
             }
         case "create":
-            var provider: AgentProvider?
-            var name: String?
-            var allowsSharedMemory = true
-            var index = 1
-            while index < arguments.count {
-                switch arguments[index] {
-                case "--provider":
-                    index += 1
-                    guard index < arguments.count else { throw AgentBridgeError.invalidInput("--provider needs codex, claude or local.") }
-                    provider = try parseProvider(arguments[index])
-                case "--name":
-                    index += 1
-                    guard index < arguments.count else { throw AgentBridgeError.invalidInput("--name needs an account name.") }
-                    name = arguments[index]
-                case "--share-memory":
-                    allowsSharedMemory = true
-                default:
-                    throw AgentBridgeError.invalidInput("Unknown profiles create option \(arguments[index]).")
-                }
-                index += 1
-            }
-            guard let provider, let name else { throw AgentBridgeError.invalidInput("Specify --provider and --name.") }
-            let profile = try service.createAccountProfile(name: name, provider: provider, allowsSharedMemory: allowsSharedMemory)
-            print("Created a separate account profile: \(profile.id.uuidString.lowercased()) (\(provider.rawValue), shared memory \(allowsSharedMemory ? "on" : "off")).")
-            if provider == .local {
-                print("Local accounts do not use a CLI sign-in or credential folder.")
-            } else {
-                print("To sign in, run in an interactive Terminal: agentbridge profile-login \(profile.id.uuidString.lowercased())")
-            }
+            try profilesCreate(arguments, service: service)
         case "select":
             guard arguments.count == 4, arguments[1] == "--provider",
                   let provider = AgentProvider(rawValue: arguments[2]),
@@ -83,6 +55,38 @@ extension AgentBridgeCLI {
         defer { signalSources.forEach { $0.cancel() } }
         _ = try await service.loginAccountProfile(profileID: profileID, cancellation: cancellation) { message in
             FileHandle.standardError.write(Data("• \(message)\n".utf8))
+        }
+    }
+
+    static func profilesCreate(_ arguments: [String], service: BridgeService) throws {
+        var provider: AgentProvider?
+        var name: String?
+        var allowsSharedMemory = true
+        var index = 1
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--provider":
+                index += 1
+                guard index < arguments.count else { throw AgentBridgeError.invalidInput("--provider needs codex, claude or local.") }
+                provider = try parseProvider(arguments[index])
+            case "--name":
+                index += 1
+                guard index < arguments.count else { throw AgentBridgeError.invalidInput("--name needs an account name.") }
+                name = arguments[index]
+            case "--share-memory":
+                allowsSharedMemory = true
+            default:
+                throw AgentBridgeError.invalidInput("Unknown profiles create option \(arguments[index]).")
+            }
+            index += 1
+        }
+        guard let provider, let name else { throw AgentBridgeError.invalidInput("Specify --provider and --name.") }
+        let profile = try service.createAccountProfile(name: name, provider: provider, allowsSharedMemory: allowsSharedMemory)
+        print("Created a separate account profile: \(profile.id.uuidString.lowercased()) (\(provider.rawValue), shared memory \(allowsSharedMemory ? "on" : "off")).")
+        if provider == .local {
+            print("Local accounts do not use a CLI sign-in or credential folder.")
+        } else {
+            print("To sign in, run in an interactive Terminal: agentbridge profile-login \(profile.id.uuidString.lowercased())")
         }
     }
 }
