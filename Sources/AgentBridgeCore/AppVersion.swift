@@ -2,6 +2,6 @@
 /// `marketing`, and `scripts/package-app.sh` reads both values from this file for
 /// the app's Info.plist, so they cannot drift apart.
 public enum AppVersion {
-    public static let marketing = "0.11.1"
-    public static let build = 12
+    public static let marketing = "0.11.2"
+    public static let build = 13
 }

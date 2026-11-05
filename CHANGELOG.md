@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.2 — 2026-11-05
 
 - Fixed: AgentBridge stopped working once its data files filled up. The session index only ever grew (each save appended a whole record) and had a 10 MiB limit, so after about 21,400 saves no session could be saved, including new ones, and nothing said how to recover. The index is now compacted to one line per session (atomically) once it passes 2 MiB, so it cannot reach its limit. A session's audit file, which could fill with long run outputs and then fail a run after the provider had already answered, now trims the text of older `run.output` events instead; every event is kept because the local usage counters read their kinds and times, and the newest output stays complete.
 - Faster: looking up one session no longer parses the whole index each time (about 170 ms with 20,000 records, and a run looked sessions up eight times), and the App's two-second refresh no longer re-decodes the selected session's audit file when it has not changed. Both reuse their decoded data until the file changes, including when another process changes it.

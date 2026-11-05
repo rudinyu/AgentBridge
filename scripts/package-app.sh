@@ -21,7 +21,7 @@ Creates the app bundle under this repository's build/ directory.
 The default output is build/AgentBridge.app.
 
 Example:
-  ./scripts/package-app.sh --app-name AgentBridge-0.11.1-dev.app
+  ./scripts/package-app.sh --app-name AgentBridge-0.11.2-dev.app
 USAGE
 }
 

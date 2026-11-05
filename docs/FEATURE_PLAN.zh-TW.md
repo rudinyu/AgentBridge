@@ -1,7 +1,7 @@
 # AgentBridge 功能計畫
 
 - **狀態：** 提案
-- **依據：** AgentBridge 0.11.1 工作樹、0.6.0 競品研究基準、[產品差距研究](PRODUCT_GAP_STUDY.zh-TW.md)及官方 CLI／API 文件
+- **依據：** AgentBridge 0.11.2 工作樹、0.6.0 競品研究基準、[產品差距研究](PRODUCT_GAP_STUDY.zh-TW.md)及官方 CLI／API 文件
 - **最後檢視：** 2026-11-02
 
 [英文版](FEATURE_PLAN.md)
