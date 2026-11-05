@@ -70,7 +70,13 @@ final class CLICompatibilityTests: XCTestCase {
     /// compatibility check noticing; and a probed flag must still be in use.
     func testTheProbeListMatchesTheFlagsTheAdaptersActuallyPass() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("Sources/AgentBridgeCore/ProviderAdapters.swift"), encoding: .utf8)
+        // The flags live in the command builder; the adapter and parser files are read too in case one moves.
+        let core = root.appendingPathComponent("Sources/AgentBridgeCore", isDirectory: true)
+        let providerFiles = try FileManager.default.contentsOfDirectory(atPath: core.path)
+            .filter { $0.hasPrefix("Provider") && $0.hasSuffix(".swift") }.sorted()
+        XCTAssertTrue(providerFiles.contains("ProviderCommandBuilder.swift"))
+        var source = ""
+        for file in providerFiles { source += try String(contentsOf: core.appendingPathComponent(file), encoding: .utf8) }
         let expression = try NSRegularExpression(pattern: #""(--[a-z][a-z-]*)""#)
         var used: Set<String> = []
         for match in expression.matches(in: source, range: NSRange(source.startIndex..., in: source)) {
