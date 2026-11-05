@@ -175,8 +175,10 @@ final class WorkspaceRootConfigurationTests: XCTestCase {
 
         // Simulate a stop after the root was saved but before the session
         // record was repointed: the latest record still names the old copy.
+        // Only just newer than the repointed record, so the resumed repoint, which
+        // is stamped with the real time, is newer still however fast it runs.
         var stale = session
-        stale.updatedAt = Date().addingTimeInterval(1)
+        stale.updatedAt = migrated.updatedAt.addingTimeInterval(0.001)
         try newStore.saveSession(stale)
         XCTAssertEqual(try newStore.session(id: session.id)?.workspacePath, session.workspacePath)
 

@@ -312,6 +312,13 @@ public final class SafeProcessRunner: Sendable {
                 _ = kill(-processID, SIGKILL)
                 groupCleanupEscalated = true
             }
+            // The leader is still unreaped here, so its group ID cannot be reused. When
+            // nothing else is left in the group there is nothing to clean up, and the
+            // grace period would only add its full length to every process that exits
+            // cleanly.
+            if childExited, !groupCleanupEscalated, Self.groupHasOnlyItsLeader(processID) {
+                groupCleanupEscalated = true
+            }
             if childExited, let deadline = exitPipeDeadline, now >= deadline, (stdoutOpen || stderrOpen) {
                 _ = kill(-processID, SIGKILL)
                 forcedPipeCloseDeadline = now + 500_000_000
@@ -377,6 +384,23 @@ public final class SafeProcessRunner: Sendable {
         else { exitCode = 1 }
         truncated = truncated || lineFramer.didOverflow
         return ProcessResult(exitCode: exitCode, standardOutput: output, standardError: errorOutput, outputWasTruncated: truncated, wasCancelled: cancelled, timedOut: timedOut)
+    }
+
+    /// True when no process other than the group leader itself is left in `group`.
+    /// Returns false whenever that cannot be established, which keeps the full cleanup.
+    private static func groupHasOnlyItsLeader(_ group: pid_t) -> Bool {
+        var members = [pid_t](repeating: 0, count: 64)
+        let bytes = proc_listpids(
+            UInt32(PROC_PGRP_ONLY),
+            UInt32(group),
+            &members,
+            Int32(members.count * MemoryLayout<pid_t>.stride)
+        )
+        guard bytes >= 0 else { return false }
+        let count = Int(bytes) / MemoryLayout<pid_t>.stride
+        // A full buffer means more members than were listed.
+        guard count < members.count else { return false }
+        return !members.prefix(count).contains { $0 != 0 && $0 != group }
     }
 
     private static func drain(fd: Int32, destination: inout Data, limit: Int, truncated: inout Bool, open: inout Bool, onChunk: ((Data) -> Void)?) {

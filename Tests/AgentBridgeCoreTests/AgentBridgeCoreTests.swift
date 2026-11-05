@@ -552,6 +552,48 @@ final class AgentBridgeCoreTests: XCTestCase {
         XCTAssertFalse(remains, "The TERM-ignoring descendant survived process-group escalation.")
     }
 
+    func testProcessThatExitsCleanlyDoesNotWaitForTheCleanupGracePeriod() async throws {
+        // Every run used to wait the full process-group grace period after the
+        // child exited, even when nothing else was left in the group.
+        let runner = SafeProcessRunner()
+        let started = Date()
+        for _ in 0..<5 {
+            let result = try await runner.run(ProcessSpec(
+                executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+                arguments: [],
+                environment: ["PATH": "/usr/bin:/bin"],
+                timeout: 5,
+                outputLimit: 1_000
+            ))
+            XCTAssertEqual(result.exitCode, 0)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2.5, "Five clean exits should not each wait out the 0.75 s grace period.")
+    }
+
+    func testBackgroundProcessLeftByAnExitedLeaderIsStillCleanedUp() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let result = try await SafeProcessRunner().run(ProcessSpec(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "/bin/sleep 30 >/dev/null 2>&1 </dev/null & echo $!"],
+            environment: ["PATH": "/usr/bin:/bin"],
+            workingDirectoryURL: root,
+            timeout: 10,
+            outputLimit: 1_000
+        ))
+        XCTAssertEqual(result.exitCode, 0)
+        let text = String(decoding: result.standardOutput, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let pid = try XCTUnwrap(pid_t(text))
+        let deadline = Date().addingTimeInterval(3)
+        var remains = kill(pid, 0) == 0
+        while remains, Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            remains = kill(pid, 0) == 0
+        }
+        if remains { _ = kill(pid, SIGKILL) }
+        XCTAssertFalse(remains, "A background process left in the group by an exited leader survived cleanup.")
+    }
+
     func testInteractiveLauncherQuotesUntrustedExecutablePath() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

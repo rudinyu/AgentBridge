@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Every child process AgentBridge starts (git, the provider CLIs, verification scripts) no longer waits an extra 0.75 s after it exits. The runner waited out its process-group cleanup grace period even when nothing else was left in the group; it now skips the wait when only the exited leader remains, and still cleans up stray descendants. This speeds up viewing diffs, applying changes and verification, and cuts the full test suite from about 737 s to about 30 s.
+
 ## 0.11.0 — 2026-11-05
 
 - Fixed the main window header overlapping the window buttons and showing the title twice: the system title bar is hidden and the header now leaves room under the window buttons. Build 10 had this problem; build 11 supersedes it.
