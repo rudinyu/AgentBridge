@@ -204,21 +204,46 @@ public final class AuditStore: @unchecked Sendable {
         return true
     }
 
+    /// How many provider runs may be in progress at once across the App, the CLI
+    /// and autonomous workflows. It is counted with lock files in the private
+    /// root, so it holds across processes and a crashed run frees its slot.
+    public static let maximumConcurrentRuns = 3
+
     public func acquireRunLease(for sessionID: UUID) throws -> SessionRunLease {
         let url = rootURL.appendingPathComponent("session-\(sessionID.uuidString.lowercased()).run.lock")
-        let descriptor = open(url.path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
-        guard descriptor >= 0 else { throw AgentBridgeError.persistence("Could not lock the session.") }
-        var metadata = stat()
-        guard fstat(descriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
-              fchmod(descriptor, mode_t(0o600)) == 0 else {
-            _ = close(descriptor)
-            throw AgentBridgeError.persistence("The session lock file is not a secure regular file.")
-        }
+        let descriptor = try openPrivateLockFile(at: url, failure: "Could not lock the session.")
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             _ = close(descriptor)
             throw AgentBridgeError.sessionMismatch("This session is already running in another window or terminal.")
         }
-        return SessionRunLease(descriptor: descriptor)
+        do {
+            return SessionRunLease(descriptor: descriptor, slotDescriptor: try acquireRunSlot())
+        } catch {
+            _ = close(descriptor)
+            throw error
+        }
+    }
+
+    private func acquireRunSlot() throws -> Int32 {
+        for index in 0..<Self.maximumConcurrentRuns {
+            let url = rootURL.appendingPathComponent("run-slot-\(index).lock")
+            let descriptor = try openPrivateLockFile(at: url, failure: "Could not count the running tasks.")
+            if flock(descriptor, LOCK_EX | LOCK_NB) == 0 { return descriptor }
+            _ = close(descriptor)
+        }
+        throw AgentBridgeError.sessionMismatch("Up to \(Self.maximumConcurrentRuns) tasks can run at once; wait for one to finish.")
+    }
+
+    private func openPrivateLockFile(at url: URL, failure: String) throws -> Int32 {
+        let descriptor = open(url.path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
+        guard descriptor >= 0 else { throw AgentBridgeError.persistence(failure) }
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0, (metadata.st_mode & S_IFMT) == S_IFREG,
+              fchmod(descriptor, mode_t(0o600)) == 0 else {
+            _ = close(descriptor)
+            throw AgentBridgeError.persistence("The lock file is not a secure regular file.")
+        }
+        return descriptor
     }
 
     public static func createPrivateDirectory(_ url: URL, fileManager: FileManager = .default) throws {
@@ -302,8 +327,14 @@ public final class AuditStore: @unchecked Sendable {
 
 public final class SessionRunLease: @unchecked Sendable {
     private let descriptor: Int32
-    fileprivate init(descriptor: Int32) { self.descriptor = descriptor }
+    private let slotDescriptor: Int32
+    fileprivate init(descriptor: Int32, slotDescriptor: Int32) {
+        self.descriptor = descriptor
+        self.slotDescriptor = slotDescriptor
+    }
     deinit {
+        _ = flock(slotDescriptor, LOCK_UN)
+        _ = close(slotDescriptor)
         _ = flock(descriptor, LOCK_UN)
         _ = close(descriptor)
     }

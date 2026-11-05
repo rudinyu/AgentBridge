@@ -168,7 +168,7 @@ printf '%s' '依核准計畫完成修改。' | \
 
 在 **Changes** 檢視完整檔案清單與 diff。拒絕某個變更時還原該檔，或將全部檔案還原到基準快照，也可匯出 patch。**Verify** 只有按下後才會執行 `.codex/ci.sh`。自訂驗證需先明確核准，並以 executable 和分開的 argv 傳入；AgentBridge 不會組合 shell 命令。結果顯示 executable、參數、工作目錄、退出代碼、耗時及遮蔽後的 stdout/stderr。接受與套用只適用於已成功驗證的目前完整 diff。套用時須輸入本機 branch 名稱；AgentBridge 先檢查來源 base commit 未改變，再建立未提交 worktree。AgentBridge 不會 commit、push 或 merge。
 
-**Activity** 時間軸呈現排序後、已遮蔽的稽核事件，包括可取得的進度、計畫核准、取消、錯誤、diff 變化與驗證結果。只有官方 CLI 實際回報的 provider 輸出才會顯示。**Parallel task board** 列出所有工作階段實際啟動的操作、狀態、核准、進度、取消及 diff／驗證參照。App 最多同時執行三個不同工作階段；App 和 CLI 共用的程序鎖會阻止同一工作階段重複執行，但三個工作階段的並行上限目前只套用於 App 啟動的工作。請在對應任務按 **Cancel this session**。
+**Activity** 時間軸呈現排序後、已遮蔽的稽核事件，包括可取得的進度、計畫核准、取消、錯誤、diff 變化與驗證結果。只有官方 CLI 實際回報的 provider 輸出才會顯示。**Parallel task board** 列出所有工作階段實際啟動的操作、狀態、核准、進度、取消及 diff／驗證參照。App、CLI 與自主流程合計最多同時進行三個受管理的執行，第四個會被拒絕，直到有一個結束；共用的程序鎖也會阻止同一工作階段重複執行。請在對應任務按 **Cancel this session**。
 
 若要將記憶延續到另一個 commit，請選擇相同 canonical Repository、不同提交版本的來源和目標工作階段。目標工作階段綁定的帳戶必須允許共用記憶。選取來源回合與／或備註，檢查來源／目標 commit，再建立交接。目標工作階段下一次允許的提示只會收到所選內容，並以有界（16 KiB）、標明不可信的歷史 JSON envelope 傳入且保留 provenance。交接存於所選工作區資料根目錄下的 `shared-memory/project-handoffs/`。原生 provider TUI transcript 永不匯入。
 
