@@ -547,18 +547,7 @@ extension BridgeService {
         }
         let session = try loadSession(sessionID)
         try requireIsolatedChangesSession(session)
-        guard let plan = session.changePlan,
-              plan.sessionID == sessionID,
-              plan.id == planID,
-              plan.reviewDigest == reviewedDigest.lowercased(),
-              session.approvedChangePlanDigest == plan.reviewDigest else {
-            try? store.appendEvent(AuditEvent(
-                sessionID: sessionID,
-                kind: "change.run.blocked",
-                message: "The currently approved work plan identifier and review digest were not provided; no files were written."
-            ))
-            throw AgentBridgeError.changePlanRequired
-        }
+        let plan = try requireApprovedPlan(session: session, planID: planID, reviewedDigest: reviewedDigest)
         let profile = try requireBoundProfile(for: session, allowUnselected: allowBoundProfileWithoutGlobalSelection)
         try authorizeManagedRun(session: session, profile: profile, usageMode: .subscription)
         try await workspaceManager.validateWorkspace(for: session, accessMode: .isolatedChanges)
@@ -566,15 +555,7 @@ extension BridgeService {
             provider: session.provider,
             configuredPath: settings.binaryPath(for: session.provider)
         )
-        let assessment = try await checkAuthentication(profile: profile, executable: executable)
-        guard assessment.confirmedSubscription else {
-            try store.appendEvent(AuditEvent(
-                sessionID: sessionID,
-                kind: "auth.refused",
-                message: "Could not confirm \(session.provider.rawValue) subscription sign-in; \(assessment.message)"
-            ))
-            throw AgentBridgeError.unauthenticated(session.provider, assessment.message)
-        }
+        try await requireConfirmedSubscription(session: session, profile: profile, executable: executable)
 
         let temp = try makePrivateTemporaryDirectory(label: "change-\(sessionID.uuidString.lowercased())")
         defer { try? FileManager.default.removeItem(at: temp) }
@@ -586,38 +567,13 @@ extension BridgeService {
             workspacePath: session.workspacePath,
             selectedExtensionIDs: extensionIDs
         )
-        if let expectedExtensionFingerprint {
-            guard ActiveExtensionValidation.isSHA256(expectedExtensionFingerprint),
-                  extensionInvocation.fingerprint == expectedExtensionFingerprint.lowercased() else {
-                throw ActiveExtensionRuntimeError.reviewDigestMismatch
-            }
-        }
-        for mcpServer in extensionInvocation.mcpServers {
-            guard try MCPExecutableValidation.digestExecutable(at: mcpServer.executablePath) == mcpServer.executableDigest else {
-                throw ActiveExtensionRuntimeError.invalidConfiguration("The MCP executable changed after it was imported and reviewed.")
-            }
-        }
+        try verifyExtensionInvocation(extensionInvocation, expectedFingerprint: expectedExtensionFingerprint)
         let mcpControlPlane = try makeMCPRunDirectoryLease(for: extensionInvocation, session: session, providerTemporaryDirectory: temp)
         defer { mcpControlPlane?.remove() }
         let (promptWithMemory, memoryContext) = allowSharedMemoryForRun
             ? try legacyPromptWithSharedMemory(trimmedPrompt, session: session, profile: profile)
             : (trimmedPrompt, nil)
-        let planText = ([
-            "APPROVED CHANGE PLAN",
-            "Title: \(plan.title)",
-            "Summary: \(plan.summary)",
-            "Steps:",
-        ] + plan.steps.enumerated().map { "\($0.offset + 1). \($0.element)" }).joined(separator: "\n")
-        let providerPrompt = """
-        \(extensionInvocation.skillPrompt)
-        \(extensionInvocation.skillPrompt.isEmpty ? "" : "\n")
-        \(planText)
-
-        This plan is the user's authorization boundary. Make only the changes described by the approved plan in this isolated workspace. If the request requires work outside the plan, stop and explain what needs a new reviewed plan. Do not commit, push, merge, or change the source repository.
-
-        USER REQUEST
-        \(promptWithMemory)
-        """
+        let providerPrompt = makeChangePrompt(plan: plan, extensionInvocation: extensionInvocation, promptWithMemory: promptWithMemory)
 
         var activeSession = session
         let emitter = ProgressEmitter(sessionID: sessionID, store: store, callback: onProgress)
@@ -732,6 +688,58 @@ extension BridgeService {
             }
             throw error
         }
+    }
+
+    /// The plan the user approved, or an audited refusal when the identifier or
+    /// review digest does not match what is currently approved.
+    private func requireApprovedPlan(session: SessionRecord, planID: UUID, reviewedDigest: String) throws -> ChangePlan {
+        let sessionID = session.id
+        guard let plan = session.changePlan,
+              plan.sessionID == sessionID,
+              plan.id == planID,
+              plan.reviewDigest == reviewedDigest.lowercased(),
+              session.approvedChangePlanDigest == plan.reviewDigest else {
+            try? store.appendEvent(AuditEvent(
+                sessionID: sessionID,
+                kind: "change.run.blocked",
+                message: "The currently approved work plan identifier and review digest were not provided; no files were written."
+            ))
+            throw AgentBridgeError.changePlanRequired
+        }
+        return plan
+    }
+
+    private func requireConfirmedSubscription(session: SessionRecord, profile: AccountProfile, executable: URL) async throws {
+        let sessionID = session.id
+        let assessment = try await checkAuthentication(profile: profile, executable: executable)
+        guard assessment.confirmedSubscription else {
+            try store.appendEvent(AuditEvent(
+                sessionID: sessionID,
+                kind: "auth.refused",
+                message: "Could not confirm \(session.provider.rawValue) subscription sign-in; \(assessment.message)"
+            ))
+            throw AgentBridgeError.unauthenticated(session.provider, assessment.message)
+        }
+    }
+
+    private func makeChangePrompt(plan: ChangePlan, extensionInvocation: ActiveExtensionInvocation, promptWithMemory: String) -> String {
+        let planText = ([
+            "APPROVED CHANGE PLAN",
+            "Title: \(plan.title)",
+            "Summary: \(plan.summary)",
+            "Steps:",
+        ] + plan.steps.enumerated().map { "\($0.offset + 1). \($0.element)" }).joined(separator: "\n")
+        let providerPrompt = """
+        \(extensionInvocation.skillPrompt)
+        \(extensionInvocation.skillPrompt.isEmpty ? "" : "\n")
+        \(planText)
+
+        This plan is the user's authorization boundary. Make only the changes described by the approved plan in this isolated workspace. If the request requires work outside the plan, stop and explain what needs a new reviewed plan. Do not commit, push, merge, or change the source repository.
+
+        USER REQUEST
+        \(promptWithMemory)
+        """
+        return providerPrompt
     }
 
     @discardableResult
