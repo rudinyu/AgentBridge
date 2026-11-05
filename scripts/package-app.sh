@@ -147,7 +147,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSHumanReadableCopyright</key><string>Copyright © 2026 rudin. Licensed under the MIT License.</string>
   <key>CFBundleShortVersionString</key><string>0.11.0</string>
-  <key>CFBundleVersion</key><string>10</string>
+  <key>CFBundleVersion</key><string>11</string>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hant</string></array>
   <key>LSMinimumSystemVersion</key><string>14.0</string>

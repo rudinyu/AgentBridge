@@ -16,6 +16,10 @@ struct AgentBridgeApp: App {
             ContentView()
                 .frame(minWidth: 980, minHeight: 700)
         }
+        // The header draws its own title, so hide the system one and leave room
+        // under the window buttons instead of relying on the OS default, which
+        // lets content run underneath the title bar.
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
     }
 }

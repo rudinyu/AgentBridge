@@ -2,6 +2,8 @@
 
 ## 0.11.0 — 2026-11-05
 
+- Fixed the main window header overlapping the window buttons and showing the title twice: the system title bar is hidden and the header now leaves room under the window buttons. Build 10 had this problem; build 11 supersedes it.
+
 - Release record: build 10 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `dc69a199-e249-4d9c-b7e3-d0664ffdef7e`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `b00360a67c1b2960b9a6df95366d86edbc1c9483b81f560ada55ae3c3ff2cef0`. The signed app has not been launched or clicked through; GUI acceptance is a separate check.
 
 - Core, CLI and App messages are now written in English instead of Traditional Chinese. The App shows Traditional Chinese through `zh-Hant.lproj`, matching whole sentences or whole-sentence templates (captured values are translated in turn) instead of replacing fragments inside a sentence. Audit events saved before this change stay readable in English through `en.lproj/Legacy.strings`. **The CLI now prints English only**; it previously printed Chinese. A test fails if Chinese text reappears in Core sources.

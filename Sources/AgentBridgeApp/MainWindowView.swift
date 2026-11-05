@@ -138,6 +138,8 @@ struct MainWindowView: View {
             Button("Refresh") { model.refresh() }
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
+        // Clear the window buttons now that the title bar is hidden.
+        .padding(.top, 20)
     }
 
     var mainAreaPicker: some View {
