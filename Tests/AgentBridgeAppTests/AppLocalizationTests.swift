@@ -33,6 +33,23 @@ final class AppLocalizationTests: XCTestCase {
         XCTAssertEqual(AppLocalization.display(text, language: .traditionalChinese), text)
     }
 
+    func testEnglishDisplayOfTextWithNoTranslationIsCheap() {
+        // This used to sort and scan every table key on each call (about 50 ms).
+        let text = "Some text from a provider that matches no entry at all, with a few words."
+        _ = AppLocalization.display(text, language: .english)
+        let started = Date()
+        for _ in 0..<500 { XCTAssertEqual(AppLocalization.display(text, language: .english), text) }
+        let each = Date().timeIntervalSince(started) / 500
+        XCTAssertLessThan(each, 0.002, "English display of untranslated text took \(each * 1000) ms per call.")
+    }
+
+    func testStatusWordsAreStillRestyledButOnlyAsWholeStrings() {
+        // Plain-word entries (status raw values) map a whole string, never text inside a sentence.
+        XCTAssertEqual(AppLocalization.display("completed", language: .english), "Completed")
+        let sentence = "The run completed without errors."
+        XCTAssertEqual(AppLocalization.display(sentence, language: .english), sentence)
+    }
+
     func testEnglishStillReadsOlderChineseHistory() {
         // Audit events saved before messages became English are still Chinese.
         let shown = AppLocalization.display("執行已取消。", language: .english)

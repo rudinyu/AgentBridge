@@ -48,15 +48,28 @@ enum AppLocalization {
     static func display(_ source: String, language: AppLanguage) -> String {
         if language == .traditionalChinese { return chineseDisplay(source, depth: 0) }
         if let direct = englishStrings[source] { return direct }
+        // Messages are written in English, so only older stored text, which is still
+        // Chinese, needs fragments replaced. Scanning every key for text that has no
+        // Chinese in it did nothing and cost tens of milliseconds a call.
+        guard containsChinese(source) else { return source }
         var translated = source
-        // Plain-word keys such as status raw values only match whole strings;
-        // replacing them inside a sentence would corrupt translated text.
-        for key in englishStrings.keys.sorted(by: { $0.count > $1.count })
-        where source.contains(key) && !key.allSatisfy({ $0.isASCII && $0.isLetter }) {
+        for key in legacyFragmentKeys where source.contains(key) {
             guard let value = englishStrings[key], value != key else { continue }
             translated = translated.replacingOccurrences(of: key, with: value)
         }
         return translated
+    }
+
+    /// The Chinese keys, longest first so a longer phrase is replaced before the
+    /// shorter ones inside it. Built once.
+    private static let legacyFragmentKeys: [String] = englishStrings.keys
+        .filter(containsChinese)
+        .sorted { $0.count > $1.count }
+
+    private static func containsChinese(_ text: String) -> Bool {
+        text.unicodeScalars.contains {
+            (0x4E00...0x9FFF).contains($0.value) || (0x3000...0x303F).contains($0.value) || (0xFF00...0xFFEF).contains($0.value)
+        }
     }
 
     /// Whole-sentence lookup first, then whole-sentence templates such as

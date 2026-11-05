@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed: the three-run limit also counted short operations. While three runs were in progress, viewing a diff, approving a plan, accepting changes, restoring or exporting failed with "Up to 3 tasks can run at once", and the App's two-second refresh, which asks for the selected session's diff, raised that error repeatedly. Only provider runs (read-only, change and verification) take a slot now. This was introduced with the limit in 0.11.1.
+- Fixed: showing English text that has no translation cost tens of milliseconds a call, because every call sorted and scanned all the table keys. Text without Chinese in it now returns immediately, and the keys are sorted once. Older stored Chinese text is translated as before.
 - Code structure (no behaviour change): `runChanges` reuses the extension check that `runReadOnly` already had and lost three steps to helper functions (211 to 177 lines; the prompt text is byte-for-byte identical), and the custom verification command check moved out of `runVerification`.
 
 ## 0.11.1 — 2026-11-05
