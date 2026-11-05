@@ -53,6 +53,8 @@ final class AppModel {
     var confirmAPIRun = false
     var authStatus: [UUID: AuthAssessment] = [:]
     var accountProfiles: [AgentProvider: [AccountProfile]] = [:]
+    /// What the last compatibility check found for each CLI, by provider.
+    var cliCompatibility: [AgentProvider: CLICompatibilityReport] = [:]
     var selectedProfileIDs: [AgentProvider: UUID] = [:]
     var newProfileName = ""
     var newProfileAllowsSharedMemory = true
@@ -129,6 +131,7 @@ final class AppModel {
             self.service = service
             workspaceRootPath = root.path
             refresh()
+            refreshCLICompatibility()
             setupWizard.initialize(workspaceRootConfigured: true)
         } catch {
             if let root = try? RuntimePaths.requireWorkspaceRoot() { workspaceRootPath = root.path }
@@ -643,6 +646,41 @@ final class AppModel {
         }
     }
 
+    /// Asks each installed CLI for its version and help in the background and
+    /// records whether AgentBridge still matches it. Advisory only.
+    func refreshCLICompatibility() {
+        guard let service else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            var collected: [AgentProvider: CLICompatibilityReport] = [:]
+            for provider in [AgentProvider.codex, .claude] {
+                if let report = try? await service.cliCompatibility(provider: provider) { collected[provider] = report }
+            }
+            let reports = collected
+            await MainActor.run { [weak self] in self?.cliCompatibility = reports }
+        }
+    }
+
+    /// The warning lines to show for a CLI, empty when it matches what AgentBridge was verified with.
+    func cliCompatibilityWarnings(for provider: AgentProvider) -> [String] {
+        guard let report = cliCompatibility[provider] else { return [] }
+        var lines: [String] = []
+        switch report.versionStatus {
+        case .olderThanTested:
+            lines.append(localizedFormat("CLI version %@ is older than the verified %@; some features may not work.", report.version ?? "?", report.testedVersion))
+        case .unreadable:
+            lines.append(localizedFormat("Could not read the CLI version; AgentBridge was verified with %@.", report.testedVersion))
+        case .matchesTested, .newerThanTested:
+            break
+        }
+        if !report.flagsWereChecked {
+            lines.append(localized("Could not read the CLI help, so the required flags were not confirmed."))
+        }
+        if !report.missingFlags.isEmpty {
+            lines.append(localizedFormat("The CLI help no longer lists flags AgentBridge needs: %@.", report.missingFlags.joined(separator: " ")))
+        }
+        return lines
+    }
+
     func saveSettings() {
         guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
             errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
@@ -654,6 +692,7 @@ final class AppModel {
             try service.saveSettings(settings)
             status = "Settings saved."
             refresh()
+            refreshCLICompatibility()
         } catch {
             errorMessage = error.localizedDescription
         }

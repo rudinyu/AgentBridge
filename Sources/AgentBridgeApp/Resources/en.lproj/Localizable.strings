@@ -1464,3 +1464,7 @@
 "macOS threshold notifications are enabled. Alerts will also remain in the app." = "macOS threshold notifications are enabled. Alerts will also remain in the app.";
 "not included" = "not included";
 "not present" = "not present";
+"CLI version %@ is older than the verified %@; some features may not work." = "CLI version %@ is older than the verified %@; some features may not work.";
+"Could not read the CLI version; AgentBridge was verified with %@." = "Could not read the CLI version; AgentBridge was verified with %@.";
+"Could not read the CLI help, so the required flags were not confirmed." = "Could not read the CLI help, so the required flags were not confirmed.";
+"The CLI help no longer lists flags AgentBridge needs: %@." = "The CLI help no longer lists flags AgentBridge needs: %@.";

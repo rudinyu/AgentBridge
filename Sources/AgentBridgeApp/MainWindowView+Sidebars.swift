@@ -242,6 +242,12 @@ extension MainWindowView {
                             TextField("Codex CLI (auto-detect)", text: $model.codexPath)
                             TextField("Claude CLI (auto-detect)", text: $model.claudePath)
                             Button("Save CLI Paths") { model.saveSettings() }
+                            ForEach([AgentProvider.codex, .claude], id: \.self) { provider in
+                                ForEach(model.cliCompatibilityWarnings(for: provider), id: \.self) { line in
+                                    Label("\(provider.rawValue.capitalized): \(line)", systemImage: "exclamationmark.triangle")
+                                        .font(.caption).foregroundStyle(.orange)
+                                }
+                            }
                         }
                     }
                 }

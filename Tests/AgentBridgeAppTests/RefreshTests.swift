@@ -149,3 +149,47 @@ final class RefreshTests: XCTestCase {
         XCTAssertEqual(model.sessions.count, 3)
     }
 }
+
+@MainActor
+final class CLICompatibilityWarningTests: XCTestCase {
+    private func makeModel() throws -> (URL, AppModel) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CompatWarn-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("data"), withIntermediateDirectories: true)
+        let store = try AuditStore(rootURL: root.appendingPathComponent("state"), workspaceRootURL: root.appendingPathComponent("data"), managedWorkspaceRoots: [])
+        return (root, AppModel(store: store, service: try BridgeService(store: store)))
+    }
+
+    func testAMatchingCLIShowsNoWarning() throws {
+        let (root, model) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        model.cliCompatibility[.claude] = CLICompatibilityReport(
+            provider: .claude, version: "2.1.311", testedVersion: "2.1.311",
+            versionStatus: .matchesTested, missingFlags: [], flagsWereChecked: true
+        )
+        XCTAssertTrue(model.cliCompatibilityWarnings(for: .claude).isEmpty)
+        XCTAssertTrue(model.cliCompatibilityWarnings(for: .codex).isEmpty, "No report means nothing to warn about.")
+    }
+
+    func testAMissingFlagAndAnOlderVersionAreReported() throws {
+        let (root, model) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        model.cliCompatibility[.codex] = CLICompatibilityReport(
+            provider: .codex, version: "0.100.0", testedVersion: "0.166.0",
+            versionStatus: .olderThanTested, missingFlags: ["--ephemeral"], flagsWereChecked: true
+        )
+        let lines = model.cliCompatibilityWarnings(for: .codex)
+        XCTAssertEqual(lines.count, 2)
+        XCTAssertTrue(lines[0].contains("0.100.0") && lines[0].contains("0.166.0"), lines[0])
+        XCTAssertTrue(lines[1].contains("--ephemeral"), lines[1])
+    }
+
+    func testANewerCLIIsNotAWarning() throws {
+        let (root, model) = try makeModel()
+        defer { try? FileManager.default.removeItem(at: root) }
+        model.cliCompatibility[.claude] = CLICompatibilityReport(
+            provider: .claude, version: "9.0.0", testedVersion: "2.1.311",
+            versionStatus: .newerThanTested, missingFlags: [], flagsWereChecked: true
+        )
+        XCTAssertTrue(model.cliCompatibilityWarnings(for: .claude).isEmpty)
+    }
+}

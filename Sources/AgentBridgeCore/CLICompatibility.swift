@@ -21,6 +21,22 @@ public struct CLICompatibilityReport: Equatable, Sendable {
     /// False when the help text could not be read, so `missingFlags` says nothing.
     public let flagsWereChecked: Bool
 
+    public init(
+        provider: AgentProvider,
+        version: String?,
+        testedVersion: String,
+        versionStatus: VersionStatus,
+        missingFlags: [String],
+        flagsWereChecked: Bool
+    ) {
+        self.provider = provider
+        self.version = version
+        self.testedVersion = testedVersion
+        self.versionStatus = versionStatus
+        self.missingFlags = missingFlags
+        self.flagsWereChecked = flagsWereChecked
+    }
+
     /// Anything the user should look at before trusting a run.
     public var needsAttention: Bool {
         versionStatus == .olderThanTested || versionStatus == .unreadable || !missingFlags.isEmpty || !flagsWereChecked
@@ -42,11 +58,14 @@ public enum CLICompatibility {
             return Profile(
                 testedVersion: "2.1.311",
                 versionArguments: ["--version"],
+                // `--append-system-prompt-file` is listed as `--append-system-prompt[-file]`.
                 probes: [(["--help"], [
                     "--print", "--output-format", "--verbose", "--include-partial-messages",
                     "--permission-mode", "--permission-prompts", "--restricted", "--safe-mode",
                     "--tools", "--no-session-persistence", "--input-format", "--add-dir",
-                    "--setting-sources", "--settings"
+                    "--setting-sources", "--settings", "--append-system-prompt",
+                    "--disable-slash-commands", "--max-budget-usd", "--mcp-config",
+                    "--no-chrome", "--resume", "--session-id", "--strict-mcp-config"
                 ])]
             )
         case .codex:
@@ -54,13 +73,28 @@ public enum CLICompatibility {
                 testedVersion: "0.166.0",
                 versionArguments: ["--version"],
                 probes: [
-                    (["--help"], ["--sandbox", "--cd", "--ask-for-approval"]),
-                    (["exec", "--help"], ["--json", "--ignore-user-config", "--ignore-rules"])
+                    (["--help"], ["--sandbox", "--cd", "--ask-for-approval", "--no-daemon", "--disable"]),
+                    (["exec", "--help"], ["--json", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check"])
                 ]
             )
         case .local:
             return nil
         }
+    }
+
+    /// Flags AgentBridge passes that the CLI does not list in its help, so they
+    /// cannot be probed. `--max-turns` is only used on the paid Claude API path and
+    /// is not advertised by `claude --help`; whether the CLI still accepts it can
+    /// only be confirmed by a real run.
+    static let flagsThatCannotBeProbed: Set<String> = ["--max-turns"]
+
+    /// Every flag the probes check, across providers.
+    static var probedFlags: Set<String> {
+        var flags: Set<String> = []
+        for provider in AgentProvider.allCases {
+            for probe in profile(for: provider)?.probes ?? [] { flags.formUnion(probe.flags) }
+        }
+        return flags
     }
 
     /// First `major.minor.patch` found in a `--version` line, for example
