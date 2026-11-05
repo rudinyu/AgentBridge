@@ -229,6 +229,10 @@ printf '%s' 'Key decisions and next steps.' | "$CLI" memory notes "$SESSION_ID"
 
 The CLI also supports `agentbridge cancel SESSION_ID` to cancel a run, `agentbridge budget` to view the API ledger, and `agentbridge help` to show all commands. Clearing shared memory requires explicit confirmation: `agentbridge memory clear SESSION_ID --confirm`.
 
+If you moved or renamed a repository, its shared memory stays under the old path and a new session starts empty. `agentbridge memory relink-candidates SESSION_ID` lists memory stored for the same commit under a path that no longer exists, and `agentbridge memory relink SESSION_ID KEY --confirm` copies it into the session. The original is not changed, and this only works while the session's own memory is empty. A second clone whose original folder still exists is not offered.
+
+`agentbridge doctor` also prints each provider CLI's version next to the version AgentBridge was last verified with, and warns if a flag AgentBridge relies on is missing from the CLI's help. It does not block runs.
+
 ### 13. Troubleshooting
 
 - **Provider CLI not found:** Set its path under **CLI Executables**, or add the official CLI to a path visible to the login environment, then click **Check Sign-in and Plan**.

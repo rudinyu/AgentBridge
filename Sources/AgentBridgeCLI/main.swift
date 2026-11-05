@@ -959,7 +959,7 @@ enum AgentBridgeCLI {
     private static func memoryCommand(_ arguments: [String], service: BridgeService) throws {
         guard let action = arguments.first, arguments.count >= 2,
               let sessionID = UUID(uuidString: arguments[1]) else {
-            throw AgentBridgeError.invalidInput("用法：agentbridge memory show|notes|clear SESSION-ID [--confirm]")
+            throw AgentBridgeError.invalidInput("用法：agentbridge memory show|notes|clear|relink-candidates|relink SESSION-ID [--confirm]")
         }
         switch action {
         case "show":
@@ -982,6 +982,20 @@ enum AgentBridgeCLI {
             }
             try service.clearSharedMemory(sessionID: sessionID)
             print("已清除這個隔離工作區的共享記憶。")
+        case "relink-candidates":
+            guard arguments.count == 2 else { throw AgentBridgeError.invalidInput("用法：agentbridge memory relink-candidates SESSION-ID") }
+            let candidates = try service.memoryRelinkCandidates(sessionID: sessionID)
+            for candidate in candidates {
+                print("\(candidate.source.key)  舊路徑：\(candidate.source.repositoryPath)  回合：\(candidate.turnCount)  備註=\(candidate.hasNotes ? "有" : "無")")
+            }
+            if candidates.isEmpty { print("沒有可連結的舊記憶。") }
+            else { print("\n要複製其中一份：agentbridge memory relink SESSION-ID KEY --confirm（原記憶不會被修改）") }
+        case "relink":
+            guard arguments.count == 4, arguments[3] == "--confirm" else {
+                throw AgentBridgeError.invalidInput("用法：agentbridge memory relink SESSION-ID KEY --confirm；先用 relink-candidates 查看 KEY。")
+            }
+            let candidate = try service.relinkMemory(sessionID: sessionID, sourceKey: arguments[2])
+            print("已把 \(candidate.turnCount) 個回合從 \(candidate.source.repositoryPath) 複製到這個工作區的記憶；原記憶沒有變動。")
         case "handoffs":
             guard arguments.count == 2 else { throw AgentBridgeError.invalidInput("用法：agentbridge memory handoffs SESSION-ID") }
             let handoffs = try service.projectMemoryHandoffs(sessionID: sessionID)

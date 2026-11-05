@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `agentbridge doctor` now prints each provider CLI's version against the one AgentBridge was last verified with (Claude Code 2.1.311, Codex 0.166.0) and warns when a flag AgentBridge passes no longer appears in the CLI's help. The check is advisory and never blocks a run.
+- Added `agentbridge memory relink-candidates` and `memory relink SESSION-ID KEY --confirm` for repositories that were moved or renamed: shared memory stored for the same commit under a path that no longer exists can be copied into the session's memory. Nothing is linked automatically, the original is left unchanged, a non-empty memory is never merged into, and a second clone is not offered because its old path still exists.
+- The model rule in AGENTS.md is now split by vendor: OpenAI/Codex agents keep GPT-6 Luna Max, Claude agents use Opus 5.5, and local-model agents have no required model.
 - A Claude API session can now make several paid calls, each with its own reservation, so the work-session USD cap counts every call in the session instead of only ever covering one. Manual settlement by session settles that session's unresolved call.
 - Added **Use reserved amount** in the App and `budget reconcile --settle-at-reserved` in the CLI to settle an unconfirmed API call conservatively at its full reservation when the bill is not available yet. The blocked-call message now says where to settle, and the App and CLI show the amount a paid call reserves before it runs.
 - The App and CLI warn when the workspace-data root is inside iCloud Drive, Dropbox, OneDrive, Google Drive or Box, because its transcripts, memory and workspace copies would leave the Mac and file locks only coordinate one Mac.

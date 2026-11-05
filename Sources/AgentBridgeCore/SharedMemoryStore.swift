@@ -182,6 +182,41 @@ public final class SharedMemoryStore: @unchecked Sendable {
         }
     }
 
+    /// Every scope that currently has a stored document, for suggesting where
+    /// memory from a moved repository went. Files that are not private regular
+    /// documents, or whose contents do not match their name, are skipped.
+    public func knownScopes() throws -> [SharedMemoryScope] {
+        try withLockedDirectory { directoryDescriptor in
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: rootPath)) ?? []
+            var scopes: [SharedMemoryScope] = []
+            for name in names.sorted() where name.hasSuffix(".json") {
+                let stem = String(name.dropLast(".json".count))
+                guard stem.utf8.count == 64, stem.utf8.allSatisfy({ ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102) }) else { continue }
+                let descriptor = name.withCString { openat(directoryDescriptor, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW) }
+                guard descriptor >= 0 else { continue }
+                defer { _ = close(descriptor) }
+                var info = stat()
+                guard fstat(descriptor, &info) == 0,
+                      (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                      info.st_size >= 0,
+                      info.st_size <= off_t(Self.maximumStoredBytes),
+                      let data = try? Self.readBoundedData(from: descriptor, expectedSize: Int(info.st_size)),
+                      let header = try? Self.makeDecoder().decode(DocumentIdentity.self, from: data),
+                      let scope = try? SharedMemoryScope(repositoryPath: header.repositoryPath, snapshotCommit: header.snapshotCommit),
+                      scope.key == stem, header.scopeKey == stem
+                else { continue }
+                scopes.append(scope)
+            }
+            return scopes
+        }
+    }
+
+    private struct DocumentIdentity: Decodable {
+        let scopeKey: String
+        let repositoryPath: String
+        let snapshotCommit: String
+    }
+
     public func appendTurn(
         scope: SharedMemoryScope,
         id: UUID = UUID(),
@@ -436,23 +471,7 @@ public final class SharedMemoryStore: @unchecked Sendable {
             throw Self.persistenceError("Shared-memory document is not a bounded regular file.")
         }
 
-        var data = Data()
-        data.reserveCapacity(Int(info.st_size))
-        var buffer = [UInt8](repeating: 0, count: 8 * 1024)
-        while true {
-            let count = buffer.withUnsafeMutableBytes { bytes in
-                read(descriptor, bytes.baseAddress, bytes.count)
-            }
-            if count == 0 { break }
-            if count < 0 {
-                if errno == EINTR { continue }
-                throw Self.persistenceError("Could not read shared-memory document (errno \(errno)).")
-            }
-            guard data.count + count <= Self.maximumStoredBytes else {
-                throw Self.persistenceError("Shared-memory document exceeds the storage limit.")
-            }
-            data.append(contentsOf: buffer.prefix(count))
-        }
+        let data = try Self.readBoundedData(from: descriptor, expectedSize: Int(info.st_size))
 
         do {
             let document = try Self.makeDecoder().decode(StoredDocument.self, from: data)
@@ -559,6 +578,27 @@ public final class SharedMemoryStore: @unchecked Sendable {
         }
         defer { _ = flock(lockDescriptor, LOCK_UN) }
         return try body(directoryDescriptor)
+    }
+
+    private static func readBoundedData(from descriptor: Int32, expectedSize: Int) throws -> Data {
+        var data = Data()
+        data.reserveCapacity(expectedSize)
+        var buffer = [UInt8](repeating: 0, count: 8 * 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                read(descriptor, bytes.baseAddress, bytes.count)
+            }
+            if count == 0 { break }
+            if count < 0 {
+                if errno == EINTR { continue }
+                throw persistenceError("Could not read shared-memory document (errno \(errno)).")
+            }
+            guard data.count + count <= maximumStoredBytes else {
+                throw persistenceError("Shared-memory document exceeds the storage limit.")
+            }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        return data
     }
 
     private static func openDirectory(path: String) -> Int32 {

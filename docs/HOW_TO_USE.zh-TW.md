@@ -231,6 +231,10 @@ printf '%s' 'Key decisions and next steps.' | "$CLI" memory notes "$SESSION_ID"
 
 CLI 亦支援 `agentbridge cancel SESSION_ID` 取消執行、`agentbridge budget` 檢視 API 帳本，以及 `agentbridge help` 查看完整命令。清除共用記憶需加上明確確認：`agentbridge memory clear SESSION_ID --confirm`。
 
+如果你搬動或改名了儲存庫，共用記憶仍留在舊路徑，新的工作階段會從空白開始。`agentbridge memory relink-candidates SESSION_ID` 會列出「同一個 commit、但舊路徑已不存在」的記憶；`agentbridge memory relink SESSION_ID KEY --confirm` 會把它複製進這個工作階段。原記憶不會被修改，而且只有在這個工作階段自己的記憶是空的時候才能使用。舊資料夾仍存在的第二份 clone 不會被列出。
+
+`agentbridge doctor` 也會顯示各 provider CLI 的版本，並和 AgentBridge 上次驗證的版本對照；若 CLI 說明裡找不到 AgentBridge 依賴的旗標會發出警告，但不會阻擋執行。
+
 ### 13. 常見狀況
 
 - **找不到 provider CLI：** 在 App 的「CLI 執行檔」指定路徑，或先把官方 CLI 加入登入環境可找到的路徑，再按「檢查登入與方案」。
