@@ -84,6 +84,29 @@ final class ChangeWorkflowTests: XCTestCase {
         XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
     }
 
+    func testReviewingChangesStillWorksWhileTheRunLimitIsReached() async throws {
+        // The App asks for the diff of the selected session on every refresh, and the
+        // user must still be able to inspect, restore and export while three runs are
+        // in progress. Only provider runs count toward the limit.
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
+        try Data("changed in session\n".utf8).write(to: workspace.appendingPathComponent("source.txt"))
+
+        var runs: [SessionRunLease] = []
+        for _ in 0..<AuditStore.maximumConcurrentRuns {
+            runs.append(try fixture.store.acquireRunLease(for: UUID(), countsTowardRunLimit: true))
+        }
+        XCTAssertThrowsError(try fixture.store.acquireRunLease(for: UUID(), countsTowardRunLimit: true))
+
+        let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        XCTAssertEqual(diff.files.map(\.path), ["source.txt"])
+        let patch = try await fixture.service.exportChangePatch(sessionID: fixture.session.id)
+        XCTAssertTrue(String(decoding: patch, as: UTF8.self).contains("changed in session"))
+        try await fixture.service.restoreAllChanges(sessionID: fixture.session.id)
+        _ = runs
+    }
+
     func testApplyUsesCapturedVerifiedDiffAfterWorkspaceChanges() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }

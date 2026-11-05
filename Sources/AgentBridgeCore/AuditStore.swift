@@ -209,13 +209,18 @@ public final class AuditStore: @unchecked Sendable {
     /// root, so it holds across processes and a crashed run frees its slot.
     public static let maximumConcurrentRuns = 3
 
-    public func acquireRunLease(for sessionID: UUID) throws -> SessionRunLease {
+    /// Locks the session against a second managed operation. Only a provider run
+    /// passes `countsTowardRunLimit`; short operations such as viewing a diff,
+    /// approving a plan or accepting changes must keep working while the limit is
+    /// reached, so they take the session lock alone.
+    public func acquireRunLease(for sessionID: UUID, countsTowardRunLimit: Bool = false) throws -> SessionRunLease {
         let url = rootURL.appendingPathComponent("session-\(sessionID.uuidString.lowercased()).run.lock")
         let descriptor = try openPrivateLockFile(at: url, failure: "Could not lock the session.")
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             _ = close(descriptor)
             throw AgentBridgeError.sessionMismatch("This session is already running in another window or terminal.")
         }
+        guard countsTowardRunLimit else { return SessionRunLease(descriptor: descriptor, slotDescriptor: -1) }
         do {
             return SessionRunLease(descriptor: descriptor, slotDescriptor: try acquireRunSlot())
         } catch {
@@ -333,8 +338,10 @@ public final class SessionRunLease: @unchecked Sendable {
         self.slotDescriptor = slotDescriptor
     }
     deinit {
-        _ = flock(slotDescriptor, LOCK_UN)
-        _ = close(slotDescriptor)
+        if slotDescriptor >= 0 {
+            _ = flock(slotDescriptor, LOCK_UN)
+            _ = close(slotDescriptor)
+        }
         _ = flock(descriptor, LOCK_UN)
         _ = close(descriptor)
     }

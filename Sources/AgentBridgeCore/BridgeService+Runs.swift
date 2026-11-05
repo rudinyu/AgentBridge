@@ -126,7 +126,7 @@ extension BridgeService {
                 throw AgentBridgeError.sessionMismatch("Local models do not support Skills, MCP or other project tools yet; nothing was started.")
             }
         }
-        let lease = try store.acquireRunLease(for: sessionID)
+        let lease = try store.acquireRunLease(for: sessionID, countsTowardRunLimit: true)
         defer { withExtendedLifetime(lease) {} }
         let settings = try store.loadSettings()
         let session = try loadSession(sessionID)
@@ -539,7 +539,7 @@ extension BridgeService {
             throw AgentBridgeError.sessionMismatch("Local models currently support only read-only project conversations; no changes were run.")
         }
 
-        let lease = try store.acquireRunLease(for: sessionID)
+        let lease = try store.acquireRunLease(for: sessionID, countsTowardRunLimit: true)
         defer { withExtendedLifetime(lease) {} }
         let settings = try store.loadSettings()
         guard settings.usageMode == .subscription else {
@@ -777,7 +777,7 @@ extension BridgeService {
         customCommandApproved: Bool = false,
         cancellation: CancellationFlag = CancellationFlag()
     ) async throws -> VerificationResult {
-        let lease = try store.acquireRunLease(for: sessionID)
+        let lease = try store.acquireRunLease(for: sessionID, countsTowardRunLimit: true)
         defer { withExtendedLifetime(lease) {} }
         var session = try loadSession(sessionID)
         try requireIsolatedChangesSession(session)
