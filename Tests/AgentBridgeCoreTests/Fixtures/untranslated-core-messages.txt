@@ -1,0 +1,513 @@
+A changes-requested verdict must contain findings.
+A completed autonomous run lacks final source fingerprint or approved memory-save evidence.
+A completed autonomous run lacks unchanged-diff review or required verification evidence.
+A control grant requires a bounded user-reviewed desktop scope declared separate from Git/source repository access.
+A coordination document exceeds its size limit.
+A coordination document is not a bounded private regular file.
+A coordination document path is not a private regular file.
+A coordination document write was incomplete.
+A discussion with this identifier already exists.
+A final diff digest or profile-bound session was missing; no memory was changed.
+A fully qualified Claude MCP tool name exceeds Claude's 128-character limit.
+A goal, absolute repository path, and planner role binding are required.
+A pass verdict cannot contain unresolved findings.
+A planned session is missing or changed.
+A project-memory handoff can include at most %@ selected turns.
+A research agent assignment is missing.
+A research prompt exceeded its approved size limit.
+A role profile or extension fingerprint is missing.
+A running autonomous record has no process liveness binding.
+A shared-memory turn ID already exists with different content.
+A task ID must be independent from its session ID.
+A task cannot contain more than %@ references.
+A task has an invalid identifier, title, prompt, or dependency list.
+A task refers to an unknown dependency.
+A task update timestamp cannot precede its creation timestamp.
+A task with this ID already exists.
+Accessibility permission or focused UI state is unavailable.
+Active MCP configuration exceeds its inline size limit.
+Active extension runtime storage could not be encoded.
+Active extension runtime storage exceeds its size limit.
+Active extension runtime storage path is invalid.
+Active extension selections must not contain duplicates.
+An MCP entrypoint script changed after import and review.
+An approved or running autonomous record has no approval timestamp.
+An autonomous run with this ID already exists.
+An extension grant cannot exceed the permissions declared by its descriptor.
+An extension grant must include unique, supported permissions.
+An extension with this ID already exists with different metadata.
+An untracked source file changed while it was being fingerprinted.
+An untracked source file changed while it was being opened.
+An untracked source file could not be opened safely.
+An untracked source file could not be read safely.
+An untracked source path changed during fingerprinting.
+An untracked source path contains an unsafe component.
+An untracked source path could not be fingerprinted safely.
+An untracked source path escaped or changed during fingerprinting.
+An untracked source path is not a regular file or symlink.
+An untracked source symlink could not be fingerprinted safely.
+Another AgentBridge MacControl proxy currently owns the desktop.
+Approved MCP server %@ did not initialize successfully (%@).
+Approved MCP server %@ initialized and completed %@ allowlisted tool call(s).
+Approved MCP server %@ initialized; the provider reported no tool calls.
+Approved MCP server %@ returned a receipt for another runtime configuration.
+Approved MCP server %@ returned an invalid private receipt.
+Approved MCP server %@ was not initialized by the provider; no MCP call was reported.
+Approved change plan %@ is running.
+Approved scope implemented; diff sha256:%@ is ready for manual acceptance.
+Assign one explicit provider and profile to researcher, implementer, and reviewer roles.
+At most 16 MCP servers can be enabled in one session.
+Autonomous limits must allow 1 to 3 concurrent agents, 1 to 3 review rounds, 30 to 3,600 seconds, 1 to 24 provider invocations, and 1 to 128 MCP tool calls per server invocation.
+Autonomous roles require subscription mode and unique explicit bindings.
+Autonomous run completed.
+Autonomous run history has reached its record limit.
+Autonomous run not found.
+Autonomous shared memory must use the session's bound account profile.
+Autonomous shared-memory text exceeds the bounded turn size.
+Cancellation request persisted for the active workflow.
+Cancellation was already requested before start.
+Cancellation was recorded before execution.
+Cancelled before execution; no provider write agent was started.
+Captured full %@-byte diff snapshot sha256:%@ for review round %@.
+Choose a Skill descriptor for SKILL.md import.
+Choose an app outside AgentBridge, permission settings, credential tools, and terminal apps.
+Client capability is not available.
+Codex project workspace must be an absolute path for managed MCP isolation.
+Concurrency must be between one and three agents.
+Context prepared: %@ recent verbatim turn(s), %@ attributed excerpt source(s), %@ turn(s) not retained verbatim.
+Context shortened: %@ recent verbatim turn(s), %@ attributed excerpt source(s), %@ turn(s) not retained verbatim.
+Coordination storage failed private-directory checks.
+Coordination storage is unavailable or is a symbolic link.
+Copied %@ memory turn(s) from scope %@ (earlier path %@); the original was not changed.
+Could not atomically publish a coordination document.
+Could not atomically publish the MCP proxy receipt.
+Could not atomically save project-memory data.
+Could not atomically save shared-memory document (errno %@).
+Could not count the running tasks.
+Could not create a discussion record safely.
+Could not create a private MCP proxy receipt.
+Could not create a private MCP proxy ticket.
+Could not create a private coordination document.
+Could not create a private project-memory file.
+Could not create a private shared-memory document (errno %@).
+Could not create discussion storage.
+Could not create private coordination storage.
+Could not create project-memory storage.
+Could not create the discussion-storage lock.
+Could not create the private MCP control-plane directory.
+Could not create the private MCP proxy runtime directory.
+Could not create the project-memory lock.
+Could not create the shared-memory lock (errno %@).
+Could not encode discussion record.
+Could not encode project-memory data.
+Could not encode project-memory handoff context as UTF-8 JSON.
+Could not estimate discussion completion storage.
+Could not finish writing shared-memory document.
+Could not fit project-memory handoff context within its prompt limit.
+Could not flush project-memory storage.
+Could not flush shared-memory document (errno %@).
+Could not flush shared-memory storage directory (errno %@).
+Could not inspect a coordination document path.
+Could not inspect discussion destination.
+Could not inspect discussion record.
+Could not inspect discussion storage.
+Could not inspect legacy coordination storage.
+Could not inspect the project-memory destination.
+Could not list discussion storage.
+Could not lock coordination storage.
+Could not lock discussion storage.
+Could not lock legacy coordination storage.
+Could not lock project-memory storage.
+Could not lock shared-memory storage (errno %@).
+Could not read MCP proxy receipt.
+Could not read MCP proxy ticket.
+Could not read a coordination document.
+Could not read project-memory data.
+Could not read shared-memory document (errno %@).
+Could not replace discussion record safely.
+Could not safely open a coordination document.
+Could not safely open project-memory data.
+Could not safely open shared-memory document (errno %@).
+Could not safely open shared-memory lock (errno %@).
+Could not safely open the coordination lock.
+Could not safely open the legacy coordination lock.
+Could not safely open the project-memory lock.
+Could not secure and sync a coordination document.
+Could not secure and sync the MCP proxy ticket.
+Could not secure discussion storage.
+Could not secure project-memory storage.
+Could not secure shared-memory document permissions.
+Could not secure the shared-memory storage directory.
+Could not sync coordination storage.
+Could not sync discussion record.
+Could not sync discussion storage.
+Could not sync the MCP proxy receipt.
+Could not write MCP proxy receipt.
+Could not write MCP proxy ticket.
+Could not write a coordination document.
+Could not write discussion record.
+Could not write project-memory data.
+Could not write shared-memory document (errno %@).
+Could not write the autonomous run document.
+Current request (verbatim)
+Current user request (verbatim)
+Current user request:\nThis file contains prior user/assistant text and explicit notes for continuity only.
+Custom verification must bind an executable and its digest.
+Dependency outputs exceed the approved transfer limit.
+Descriptor files must be 64 KiB or smaller.
+Desktop control requires a reviewed scope and an explicit declaration that it is separate from Git/source repository access.
+Discussion context could not be prepared safely; no request was sent.
+Discussion project handoff digest is invalid.
+Discussion record could not be read within its size limit.
+Discussion record exceeds its bounds or contains invalid identity data.
+Discussion record exceeds its storage limit.
+Discussion record failed validation.
+Discussion record identity is invalid.
+Discussion record is malformed.
+Discussion record is not a bounded private regular file.
+Discussion record is not a private regular file.
+Discussion record is unavailable or is a symbolic link.
+Discussion storage contains more records than the configured limit.
+Discussion storage has reached its record limit.
+Discussion storage is unavailable or is a symbolic link.
+Discussion storage is unavailable.
+Discussion storage requires an absolute local path.
+Discussion text exceeds the %@-byte per-message storage limit; the original text was not shortened.
+Discussion-storage lock is invalid.
+Discussion-storage lock is not a private regular file.
+Discussion-storage lock is unavailable.
+Every dependency-output source and recipient profile must allow shared memory.
+Every task role needs an explicit profile binding.
+Expected a JSON object with no surrounding prose or code fence.
+Expected the exact review JSON schema without extra fields.
+Explicit consent is required before the provider can send mouse or keyboard input.
+Explicit execution consent is required to enable an extension runtime.
+Extension %@ has selected-file write permission; autonomous roles cannot write source-repository files through an extension.
+Extension %@ is not enabled for this exact project, provider, and account profile.
+Extension fingerprint %@; Skills %@, MCP servers %@.
+Extension permission scopes exceed the supported limit.
+Extension permission scopes must not contain duplicates.
+Extension permissions must be unique and within the supported limit.
+Extension selections must be unique valid IDs, with at most 16 per role.
+File and network permissions require matching, explicit path or host scopes.
+File scopes must be normalized relative paths without traversal components.
+Full context retained: all %@ turn(s) remain verbatim.
+Implementer is running approved round %@ of %@.
+Import the extension descriptor before granting permissions.
+Included %@ explicit project-memory handoff(s) for target commit %@; legacy workflow kept its existing bounded envelope.
+Included %@ explicitly selected project-memory handoff(s) for target commit %@; context was prepared by readable byte-bounded compression (UTF-8 byte estimates are not exact model token counts).
+Initialize the MCP connection first.
+Interpreter MCP entrypoint scripts must use an absolute path so their content can be pinned.
+Interpreter-based MCP commands must name a script or use an explicit inline/module mode.
+Invalid JSON-RPC message.
+Invalid JSON-RPC request ID.
+Invalid JSON-RPC request.
+Invalid or repeated initialize request.
+Legacy coordination storage failed ownership checks.
+Legacy coordination storage is unavailable or is a symbolic link.
+Local model endpoint (provider plan usage is unsupported)
+Local models do not support autonomous workflows; no project workspace or tools were started.
+MCP argv must contain at most 64 arguments and 32 KiB total without NUL bytes.
+MCP command changed while its executable digest was checked.
+MCP command must be an absolute installed executable path.
+MCP command must resolve to a regular, executable, non-symlink file no larger than 256 MiB.
+MCP command path is invalid.
+MCP commands must name the installed executable directly; env wrappers are not accepted.
+MCP control-plane files must be outside provider-writable paths.
+MCP entrypoint must be a bounded regular file with no symlink path components.
+MCP entrypoint pin is invalid.
+MCP entrypoint pins exceed their count or uniqueness limit.
+MCP entrypoint scripts inside the session workspace are not allowed.
+MCP initialize succeeded.
+MCP proxy receipt changed while being read.
+MCP proxy receipt directory must be private to the current user.
+MCP proxy receipt exceeds its size limit.
+MCP proxy receipt failed integrity checks.
+MCP proxy receipt fields are invalid.
+MCP proxy receipt is not a bounded private regular file.
+MCP proxy receipt is unavailable.
+MCP proxy receipt path contains a symlink or missing directory.
+MCP proxy receipt path is invalid.
+MCP proxy receipt path is unavailable.
+MCP proxy receipt write was incomplete.
+MCP proxy ticket changed while it was being read.
+MCP proxy ticket destination is invalid.
+MCP proxy ticket directory failed private access checks.
+MCP proxy ticket directory must be private to the current user.
+MCP proxy ticket exceeds its size limit.
+MCP proxy ticket is missing or unsafe.
+MCP proxy ticket must be a bounded private regular file.
+MCP proxy ticket path contains a symlink or missing directory.
+MCP proxy ticket path is invalid.
+MCP proxy ticket path is unavailable.
+MCP proxy ticket paths must be absolute and valid.
+MCP proxy ticket write was incomplete.
+MCP request could not be encoded.
+MCP runtime limits may not exceed the reviewed configuration.
+MCP script path is invalid.
+MCP script path must be absolute and valid.
+MCP server IDs must be unique.
+MCP server could not be started.
+MCP server did not respond before the configured timeout.
+MCP server environment contains an invalid key or value.
+MCP server exceeded the approved per-run tool-call limit.
+MCP server exited before completing the protocol request.
+MCP server inspection digest is invalid.
+MCP server rejected a protocol request.
+MCP server response exceeded the bounded output limit.
+MCP server returned an invalid or unsupported response.
+MCP server test was cancelled.
+MCP startup timeout must be 2–120 seconds and tool timeout 2–600 seconds.
+MCP tool-call and response limits exceed the supported bounds.
+MCP tools require a unique, nonempty exact allowlist without wildcards or control characters.
+MCP tools/list pagination exceeded the supported limit.
+MCP working directory must be an absolute path.
+MacControl could not confirm a safe desktop state.
+MacControl must bind an exact target, access mode, and non-empty action allowlist.
+Method not found.
+Network scopes must be exact valid hostnames.
+No executable runtime configuration is imported for extension %@.
+No explicit profile was assigned to role %@.
+No task is ready; the DAG contains a cycle or an unknown dependency.
+No verification command was requested.
+One bounded workflow summary was appended to the explicitly selected project memory; existing notes were preserved.
+One or more selected memory turns do not exist in the source commit scope.
+Only MCP runtime manifest schema version 1 is supported.
+Only a Skill descriptor can be used for a Skill snapshot.
+Only the implementer may receive a MacControl control grant.
+Progress cannot be changed after a task reaches a terminal state.
+Project memory can only move between sessions for the same canonical repository.
+Project memory repository identity is invalid.
+Project memory repository path is invalid or too long.
+Project memory requires an absolute repository path.
+Project verification could not bind to the isolated implementer workspace.
+Project verification requires an ordinary .codex directory in the isolated implementer workspace.
+Project verification requires an unchanged, regular executable .codex/ci.sh in the isolated implementer workspace.
+Project-memory data exceeds the storage limit.
+Project-memory data failed handoff integrity checks.
+Project-memory data failed repository integrity checks.
+Project-memory data is corrupt and was left unchanged.
+Project-memory data is not a bounded private regular file.
+Project-memory destination is not a private regular file.
+Project-memory handoff %@ was already marked truncated when stored; its original missing text is unavailable.
+Project-memory handoff context exceeded its prompt limit.
+Project-memory handoff data failed integrity checks.
+Project-memory handoff requires two different commits.
+Project-memory handoffs require a 40- or 64-character Git commit hash.
+Project-memory lock failed integrity checks.
+Project-memory lock is not a private regular file.
+Project-memory repository data failed integrity checks.
+Project-memory search text cannot be empty.
+Project-memory storage directory failed integrity checks.
+Project-memory storage is full; the existing handoffs were preserved unchanged.
+Project-memory storage is unavailable or is a symbolic link.
+Provider CLI reported a completed response.
+Provider CLI reported completion; isolated diff is ready for review.
+Queued; provider process has not started.
+Queued; verifier was not launched.
+Read-only provider run started.
+Request parameters must be an object.
+Research DAG contains duplicate tasks or a non-research dependency.
+Research agent started.
+Research and review agents can only receive observe-only MacControl grants.
+Research tasks cannot depend on write or review tasks.
+Reserved invocation %@/%@ for %@%@.
+Review and approve the exact autonomous plan digest before starting it.
+Review passed for unchanged diff sha256:%@.
+Review requested changes for diff sha256:%@.
+Review tasks cannot depend on other review tasks.
+Reviewer is inspecting the exact diff digest %@.
+SKILL.md changed while it was being imported.
+SKILL.md must be 64 KiB or smaller.
+SKILL.md must be a bounded regular file with no symlink in its path.
+SKILL.md must contain valid UTF-8 text.
+Saving the result to project memory requires explicit consent and one of the run's bound profile IDs.
+Scoped desktop observation and, when separately approved, input control for %@.
+Screen Recording permission is unavailable.
+Select an absolute local SKILL.md file.
+Select at least one memory turn or the project notes to carry forward.
+Selected extension %@ is not an imported Skill or MCP descriptor.
+Selected project-memory notes exceed the safe handoff size; the original notes were not shortened.
+Selected project-memory turns exceed the safe handoff size; the original turns were not shortened.
+Session workspace path is invalid.
+Shared memory is full; the existing notes and turns were preserved unchanged.
+Shared memory requires an absolute repository path and a 40- or 64-character Git commit hash.
+Shared memory scope identity is invalid.
+Shared-memory batch contains duplicate turn IDs.
+Shared-memory context budget must be at least %@ bytes.
+Shared-memory context budget must be greater than zero bytes.
+Shared-memory context file could not be read.
+Shared-memory context file exceeds the size limit.
+Shared-memory context file is unavailable or unsafe.
+Shared-memory context file must be a private, bounded regular file.
+Shared-memory context file must contain UTF-8 text.
+Shared-memory context path is invalid.
+Shared-memory document encoding produced no data.
+Shared-memory document exceeds the storage limit.
+Shared-memory document failed integrity checks.
+Shared-memory document is corrupt and was left unchanged.
+Shared-memory document is not a bounded regular file.
+Shared-memory lock is not a private regular file.
+Shared-memory revision counter is exhausted.
+Shared-memory storage directory is unavailable or is a symbolic link.
+Skill import requires a regular file named SKILL.md.
+Skill instructions are empty, contain unsupported control characters, or exceed 64 KiB.
+Skill instructions are sent to the selected provider; scripts, hooks, installers, and dependencies are not run.
+Source HEAD/status fingerprint checked %@: sha256:%@.
+Starting bounded autonomous execution for plan %@.
+Starting the approved %@ verification stage.
+Status-only readiness probe.
+Take a fresh screenshot before sending mouse input.
+Task progress record not found: %@.
+Task references must be unique and within the supported limit.
+Temporary discussion file is not private.
+Text input was refused because the focused field could not be confirmed safe.
+The %@ is invalid or exceeds its size limit.
+The %@ is invalid.
+The DAG must contain 3 to 8 unique tasks.
+The DAG requires at least one researcher, exactly one implementer, and exactly one reviewer.
+The MCP configuration digest is invalid.
+The MCP configuration is invalid.
+The MCP control-plane directory failed access checks.
+The MCP control-plane root is invalid.
+The MCP control-plane root is unavailable.
+The MCP executable changed after it was imported and reviewed.
+The MCP executable digest is invalid.
+The MCP proxy ticket fields are invalid or expired.
+The MCP proxy ticket is invalid or expired.
+The MCP proxy ticket is invalid.
+The MCP runtime JSON manifest is invalid.
+The MCP runtime manifest contains unsupported fields.
+The MCP runtime manifest is invalid.
+The MCP tool list changed or no longer matches extension %@'s exact allowlist; test and review it again.
+The Mac is locked; desktop control is unavailable.
+The MacControl arguments are invalid or outside the supported bounds.
+The MacControl runtime configuration is invalid or outside its built-in tool policy.
+The Skill snapshot digest is invalid.
+The active extension configuration limit has been reached.
+The active extension grant registry has reached its limit.
+The active extension runtime store failed integrity checks; execution has been stopped.
+The active extension session-binding limit has been reached.
+The approved %@ verification passed.
+The approved MCP proxy for extension %@ did not initialize or stopped safely; the provider result was not accepted.
+The approved autonomous plan digest does not match the current plan.
+The approved context cannot fit safely; no request was sent.
+The approved extension manifest exceeds its supported scope or size limits.
+The approved memory destination is not a consenting role profile.
+The approved project-memory profile is no longer eligible; no memory was changed.
+The approved project-memory snapshot does not match the role-profile consent manifest.
+The approved review/fix loop ended without a passing review.
+The approved review/fix round limit was reached with unresolved in-scope findings.
+The approved verification command has an invalid path or oversized arguments.
+The approved verification command passed for unchanged diff sha256:%@.
+The approved verification did not pass.
+The approved verification executable changed before plan generation.
+The autonomous plan has an invalid base commit.
+The autonomous plan has an invalid custom verification binding.
+The autonomous plan has an unconsented project-memory destination.
+The autonomous run document has an invalid schema or duplicate records.
+The autonomous run document is malformed.
+The autonomous run exceeded its approved time limit.
+The autonomous run record exceeds text limits.
+The autonomous run record failed integrity checks.
+The autonomous run was cancelled before it started.
+The autonomous run was cancelled.
+The autonomous session assignments do not match the plan's role and round limits.
+The bounded repair context exceeded the approved prompt limit.
+The bundled AgentBridge MCP proxy executable is missing.
+The bundled AgentBridge proxy changed after the MacControl preset was reviewed.
+The change scope needs a title, summary, and 1 to 32 bounded steps.
+The completed run could not be read for memory save.
+The completed run could not be read; no memory was changed.
+The coordination lock is not a private regular file.
+The current process could not be bound to a stable owner-start identity.
+The destination task board already has a different task %@.
+The exact implementation diff must be explicitly approved for review-agent sharing.
+The extension configuration or scope changed after review; review it again before enabling.
+The extension descriptor is invalid.
+The extension grant is invalid.
+The extension grant registry has reached its limit.
+The extension policy audit event is invalid.
+The extension policy document could not be encoded.
+The extension policy document exceeds its storage limit.
+The extension policy document failed integrity checks.
+The extension policy document is malformed.
+The extension provenance is invalid.
+The extension registry has reached its descriptor limit.
+The frozen project-memory snapshot exceeds its approved size limit.
+The frozen project-memory snapshot is invalid or exceeds its size limits.
+The full diff exceeds the review limit; it was not truncated or marked as reviewed.
+The generated plan exceeds the approved provider invocation limit.
+The implementer and reviewer profiles must both allow sharing the exact diff with the reviewer.
+The implementer assignment is missing.
+The implementer cannot depend on a writer or reviewer task.
+The implementer workspace path is invalid for project verification.
+The legacy coordination lock is not a private regular file.
+The maximum approved review/fix rounds were used; unresolved findings remain.
+The parallel task board could not be encoded.
+The parallel task board exceeds its storage limit.
+The parallel task board failed integrity checks.
+The parallel task board has reached its task limit.
+The parallel task board is malformed.
+The parallel task record is invalid.
+The per-run MCP tool-call cap must be between 1 and 128.
+The per-run MCP tool-call limit may only reduce the approved configuration limit.
+The plan fields have invalid types or values.
+The plan must contain exactly one %@ task.
+The private MCP control-plane directory is unavailable.
+The private MCP proxy runtime directory failed access checks.
+The private MCP proxy runtime directory is unavailable.
+The project-memory secret-redaction list is too large.
+The prompt plus approved Skill instructions exceed the 512 KiB run limit.
+The requested MCP test tool is outside the exact allowlist.
+The requested MacControl action is not allowed by this preset.
+The requested app does not match the reviewed MacControl target.
+The requested task does not exist.
+The requested tool is not available.
+The response does not match the exact versioned DAG schema.
+The response exceeds 256 KiB.
+The review JSON could not be decoded.
+The review is not bound to the current exact diff or exceeds the response limits.
+The reviewed MacControl policy is invalid.
+The reviewed target repository snapshot is unavailable.
+The reviewer found a requested change outside the user-approved scope; a new plan is required.
+The reviewer must depend on the implementer.
+The reviewer session assignment is missing for this approved round.
+The screenshot does not match the current main-display coordinate space.
+The selected project-memory destination must be a bound profile that allows shared memory.
+The session's bound account profile has not allowed shared memory.
+The source repository changed during plan generation; create a new plan from the current state.
+The source repository changed or exceeded a safe fingerprint limit.
+The source repository contains too many untracked paths to fingerprint safely.
+The source repository could not be safely fingerprinted.
+The source repository directory could not be duplicated safely.
+The source repository directory could not be opened safely.
+The source repository has no valid HEAD commit.
+The stored autonomous execution limits are out of bounds.
+The structured findings exceed the bounded repair-context limit.
+The target session's bound account has not allowed shared project memory.
+The task approval transition from %@ to %@ is not allowed.
+The task graph contains a dependency cycle.
+The task reference is invalid.
+The task status transition from %@ to %@ is not allowed.
+The user-approved verification command did not pass.
+The verification executable changed while it was being fingerprinted.
+The verification executable could not be opened safely.
+The verification executable could not be read safely.
+The verification executable exceeds the fingerprint size limit.
+The verification executable must be a regular executable file no larger than 128 MiB.
+The writer diff changed while the reviewer was inspecting it; the review verdict was discarded.
+This file contains prior user/assistant text and explicit notes for continuity only.
+Tool arguments must be a JSON object.
+Tool-list pagination is not available.
+Unsupported MCP proxy ticket version.
+Unsupported planner schema version.
+Untracked source files exceed the fingerprint size limit.
+Up to %@ tasks can run at once; wait for one to finish.
+Usage TUI working directory is invalid.
+User approved exact plan digest %@.
+User created an explicit project-memory handoff from commit %@ to %@; %@ selected turns and notes %@.
+User started isolated verification.
+User-pinned note %@ (background only)
+Verification changed the reviewed diff; it remains unaccepted.
+Verification exit code %@; duration %@ seconds; succeeded=%@.

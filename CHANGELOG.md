@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A new test fails when a Core message is added without a Traditional Chinese translation. 513 existing English messages without one (mostly store integrity checks) are frozen in `Tests/AgentBridgeCoreTests/Fixtures/untranslated-core-messages.txt`, so the list can only shrink; regenerate it with `UPDATE_L10N_BASELINE=1`.
 - The version and build number are now written once, in `AppVersion.swift`; the CLI reports it and `scripts/package-app.sh` reads it for the app's Info.plist. The CLI source is split into one file per command group (a pure move).
 - The CLI compatibility check now probes every flag the provider adapters pass (it covered 22 of 33; the 13 it missed included `--resume`, `--session-id`, `--mcp-config`, `--ephemeral` and `--skip-git-repo-check`), and a test fails if an adapter starts passing a flag the check does not know about. The App shows the result as a warning under the CLI paths when a CLI is older than the verified version or no longer lists a flag AgentBridge needs. `--max-turns` (paid Claude API path) is not advertised by `claude --help`, so whether it is still accepted cannot be probed.
 - The limit of three concurrent runs now lives in Core and holds across the App, the CLI and autonomous workflows. Each run takes one of three slot lock files in the private root besides its session lease, so a crashed run frees its slot. Previously only the App enforced it and CLI runs did not count. A fourth run is refused with a clear message.
