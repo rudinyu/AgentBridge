@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Tests: `.codex/ci.sh` now builds and tests under both SwiftPM build systems. It used only the native one, so it could not catch the `zh-hant.lproj` bug below, which appears only under `swiftbuild`.
 - Fixed: the App showed English instead of Traditional Chinese on macOS 27, where bundle lookups are case-sensitive. It asked for `zh-hant.lproj` while the newer SwiftPM build system writes `zh-Hant.lproj` (the native one, used for packaging, writes `zh-hant.lproj`); the `.lproj` folder is now found regardless of case, so both builds work.
 - Security: `.codex/ci.sh` now runs as the default verification only when it is the executable file from the pinned commit. A provider could edit that script, so a change could pass its own verification gate. A changed script is refused until you restore it or run it as an approved custom command. Autonomous runs already pinned this file. The unchanged script can still run code the change touched, such as the project's tests.
 - Security: AgentBridge now refuses to use an isolated workspace whose local Git settings go beyond what a clone writes, plus `user.name` and `user.email`. A setting such as `filter.*.clean` could otherwise run a program outside the provider's sandbox when the diff was opened. This also applies to existing sessions; create a new session if one is refused.

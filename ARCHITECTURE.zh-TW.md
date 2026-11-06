@@ -135,7 +135,7 @@ App 依選取帳戶動態統計 AgentBridge 管理的執行嘗試，顯示滾動
 
 封裝腳本會將 `Assets/AppIcon-1024.png` 轉成標準 macOS iconset，再產生 `Contents/Resources/AgentBridge.icns` 並在 Info.plist 設定 App icon 欄位。
 
-`.codex/ci.sh` 是主要本機驗證入口，會建置 CLI/App 並跑核心測試。`scripts/package-app.sh` 會建立未簽署的 Release `.app`，包含 CLI helper、SwiftTerm 資源及授權。正式交付需使用 Developer ID Application 憑證，先簽署嵌入的 helper，再簽署 `.app`，送交 Apple 公證、staple ticket 並驗證。SwiftPM 狀態、模組快取和 DerivedData 等建置資料放在 Repository 的 `build/`。若 SwiftPM 預設 Metal shader backend 無法在目前 Xcode 工具鏈編譯 SwiftTerm，專案腳本會使用 SwiftPM 的 native backend；該 backend 目前已棄用，升級 Xcode 或 SwiftTerm 前要重新確認工具鏈相容性。
+`.codex/ci.sh` 是主要本機驗證入口，會以 SwiftPM 的 native 建置系統及其預設的 `swiftbuild` 各建置 CLI/App 並跑所有測試，因為兩者的資源配置方式不同。`scripts/package-app.sh` 會建立未簽署的 Release `.app`，包含 CLI helper、SwiftTerm 資源及授權。正式交付需使用 Developer ID Application 憑證，先簽署嵌入的 helper，再簽署 `.app`，送交 Apple 公證、staple ticket 並驗證。SwiftPM 狀態、模組快取和 DerivedData 等建置資料放在 Repository 的 `build/`。封裝仍使用 SwiftPM 的 native backend，因為其預設 Metal shader backend 先前無法在較早的 Xcode 工具鏈編譯 SwiftTerm；該 native backend 目前已棄用，升級 Xcode 或 SwiftTerm 前要重新確認工具鏈相容性。
 
 測試使用 mock CLI、臨時 Git Repository 和本機程序，不需要 API key、登入或付費呼叫。通過自動檢查不代表真實 provider 執行、新增帳戶登入、Anthropic 帳務或 GUI 操作已驗收；交付時分別列出各項實際結果。
 
