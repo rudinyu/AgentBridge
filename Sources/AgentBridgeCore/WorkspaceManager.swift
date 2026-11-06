@@ -223,6 +223,7 @@ public final class WorkspaceManager: @unchecked Sendable {
             throw AgentBridgeError.sessionMismatch("The isolated workspace still references another Git object directory.")
         }
         try await validateWorkspaceGitConfig(workspace)
+        try await validateNothingHiddenFromDiff(workspace)
         let topLevel = try await gitText(["-C", workspace.path, "rev-parse", "--show-toplevel"])
         guard URL(fileURLWithPath: topLevel, isDirectory: true).standardizedFileURL.path == workspace.path else {
             throw AgentBridgeError.sessionMismatch("The Git workspace root does not match the session record.")
@@ -244,6 +245,30 @@ public final class WorkspaceManager: @unchecked Sendable {
         }
         for key in keys.split(whereSeparator: \.isNewline) where !Self.allowedWorkspaceGitConfigKeys.contains(key.lowercased()) {
             throw AgentBridgeError.sessionMismatch("The isolated workspace's Git settings were changed. Create a new session.")
+        }
+    }
+
+    /// Refuses what keeps workspace edits out of the diff without changing a Git
+    /// setting. A clone has neither, and verification would still run those edits.
+    private func validateNothingHiddenFromDiff(_ workspace: URL) async throws {
+        let refused = AgentBridgeError.sessionMismatch("The isolated workspace's Git settings were changed. Create a new session.")
+        let exclude = workspace.appendingPathComponent(".git/info/exclude")
+        if fileManager.fileExists(atPath: exclude.path) {
+            guard let contents = fileManager.contents(atPath: exclude.path) else { throw refused }
+            for line in contents.split(separator: UInt8(ascii: "\n")) where line.first != UInt8(ascii: "#") {
+                throw refused
+            }
+        }
+        let index = try await runGit(
+            arguments: ["-C", workspace.path, "ls-files", "-v", "-z", "--"],
+            workingDirectory: nil,
+            outputLimit: Self.maximumIndexListingBytes
+        )
+        guard !index.outputWasTruncated else { throw AgentBridgeError.git("The Git file index exceeds the size limit.") }
+        // `-v` tags skip-worktree entries S and assume-unchanged entries in lowercase.
+        for entry in index.standardOutput.split(separator: 0) {
+            guard let tag = entry.first, tag != UInt8(ascii: "S"),
+                  !(UInt8(ascii: "a")...UInt8(ascii: "z")).contains(tag) else { throw refused }
         }
     }
 
@@ -329,11 +354,26 @@ public final class WorkspaceManager: @unchecked Sendable {
                 hasUndecodableText: String(data: patchResult.standardOutput, encoding: .utf8) == nil
             ))
         }
-        return WorkspaceChangeDiff(baseCommit: session.snapshotCommit, files: fileDiffs, patch: combinedPatch)
+        // A clone starts with no ignored files, so these all appeared during the session.
+        // `--directory` keeps a build folder to one entry.
+        let ignoredResult = try await runGit(arguments: [
+            "-C", workspace.path, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z", "--"
+        ], workingDirectory: nil)
+        guard !ignoredResult.outputWasTruncated else { throw AgentBridgeError.git("The Git file index exceeds the size limit.") }
+        return WorkspaceChangeDiff(
+            baseCommit: session.snapshotCommit,
+            files: fileDiffs,
+            patch: combinedPatch,
+            ignoredPaths: ignoredResult.standardOutput
+                .split(separator: 0)
+                .map { String(decoding: $0, as: UTF8.self) }
+                .sorted()
+        )
     }
 
     private static let maximumPatchBytes = 10 * 1_024 * 1_024
     private static let maximumDisplayedPatchBytes = 1_048_576
+    private static let maximumIndexListingBytes = 64 * 1_024 * 1_024
 
     public func restoreFiles(for session: SessionRecord, paths: [String]) async throws {
         guard session.policy.accessMode == .isolatedChanges else {

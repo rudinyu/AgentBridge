@@ -352,9 +352,10 @@ final class ChangeWorkflowTests: XCTestCase {
         let script = workspace.appendingPathComponent(".codex/ci.sh")
         try Data("#!/bin/sh\ntouch \(marker.path)\n".utf8).write(to: script)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-        try Data(".codex/\n".utf8).write(to: workspace.appendingPathComponent(".git/info/exclude"))
+        try Data("*\n".utf8).write(to: workspace.appendingPathComponent(".codex/.gitignore"))
         let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
         XCTAssertTrue(diff.files.isEmpty)
+        XCTAssertTrue(diff.ignoredPaths.contains(".codex/"))
 
         try await assertDefaultVerificationRejected(fixture)
         XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
@@ -553,6 +554,63 @@ final class ChangeWorkflowTests: XCTestCase {
     }
 
     @discardableResult
+    func testWorkspaceThatHidesEditsFromTheDiffIsRefused() async throws {
+        let hidingMoves: [(URL) throws -> Void] = [
+            { workspace in
+                try Data("hidden.txt\n".utf8).write(to: workspace.appendingPathComponent(".git/info/exclude"))
+            },
+            { workspace in
+                try self.git(["-C", workspace.path, "update-index", "--assume-unchanged", "source.txt"])
+            },
+            { workspace in
+                try self.git(["-C", workspace.path, "update-index", "--skip-worktree", "source.txt"])
+            }
+        ]
+        for hide in hidingMoves {
+            let fixture = try await makeFixture()
+            defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+            let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
+            try Data("changed\n".utf8).write(to: workspace.appendingPathComponent("source.txt"))
+            try hide(workspace)
+            await assertGitSettingsRejected {
+                _ = try await WorkspaceManager(store: fixture.store).diff(for: fixture.session)
+            }
+        }
+    }
+
+    func testCommentsInTheExcludeFileAreNotRefused() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
+        try Data("# a comment\n\n# another\n".utf8).write(to: workspace.appendingPathComponent(".git/info/exclude"))
+        let diff = try await WorkspaceManager(store: fixture.store).diff(for: fixture.session)
+        XCTAssertTrue(diff.files.isEmpty)
+    }
+
+    func testIgnoredFilesAreListedButStayOutOfTheDigest() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let manager = WorkspaceManager(store: fixture.store)
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
+        try Data("build/\n".utf8).write(to: workspace.appendingPathComponent(".gitignore"))
+        let before = try await manager.diff(for: fixture.session)
+        XCTAssertEqual(before.ignoredPaths, [])
+
+        let build = workspace.appendingPathComponent("build/deep", isDirectory: true)
+        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+        try Data("output\n".utf8).write(to: build.appendingPathComponent("first"))
+        try Data("output\n".utf8).write(to: build.appendingPathComponent("second"))
+        let selfIgnored = workspace.appendingPathComponent("vendored", isDirectory: true)
+        try FileManager.default.createDirectory(at: selfIgnored, withIntermediateDirectories: true)
+        try Data("*\n".utf8).write(to: selfIgnored.appendingPathComponent(".gitignore"))
+
+        let after = try await manager.diff(for: fixture.session)
+        XCTAssertTrue(after.ignoredPaths.contains("build/"))
+        XCTAssertTrue(after.ignoredPaths.contains("vendored/"))
+        XCTAssertEqual(after.digest, before.digest)
+        XCTAssertEqual(after.files.map(\.path), [".gitignore"])
+    }
+
     private func markVerified(_ diff: WorkspaceChangeDiff, _ fixture: Fixture) throws -> SessionRecord {
         var verifiedSession = fixture.session
         let changeAt = Date()

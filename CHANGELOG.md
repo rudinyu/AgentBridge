@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed: a workspace is now refused when `.git/info/exclude` has a pattern or a tracked file is marked assume-unchanged or skip-worktree. Either one hid edits from the review while verification still ran them.
+- Added: the review now lists Git-ignored paths in the workspace, in the App and in `changes diff`. Verification can see them, but they are not in the patch or the digest and do not reach your branch.
 - Added: accepting or applying a diff with files that are not fully shown, meaning long or non-UTF-8 files, now needs a separate confirmation bound to that exact diff. The App shows a checkbox; the CLI takes `--confirm-partial DIFF-DIGEST`, and `changes diff` prints the digest. Binary files still need no confirmation.
 - Fixed: one file could stop a whole session being reviewed, accepted or applied. A file whose diff is over 1 MiB, such as a regenerated lockfile, or a text file that is not UTF-8, such as Big5, made the diff fail. Long diffs are now hidden with a note and non-UTF-8 text is shown with replacement characters; both stay complete in the patch that is verified, exported and applied. A combined diff over 10 MiB is still refused, and autonomous reviews still stop on anything they cannot read.
 - Tests: `.codex/ci.sh` now builds and tests under both SwiftPM build systems. It used only the native one, so it could not catch the `zh-hant.lproj` bug below, which appears only under `swiftbuild`.

@@ -171,6 +171,14 @@ extension MainWindowView {
                     ContentUnavailableView("No changes in the isolated workspace", systemImage: "doc.text.magnifyingglass")
                         .frame(minHeight: 90)
                 }
+                if let ignoredPaths = model.changes.changeDiff?.ignoredPaths, !ignoredPaths.isEmpty {
+                    Text("These Git-ignored paths are in the workspace but not in this diff. Verification can see them, and they will not reach your branch.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    Text(ignoredPaths.joined(separator: "\n"))
+                        .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                        .lineLimit(8)
+                        .textSelection(.enabled)
+                }
                 if model.changes.changeDiff?.partiallyShownFiles.isEmpty == false {
                     Toggle("I exported the patch and reviewed the files that are not fully shown above.", isOn: Bindable(model.changes).partiallyShownFilesConfirmed)
                         .font(.caption)

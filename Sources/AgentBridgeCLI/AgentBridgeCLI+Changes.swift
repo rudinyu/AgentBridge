@@ -32,6 +32,10 @@ extension AgentBridgeCLI {
             if !diff.partiallyShownFiles.isEmpty {
                 print("\n\(diff.partiallyShownFiles.count) file(s) are not fully shown. Review them with `changes export`, then pass --confirm-partial \(diff.digest) to accept or apply.")
             }
+            if !diff.ignoredPaths.isEmpty {
+                print("\n\(diff.ignoredPaths.count) Git-ignored path(s) are in the workspace but not in this diff. Verification can see them, and they will not reach your branch:")
+                diff.ignoredPaths.forEach { print("  \($0)") }
+            }
         case "restore":
             guard arguments.count >= 3, let sessionID = UUID(uuidString: arguments[1]) else {
                 throw AgentBridgeError.invalidInput("Usage: agentbridge changes restore SESSION-ID RELATIVE-PATH [RELATIVE-PATH ...]")
