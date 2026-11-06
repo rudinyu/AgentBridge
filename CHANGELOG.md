@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: the App showed English instead of Traditional Chinese on macOS 27, where bundle lookups are case-sensitive. It asked for `zh-hant.lproj` while the newer SwiftPM build system writes `zh-Hant.lproj` (the native one, used for packaging, writes `zh-hant.lproj`); the `.lproj` folder is now found regardless of case, so both builds work.
+
 ## 0.11.2 — 2026-11-05
 
 - Release record: build 13 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `9b0fdbf7-8647-43e2-a646-b81539621a8c`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `34ed645c1573803ca75b2dd80dec000f50dfb4e226097d384ee4095cccf7aa70`. The signed build itself has not been launched or clicked through.
