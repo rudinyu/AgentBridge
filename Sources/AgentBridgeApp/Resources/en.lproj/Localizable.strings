@@ -47,6 +47,9 @@
 "Binary diff; file content is represented as binary." = "Binary diff; file content is represented as binary.";
 "This file's diff is too long to show here, but it is still part of the change. Export the patch to review it." = "This file's diff is too long to show here, but it is still part of the change. Export the patch to review it.";
 "This file is not UTF-8, so some characters are shown as �. The original bytes are kept in the patch." = "This file is not UTF-8, so some characters are shown as �. The original bytes are kept in the patch.";
+"Some changed files are not fully shown. Export the patch to review them, then confirm before accepting or applying." = "Some changed files are not fully shown. Export the patch to review them, then confirm before accepting or applying.";
+"Confirmed %@ file(s) that were not fully shown, for diff sha256:%@." = "Confirmed %@ file(s) that were not fully shown, for diff sha256:%@.";
+"I exported the patch and reviewed the files that are not fully shown above." = "I exported the patch and reviewed the files that are not fully shown above.";
 "Reject / restore file" = "Reject / restore file";
 "No changes in the isolated workspace" = "No changes in the isolated workspace";
 "Accept this verified diff" = "Accept this verified diff";

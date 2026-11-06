@@ -352,6 +352,11 @@ public struct WorkspaceChangeDiff: Equatable, Sendable {
     public var digest: String {
         SHA256.hash(data: patch).map { String(format: "%02x", $0) }.joined()
     }
+
+    /// Files a reviewer cannot read in full from `ChangeFileDiff.patch`.
+    public var partiallyShownFiles: [ChangeFileDiff] {
+        files.filter { $0.isTooLargeToDisplay || $0.hasUndecodableText }
+    }
 }
 
 public struct BranchApplyResult: Equatable, Sendable {

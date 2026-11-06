@@ -18,6 +18,7 @@ final class ChangeReviewModel {
     var customVerifierPath = ""
     var customVerifierArgumentsText = ""
     var isVerifying = false
+    private var partiallyShownFilesConfirmedDigest: String?
 
     var selectedChangePlanDraftMatchesSaved: Bool {
         guard let plan = app.selectedSession?.changePlan else { return false }
@@ -42,6 +43,16 @@ final class ChangeReviewModel {
               let verifiedAt = session.verificationCompletedAt,
               let lastChangeAt = session.lastChangeRunAt else { return false }
         return verifiedAt >= lastChangeAt
+    }
+
+    /// Bound to the digest, so a confirmation lapses as soon as the diff changes.
+    var partiallyShownFilesConfirmed: Bool {
+        get { changeDiff != nil && partiallyShownFilesConfirmedDigest == changeDiff?.digest }
+        set { partiallyShownFilesConfirmedDigest = newValue ? changeDiff?.digest : nil }
+    }
+
+    var awaitingPartiallyShownFilesConfirmation: Bool {
+        changeDiff?.partiallyShownFiles.isEmpty == false && !partiallyShownFilesConfirmed
     }
 
     func loadChangePlanDraftFromSelectedSession() {
@@ -170,9 +181,10 @@ final class ChangeReviewModel {
             return
         }
         guard let service = app.service, let session = app.selectedSession else { return }
+        let confirmedDigest = partiallyShownFilesConfirmedDigest
         Task { @MainActor [weak self] in
             do {
-                _ = try await service.acceptChanges(sessionID: session.id)
+                _ = try await service.acceptChanges(sessionID: session.id, partiallyShownFilesConfirmedDigest: confirmedDigest)
                 self?.app.status = "Accepted the currently verified diff; the source repository is still unchanged."
                 self?.app.refresh()
             } catch { self?.app.errorMessage = error.localizedDescription }
@@ -186,9 +198,14 @@ final class ChangeReviewModel {
         }
         guard let service = app.service, let session = app.selectedSession else { return }
         let requestedBranchName = branchName
+        let confirmedDigest = partiallyShownFilesConfirmedDigest
         Task { @MainActor [weak self] in
             do {
-                let result = try await service.applyChangesToLocalBranch(sessionID: session.id, branchName: requestedBranchName)
+                let result = try await service.applyChangesToLocalBranch(
+                    sessionID: session.id,
+                    branchName: requestedBranchName,
+                    partiallyShownFilesConfirmedDigest: confirmedDigest
+                )
                 self?.app.status = "Created an uncommitted worktree: \(result.worktreePath); no commit, push or merge was made."
                 self?.app.refresh()
             } catch { self?.app.errorMessage = error.localizedDescription }

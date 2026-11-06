@@ -452,6 +452,68 @@ final class ChangeWorkflowTests: XCTestCase {
         }
     }
 
+    func testPartiallyShownFilesNeedAConfirmationToAcceptOrApply() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let file = URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent("big5.txt")
+        try Data([0xA4, 0x40, 0x0A]).write(to: file)
+        let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        XCTAssertEqual(diff.partiallyShownFiles.map(\.path), ["big5.txt"])
+        try markVerified(diff, fixture)
+
+        await assertPartiallyShownRefused { _ = try await fixture.service.acceptChanges(sessionID: fixture.session.id) }
+        await assertPartiallyShownRefused {
+            _ = try await fixture.service.applyChangesToLocalBranch(sessionID: fixture.session.id, branchName: "agentbridge/unconfirmed")
+        }
+        XCTAssertNil(try XCTUnwrap(fixture.store.session(id: fixture.session.id)).changesAcceptedAt)
+
+        let accepted = try await fixture.service.acceptChanges(sessionID: fixture.session.id, partiallyShownFilesConfirmedDigest: diff.digest)
+        XCTAssertNotNil(accepted.changesAcceptedAt)
+        let events = try fixture.service.events(sessionID: fixture.session.id)
+        XCTAssertTrue(events.contains { $0.kind == "change.partially_shown_confirmed" && $0.message.contains(diff.digest) })
+
+        let result = try await fixture.service.applyChangesToLocalBranch(
+            sessionID: fixture.session.id,
+            branchName: "agentbridge/confirmed",
+            partiallyShownFilesConfirmedDigest: diff.digest
+        )
+        XCTAssertEqual(result.changedFileCount, 1)
+    }
+
+    func testPartiallyShownConfirmationDoesNotCarryOverToALaterDiff() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let file = URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent("big5.txt")
+        try Data([0xA4, 0x40, 0x0A]).write(to: file)
+        let confirmedDiff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+
+        try Data([0xA4, 0x48, 0x0A]).write(to: file)
+        let laterDiff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        try markVerified(laterDiff, fixture)
+
+        await assertPartiallyShownRefused {
+            _ = try await fixture.service.acceptChanges(sessionID: fixture.session.id, partiallyShownFilesConfirmedDigest: confirmedDiff.digest)
+        }
+        await assertPartiallyShownRefused {
+            _ = try await fixture.service.applyChangesToLocalBranch(
+                sessionID: fixture.session.id,
+                branchName: "agentbridge/stale-confirmation",
+                partiallyShownFilesConfirmedDigest: confirmedDiff.digest
+            )
+        }
+    }
+
+    func testFullyShownDiffNeedsNoExtraConfirmation() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try Data("changed\n".utf8).write(to: URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent("source.txt"))
+        let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        XCTAssertTrue(diff.partiallyShownFiles.isEmpty)
+        try markVerified(diff, fixture)
+        let accepted = try await fixture.service.acceptChanges(sessionID: fixture.session.id)
+        XCTAssertNotNil(accepted.changesAcceptedAt)
+    }
+
     func testVerificationCancellationIsReportedAndDoesNotPassAcceptanceGate() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
@@ -490,7 +552,8 @@ final class ChangeWorkflowTests: XCTestCase {
         let session: SessionRecord
     }
 
-    private func applyVerified(_ diff: WorkspaceChangeDiff, _ fixture: Fixture) async throws -> URL {
+    @discardableResult
+    private func markVerified(_ diff: WorkspaceChangeDiff, _ fixture: Fixture) throws -> SessionRecord {
         var verifiedSession = fixture.session
         let changeAt = Date()
         verifiedSession.lastChangeRunAt = changeAt
@@ -498,6 +561,11 @@ final class ChangeWorkflowTests: XCTestCase {
         verifiedSession.verificationDiffDigest = diff.digest
         verifiedSession.verificationCompletedAt = changeAt.addingTimeInterval(1)
         try fixture.store.saveSession(verifiedSession)
+        return verifiedSession
+    }
+
+    private func applyVerified(_ diff: WorkspaceChangeDiff, _ fixture: Fixture) async throws -> URL {
+        let verifiedSession = try markVerified(diff, fixture)
         let result = try await WorkspaceManager(store: fixture.store).applyVerifiedChangesToLocalBranch(
             for: verifiedSession,
             branchName: "agentbridge/review-test",
@@ -514,6 +582,19 @@ final class ChangeWorkflowTests: XCTestCase {
             guard case .verificationCommandRejected(let message) = error, message.contains("differs from the pinned commit") else {
                 return XCTFail("Unexpected error: \(error)", line: line)
             }
+        }
+    }
+
+    private func assertPartiallyShownRefused(line: UInt = #line, _ operation: () async throws -> Void) async {
+        do {
+            try await operation()
+            XCTFail("Files that were not fully shown were taken without a matching confirmation.", line: line)
+        } catch let error as AgentBridgeError {
+            guard case .invalidInput(let message) = error, message.contains("not fully shown") else {
+                return XCTFail("Unexpected error: \(error)", line: line)
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)", line: line)
         }
     }
 

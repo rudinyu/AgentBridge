@@ -124,7 +124,7 @@ extension BridgeService {
     }
 
     @discardableResult
-    public func acceptChanges(sessionID: UUID) async throws -> SessionRecord {
+    public func acceptChanges(sessionID: UUID, partiallyShownFilesConfirmedDigest: String? = nil) async throws -> SessionRecord {
         let lease = try store.acquireRunLease(for: sessionID)
         defer { withExtendedLifetime(lease) {} }
         var session = try loadSession(sessionID)
@@ -133,6 +133,7 @@ extension BridgeService {
         let diff = try await workspaceManager.diff(for: session)
         try requireSuccessfulChangeVerification(session, diff: diff)
         guard !diff.files.isEmpty else { throw AgentBridgeError.invalidInput("The workspace has no changes to accept.") }
+        try requirePartiallyShownFilesConfirmed(diff, confirmedDigest: partiallyShownFilesConfirmedDigest, sessionID: sessionID)
         session.changesAcceptedAt = Date()
         session.updatedAt = Date()
         try store.saveSession(session)
@@ -145,7 +146,11 @@ extension BridgeService {
     }
 
     @discardableResult
-    public func applyChangesToLocalBranch(sessionID: UUID, branchName: String) async throws -> BranchApplyResult {
+    public func applyChangesToLocalBranch(
+        sessionID: UUID,
+        branchName: String,
+        partiallyShownFilesConfirmedDigest: String? = nil
+    ) async throws -> BranchApplyResult {
         let lease = try store.acquireRunLease(for: sessionID)
         defer { withExtendedLifetime(lease) {} }
         var session = try loadSession(sessionID)
@@ -154,6 +159,7 @@ extension BridgeService {
         do {
             let currentDiff = try await workspaceManager.diff(for: session)
             try requireSuccessfulChangeVerification(session, diff: currentDiff)
+            try requirePartiallyShownFilesConfirmed(currentDiff, confirmedDigest: partiallyShownFilesConfirmedDigest, sessionID: sessionID)
             let result = try await workspaceManager.applyVerifiedChangesToLocalBranch(
                 for: session,
                 branchName: branchName,
@@ -186,6 +192,22 @@ extension BridgeService {
               !session.policy.workspaceReadOnly else {
             throw AgentBridgeError.sessionMismatch("Create an isolated-change session; read-only and native interactive sessions do not run this operation.")
         }
+    }
+
+    /// Long and non-UTF-8 files stay in the patch but cannot be read in the review,
+    /// so taking them needs a confirmation bound to this exact diff. Apply checks it
+    /// too, because apply does not require an earlier accept.
+    private func requirePartiallyShownFilesConfirmed(_ diff: WorkspaceChangeDiff, confirmedDigest: String?, sessionID: UUID) throws {
+        let files = diff.partiallyShownFiles
+        guard !files.isEmpty else { return }
+        guard confirmedDigest == diff.digest else {
+            throw AgentBridgeError.invalidInput("Some changed files are not fully shown. Export the patch to review them, then confirm before accepting or applying.")
+        }
+        try store.appendEvent(AuditEvent(
+            sessionID: sessionID,
+            kind: "change.partially_shown_confirmed",
+            message: "Confirmed \(files.count) file(s) that were not fully shown, for diff sha256:\(diff.digest)."
+        ))
     }
 
     private func clearChangeAcceptanceState(_ session: inout SessionRecord) {

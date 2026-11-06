@@ -29,6 +29,9 @@ extension AgentBridgeCLI {
                 }
             }
             if diff.files.isEmpty { print("The isolated workspace has no differences.") }
+            if !diff.partiallyShownFiles.isEmpty {
+                print("\n\(diff.partiallyShownFiles.count) file(s) are not fully shown. Review them with `changes export`, then pass --confirm-partial \(diff.digest) to accept or apply.")
+            }
         case "restore":
             guard arguments.count >= 3, let sessionID = UUID(uuidString: arguments[1]) else {
                 throw AgentBridgeError.invalidInput("Usage: agentbridge changes restore SESSION-ID RELATIVE-PATH [RELATIVE-PATH ...]")
@@ -55,16 +58,22 @@ extension AgentBridgeCLI {
         case "verify":
             try await changesVerify(arguments, service: service)
         case "accept":
-            guard arguments.count == 3, let sessionID = UUID(uuidString: arguments[1]), arguments[2] == "--confirm" else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge changes accept SESSION-ID --confirm")
+            guard arguments.count == 3 || (arguments.count == 5 && arguments[3] == "--confirm-partial"),
+                  let sessionID = UUID(uuidString: arguments[1]), arguments[2] == "--confirm" else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge changes accept SESSION-ID --confirm [--confirm-partial DIFF-DIGEST]")
             }
-            _ = try await service.acceptChanges(sessionID: sessionID)
+            _ = try await service.acceptChanges(sessionID: sessionID, partiallyShownFilesConfirmedDigest: arguments.count == 5 ? arguments[4] : nil)
             print("Accepted the currently verified isolated diff; the source repository is still unchanged.")
         case "apply":
-            guard arguments.count == 3, let sessionID = UUID(uuidString: arguments[1]) else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge changes apply SESSION-ID LOCAL-BRANCH")
+            guard arguments.count == 3 || (arguments.count == 5 && arguments[3] == "--confirm-partial"),
+                  let sessionID = UUID(uuidString: arguments[1]) else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge changes apply SESSION-ID LOCAL-BRANCH [--confirm-partial DIFF-DIGEST]")
             }
-            let result = try await service.applyChangesToLocalBranch(sessionID: sessionID, branchName: arguments[2])
+            let result = try await service.applyChangesToLocalBranch(
+                sessionID: sessionID,
+                branchName: arguments[2],
+                partiallyShownFilesConfirmedDigest: arguments.count == 5 ? arguments[4] : nil
+            )
             print("Created a worktree: \(result.worktreePath) (branch \(result.branchName), \(result.changedFileCount) file(s)).")
             print("The worktree is left uncommitted; AgentBridge did not commit, push or merge.")
         default:
