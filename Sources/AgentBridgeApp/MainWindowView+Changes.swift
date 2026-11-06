@@ -171,13 +171,17 @@ extension MainWindowView {
                     ContentUnavailableView("No changes in the isolated workspace", systemImage: "doc.text.magnifyingglass")
                         .frame(minHeight: 90)
                 }
+                if model.changes.changeDiff?.partiallyShownFiles.isEmpty == false {
+                    Toggle("I exported the patch and reviewed the files that are not fully shown above.", isOn: Bindable(model.changes).partiallyShownFilesConfirmed)
+                        .font(.caption)
+                }
                 HStack {
                     Button("Accept this verified diff") { model.changes.acceptChanges() }
-                        .disabled(!model.changes.verifiedCurrentDiff || model.changes.changeDiff?.files.isEmpty != false)
+                        .disabled(!model.changes.verifiedCurrentDiff || model.changes.changeDiff?.files.isEmpty != false || model.changes.awaitingPartiallyShownFilesConfirmation)
                     TextField("Local branch name", text: Bindable(model.changes).branchName)
                         .frame(maxWidth: 240)
                     Button("Apply to branch as an uncommitted worktree") { model.changes.applyChangesToBranch() }
-                        .disabled(!model.changes.verifiedCurrentDiff || model.changes.changeDiff?.files.isEmpty != false || model.changes.branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(!model.changes.verifiedCurrentDiff || model.changes.changeDiff?.files.isEmpty != false || model.changes.awaitingPartiallyShownFilesConfirmation || model.changes.branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 Text("Applying checks the source base commit for conflicts and creates an uncommitted isolated worktree. AgentBridge never commits, pushes, or merges.")
                     .font(.caption2).foregroundStyle(.secondary)

@@ -47,6 +47,9 @@
 "Binary diff; file content is represented as binary." = "二進位差異；檔案內容以二進位表示。";
 "This file's diff is too long to show here, but it is still part of the change. Export the patch to review it." = "這個檔案的差異太長，無法在此顯示，但仍屬於這次變更。請匯出 patch 以檢視。";
 "This file is not UTF-8, so some characters are shown as �. The original bytes are kept in the patch." = "這個檔案不是 UTF-8，部分字元會顯示為 �。patch 會保留原始位元組。";
+"Some changed files are not fully shown. Export the patch to review them, then confirm before accepting or applying." = "有些變更的檔案未完整顯示。請匯出 patch 檢視後，再確認並接受或套用。";
+"Confirmed %@ file(s) that were not fully shown, for diff sha256:%@." = "已確認 %@ 個未完整顯示的檔案，差異 sha256:%@。";
+"I exported the patch and reviewed the files that are not fully shown above." = "我已匯出 patch 並檢視上方未完整顯示的檔案。";
 "Reject / restore file" = "拒絕／還原檔案";
 "No changes in the isolated workspace" = "隔離工作區沒有變更";
 "Accept this verified diff" = "接受這份已驗證差異";
