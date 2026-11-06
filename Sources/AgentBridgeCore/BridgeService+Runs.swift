@@ -826,6 +826,11 @@ extension BridgeService {
                   FileManager.default.isExecutableFile(atPath: script.path) else {
                 throw AgentBridgeError.verificationCommandRejected(".codex/ci.sh must be a regular, executable file.")
             }
+            // Providers can edit this workspace, so a changed script is theirs, not the
+            // project's, and running it by default would let a change pass its own gate.
+            guard try await workspaceManager.projectVerificationScriptIsUnchanged(for: session) else {
+                throw AgentBridgeError.verificationCommandRejected(".codex/ci.sh differs from the pinned commit. Review it, then restore it or run it as an approved custom command.")
+            }
             executableURL = script
             commandArguments = []
         }

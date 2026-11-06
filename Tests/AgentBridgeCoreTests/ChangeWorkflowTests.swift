@@ -316,6 +316,88 @@ final class ChangeWorkflowTests: XCTestCase {
         XCTAssertTrue(events.contains(where: { $0.kind == "verification.started" && $0.message.contains("printf") }))
     }
 
+    func testDefaultVerificationRunsAnUnchangedProjectScript() async throws {
+        let fixture = try await makeFixture(projectScript: "#!/bin/sh\necho project\n")
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let result = try await fixture.service.runVerification(sessionID: fixture.session.id)
+        XCTAssertTrue(result.succeeded)
+        XCTAssertEqual(result.standardOutput, "project\n")
+    }
+
+    func testChangedProjectScriptRunsOnlyAfterApprovalAsACustomCommand() async throws {
+        let fixture = try await makeFixture(projectScript: "#!/bin/sh\nexit 1\n")
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let script = URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent(".codex/ci.sh")
+        let marker = fixture.rootURL.appendingPathComponent("script-ran")
+        try Data("#!/bin/sh\ntouch \(marker.path)\n".utf8).write(to: script)
+
+        try await assertDefaultVerificationRejected(fixture)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+
+        let result = try await fixture.service.runVerification(
+            sessionID: fixture.session.id,
+            customExecutableURL: script,
+            customCommandApproved: true
+        )
+        XCTAssertTrue(result.succeeded)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    func testProjectScriptAddedToTheWorkspaceIsRefusedEvenWhenGitIgnoresIt() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath)
+        let marker = fixture.rootURL.appendingPathComponent("script-ran")
+        try FileManager.default.createDirectory(at: workspace.appendingPathComponent(".codex"), withIntermediateDirectories: true)
+        let script = workspace.appendingPathComponent(".codex/ci.sh")
+        try Data("#!/bin/sh\ntouch \(marker.path)\n".utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        try Data(".codex/\n".utf8).write(to: workspace.appendingPathComponent(".git/info/exclude"))
+        let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        XCTAssertTrue(diff.files.isEmpty)
+
+        try await assertDefaultVerificationRejected(fixture)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    func testProjectScriptMadeExecutableInTheWorkspaceIsRefused() async throws {
+        let fixture = try await makeFixture(projectScript: "#!/bin/sh\nexit 0\n", projectScriptPermissions: 0o644)
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let script = URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent(".codex/ci.sh")
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        try await assertDefaultVerificationRejected(fixture)
+    }
+
+    func testWorkspaceGitFilterIsRefusedBeforeGitCanRunIt() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath)
+        let marker = fixture.rootURL.appendingPathComponent("filter-ran")
+        try git(["-C", workspace.path, "config", "filter.review.clean", "touch \(marker.path); cat"])
+        try Data("source.txt filter=review\n".utf8).write(to: workspace.appendingPathComponent(".gitattributes"))
+        try Data("changed\n".utf8).write(to: workspace.appendingPathComponent("source.txt"))
+
+        await assertGitSettingsRejected { _ = try await fixture.service.changesDiff(sessionID: fixture.session.id) }
+        await assertGitSettingsRejected { _ = try await fixture.service.runVerification(sessionID: fixture.session.id) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    func testWorkspaceGitIncludeIsRefused() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try git(["-C", fixture.session.workspacePath, "config", "include.path", "/dev/null"])
+        await assertGitSettingsRejected { _ = try await fixture.service.changesDiff(sessionID: fixture.session.id) }
+    }
+
+    func testCommitIdentitySetInTheWorkspaceIsAllowed() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try git(["-C", fixture.session.workspacePath, "config", "user.name", "AgentBridge Tests"])
+        try git(["-C", fixture.session.workspacePath, "config", "user.email", "agentbridge-tests@example.invalid"])
+        let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        XCTAssertTrue(diff.files.isEmpty)
+    }
+
     func testVerificationCancellationIsReportedAndDoesNotPassAcceptanceGate() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
@@ -354,7 +436,31 @@ final class ChangeWorkflowTests: XCTestCase {
         let session: SessionRecord
     }
 
-    private func makeFixture() async throws -> Fixture {
+    private func assertDefaultVerificationRejected(_ fixture: Fixture, line: UInt = #line) async throws {
+        do {
+            _ = try await fixture.service.runVerification(sessionID: fixture.session.id)
+            XCTFail("A changed project script ran as the default verification.", line: line)
+        } catch let error as AgentBridgeError {
+            guard case .verificationCommandRejected(let message) = error, message.contains("differs from the pinned commit") else {
+                return XCTFail("Unexpected error: \(error)", line: line)
+            }
+        }
+    }
+
+    private func assertGitSettingsRejected(line: UInt = #line, _ operation: () async throws -> Void) async {
+        do {
+            try await operation()
+            XCTFail("The workspace's changed Git settings were accepted.", line: line)
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch(let message) = error, message.contains("Git settings were changed") else {
+                return XCTFail("Unexpected error: \(error)", line: line)
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)", line: line)
+        }
+    }
+
+    private func makeFixture(projectScript: String? = nil, projectScriptPermissions: Int = 0o755) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("AgentBridge-ChangeWorkflow-\(UUID().uuidString.lowercased())", isDirectory: true)
         let source = root.appendingPathComponent("source", isDirectory: true)
@@ -368,6 +474,13 @@ final class ChangeWorkflowTests: XCTestCase {
         try git(["-C", source.path, "config", "user.name", "AgentBridge Tests"])
         try git(["-C", source.path, "config", "user.email", "agentbridge-tests@example.invalid"])
         try git(["-C", source.path, "add", "source.txt"])
+        if let projectScript {
+            let script = source.appendingPathComponent(".codex/ci.sh")
+            try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(projectScript.utf8).write(to: script)
+            try FileManager.default.setAttributes([.posixPermissions: projectScriptPermissions], ofItemAtPath: script.path)
+            try git(["-C", source.path, "add", ".codex/ci.sh"])
+        }
         try git(["-C", source.path, "commit", "-q", "-m", "initial"])
 
         let store = try AuditStore(rootURL: state, workspaceRootURL: workspaces, managedWorkspaceRoots: [])

@@ -737,6 +737,7 @@
 "%@reached the local limit of %@% (%@/%@)." = "%@reached the local limit of %@% (%@/%@).";
 "%@reached the local limit of %d%% (US$%.2f / US$%.2f)." = "%@reached the local limit of %d%% (US$%.2f / US$%.2f).";
 ".codex/ci.sh must be a regular, executable file." = ".codex/ci.sh must be a regular, executable file.";
+".codex/ci.sh differs from the pinned commit. Review it, then restore it or run it as an approved custom command." = ".codex/ci.sh differs from the pinned commit. Review it, then restore it or run it as an approved custom command.";
 "0 = No Limit" = "0 = No Limit";
 "24-hour period" = "24-hour period";
 "A Claude API local USD budget must be a finite amount greater than zero." = "A Claude API local USD budget must be a finite amount greater than zero.";
@@ -1278,6 +1279,7 @@
 "The isolated workspace commit does not match the source." = "The isolated workspace commit does not match the source.";
 "The isolated workspace has changed. Create a new session to pin the new commit." = "The isolated workspace has changed. Create a new session to pin the new commit.";
 "The isolated workspace has lost its Git metadata." = "The isolated workspace has lost its Git metadata.";
+"The isolated workspace's Git settings were changed. Create a new session." = "The isolated workspace's Git settings were changed. Create a new session.";
 "The isolated workspace has no executable .codex/ci.sh." = "The isolated workspace has no executable .codex/ci.sh.";
 "The isolated workspace path already exists." = "The isolated workspace path already exists.";
 "The isolated workspace still references another Git object directory." = "The isolated workspace still references another Git object directory.";

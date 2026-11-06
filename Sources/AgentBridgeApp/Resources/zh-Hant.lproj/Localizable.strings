@@ -737,6 +737,7 @@
 "%@reached the local limit of %@% (%@/%@)." = "%@達到本機上限的 %@%（%@/%@）。";
 "%@reached the local limit of %d%% (US$%.2f / US$%.2f)." = "%@達到本機上限的 %d%%（US$%.2f / US$%.2f）。";
 ".codex/ci.sh must be a regular, executable file." = ".codex/ci.sh 必須是一般且可執行的檔案。";
+".codex/ci.sh differs from the pinned commit. Review it, then restore it or run it as an approved custom command." = ".codex/ci.sh 與固定的提交版本不同。請先檢視，再還原它，或以已核准的自訂命令執行。";
 "0 = No Limit" = "0 = 不限";
 "24-hour period" = "24 小時區間";
 "A Claude API local USD budget must be a finite amount greater than zero." = "Claude API 本機 USD 預算必須是有限且大於零的金額。";
@@ -1278,6 +1279,7 @@
 "The isolated workspace commit does not match the source." = "隔離工作區提交版本與來源不符。";
 "The isolated workspace has changed. Create a new session to pin the new commit." = "隔離工作區已改變。請建立新的工作階段以固定新的提交版本。";
 "The isolated workspace has lost its Git metadata." = "隔離工作區已失去 Git 中繼資料。";
+"The isolated workspace's Git settings were changed. Create a new session." = "隔離工作區的 Git 設定已被變更。請建立新的工作階段。";
 "The isolated workspace has no executable .codex/ci.sh." = "隔離工作區沒有可執行的 .codex/ci.sh。";
 "The isolated workspace path already exists." = "隔離工作區路徑已存在。";
 "The isolated workspace still references another Git object directory." = "隔離工作區仍參照其他 Git 物件資料夾。";
