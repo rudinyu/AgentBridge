@@ -45,6 +45,8 @@
 "Export patch…" = "Export patch…";
 "Restore all" = "Restore all";
 "Binary diff; file content is represented as binary." = "Binary diff; file content is represented as binary.";
+"This file's diff is too long to show here, but it is still part of the change. Export the patch to review it." = "This file's diff is too long to show here, but it is still part of the change. Export the patch to review it.";
+"This file is not UTF-8, so some characters are shown as �. The original bytes are kept in the patch." = "This file is not UTF-8, so some characters are shown as �. The original bytes are kept in the patch.";
 "Reject / restore file" = "Reject / restore file";
 "No changes in the isolated workspace" = "No changes in the isolated workspace";
 "Accept this verified diff" = "Accept this verified diff";

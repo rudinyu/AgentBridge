@@ -308,28 +308,32 @@ public final class WorkspaceManager: @unchecked Sendable {
                 arguments: arguments,
                 workingDirectory: nil,
                 allowedExitCodes: isUntracked ? [0, 1] : [0],
-                outputLimit: 1_048_576
+                outputLimit: max(1, Self.maximumPatchBytes - combinedPatch.count)
             )
-            guard !patchResult.outputWasTruncated else {
-                throw AgentBridgeError.git("The file diff exceeds the size limit; split the session before reviewing.")
-            }
-            guard let patchText = String(data: patchResult.standardOutput, encoding: .utf8) else {
-                throw AgentBridgeError.git("The Git diff contains file names or content that cannot be displayed.")
-            }
-            guard combinedPatch.count + patchResult.standardOutput.count <= 10 * 1_024 * 1_024 else {
+            guard !patchResult.outputWasTruncated,
+                  combinedPatch.count + patchResult.standardOutput.count <= Self.maximumPatchBytes else {
                 throw AgentBridgeError.git("The full diff exceeds the size limit; split the session before exporting.")
             }
             combinedPatch.append(contentsOf: patchResult.standardOutput)
+            // Only the shown text is limited. Every byte stays in the combined patch,
+            // so one long or non-UTF-8 file cannot stop the whole session being reviewed.
+            let patchText = String(decoding: patchResult.standardOutput, as: UTF8.self)
+            let isTooLargeToDisplay = patchResult.standardOutput.count > Self.maximumDisplayedPatchBytes
             let trackedStatus = trackedEntries.first(where: { $0.path == path })?.status
             fileDiffs.append(ChangeFileDiff(
                 path: path,
                 status: isUntracked ? .untracked : Self.changeFileStatus(trackedStatus ?? ""),
-                patch: patchText,
-                isBinary: patchText.contains("Binary files ") || patchText.contains("GIT binary patch")
+                patch: isTooLargeToDisplay ? "" : patchText,
+                isBinary: patchText.contains("Binary files ") || patchText.contains("GIT binary patch"),
+                isTooLargeToDisplay: isTooLargeToDisplay,
+                hasUndecodableText: String(data: patchResult.standardOutput, encoding: .utf8) == nil
             ))
         }
         return WorkspaceChangeDiff(baseCommit: session.snapshotCommit, files: fileDiffs, patch: combinedPatch)
     }
+
+    private static let maximumPatchBytes = 10 * 1_024 * 1_024
+    private static let maximumDisplayedPatchBytes = 1_048_576
 
     public func restoreFiles(for session: SessionRecord, paths: [String]) async throws {
         guard session.policy.accessMode == .isolatedChanges else {

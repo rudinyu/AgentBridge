@@ -22,7 +22,11 @@ extension AgentBridgeCLI {
             for file in diff.files {
                 print("\n--- \(file.status.rawValue) \(file.path) ---")
                 if file.isBinary { print("[binary file]") }
-                else { print(file.patch, terminator: "") }
+                else if file.isTooLargeToDisplay { print("[diff too long to show; use `changes export` to review it]") }
+                else {
+                    if file.hasUndecodableText { print("[not UTF-8; some characters are shown as replacements]") }
+                    print(file.patch, terminator: "")
+                }
             }
             if diff.files.isEmpty { print("The isolated workspace has no differences.") }
         case "restore":

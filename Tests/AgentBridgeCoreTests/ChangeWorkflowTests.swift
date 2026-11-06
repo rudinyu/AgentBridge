@@ -398,6 +398,60 @@ final class ChangeWorkflowTests: XCTestCase {
         XCTAssertTrue(diff.files.isEmpty)
     }
 
+    func testNonUTF8FileIsReviewedAndAppliedWithItsOriginalBytes() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let big5 = Data([0xA4, 0x40, 0xA4, 0x48, 0x0A])
+        let name = "big5.txt"
+        try big5.write(to: URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent(name))
+
+        let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        let file = try XCTUnwrap(diff.files.first)
+        XCTAssertTrue(file.hasUndecodableText)
+        XCTAssertFalse(file.isBinary)
+        XCTAssertFalse(file.patch.isEmpty)
+        XCTAssertNotNil(diff.patch.range(of: Data([0xA4, 0x40, 0xA4, 0x48])))
+
+        let worktree = try await applyVerified(diff, fixture)
+        XCTAssertEqual(try Data(contentsOf: worktree.appendingPathComponent(name)), big5)
+    }
+
+    func testLongFileIsHiddenFromDisplayButStillApplied() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let long = Data(String(repeating: "generated lockfile line\n", count: 100_000).utf8)
+        let name = "package-lock.json"
+        try long.write(to: URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent(name))
+        try Data("changed\n".utf8).write(to: URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent("source.txt"))
+
+        let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        let hidden = try XCTUnwrap(diff.files.first { $0.path == name })
+        XCTAssertTrue(hidden.isTooLargeToDisplay)
+        XCTAssertEqual(hidden.patch, "")
+        let shown = try XCTUnwrap(diff.files.first { $0.path == "source.txt" })
+        XCTAssertFalse(shown.isTooLargeToDisplay)
+        XCTAssertTrue(shown.patch.contains("changed"))
+        XCTAssertGreaterThan(diff.patch.count, long.count)
+
+        let worktree = try await applyVerified(diff, fixture)
+        XCTAssertEqual(try Data(contentsOf: worktree.appendingPathComponent(name)), long)
+    }
+
+    func testDiffOverTheTotalLimitIsStillRefused() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let tooLong = Data(String(repeating: "generated lockfile line\n", count: 500_000).utf8)
+        try tooLong.write(to: URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent("huge.txt"))
+        do {
+            _ = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+            XCTFail("A diff over the total limit was accepted.")
+        } catch let error as AgentBridgeError {
+            guard case .git(let message) = error, message.contains("full diff exceeds the size limit") else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
     func testVerificationCancellationIsReportedAndDoesNotPassAcceptanceGate() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
@@ -434,6 +488,22 @@ final class ChangeWorkflowTests: XCTestCase {
         let store: AuditStore
         let service: BridgeService
         let session: SessionRecord
+    }
+
+    private func applyVerified(_ diff: WorkspaceChangeDiff, _ fixture: Fixture) async throws -> URL {
+        var verifiedSession = fixture.session
+        let changeAt = Date()
+        verifiedSession.lastChangeRunAt = changeAt
+        verifiedSession.verificationPassed = true
+        verifiedSession.verificationDiffDigest = diff.digest
+        verifiedSession.verificationCompletedAt = changeAt.addingTimeInterval(1)
+        try fixture.store.saveSession(verifiedSession)
+        let result = try await WorkspaceManager(store: fixture.store).applyVerifiedChangesToLocalBranch(
+            for: verifiedSession,
+            branchName: "agentbridge/review-test",
+            diff: diff
+        )
+        return URL(fileURLWithPath: result.worktreePath, isDirectory: true)
     }
 
     private func assertDefaultVerificationRejected(_ fixture: Fixture, line: UInt = #line) async throws {
