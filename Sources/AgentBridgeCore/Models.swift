@@ -314,12 +314,27 @@ public struct ChangeFileDiff: Codable, Equatable, Sendable {
     public let status: ChangeFileStatus
     public let patch: String
     public let isBinary: Bool
+    /// `patch` is empty because it is too long to show. The change is still in
+    /// `WorkspaceChangeDiff.patch`, which is what gets verified, exported and applied.
+    public let isTooLargeToDisplay: Bool
+    /// `patch` shows replacement characters for text that is not UTF-8. The original
+    /// bytes are still in `WorkspaceChangeDiff.patch`.
+    public let hasUndecodableText: Bool
 
-    public init(path: String, status: ChangeFileStatus, patch: String, isBinary: Bool) {
+    public init(
+        path: String,
+        status: ChangeFileStatus,
+        patch: String,
+        isBinary: Bool,
+        isTooLargeToDisplay: Bool = false,
+        hasUndecodableText: Bool = false
+    ) {
         self.path = path
         self.status = status
         self.patch = patch
         self.isBinary = isBinary
+        self.isTooLargeToDisplay = isTooLargeToDisplay
+        self.hasUndecodableText = hasUndecodableText
     }
 }
 

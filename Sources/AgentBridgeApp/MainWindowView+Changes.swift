@@ -149,7 +149,14 @@ extension MainWindowView {
                                 if file.isBinary {
                                     Text("Binary diff; file content is represented as binary.")
                                         .font(.caption2).foregroundStyle(.secondary)
+                                } else if file.isTooLargeToDisplay {
+                                    Text("This file's diff is too long to show here, but it is still part of the change. Export the patch to review it.")
+                                        .font(.caption2).foregroundStyle(.secondary)
                                 } else {
+                                    if file.hasUndecodableText {
+                                        Text("This file is not UTF-8, so some characters are shown as �. The original bytes are kept in the patch.")
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                    }
                                     ScrollView([.horizontal, .vertical]) {
                                         Text(file.patch).font(.system(.caption2, design: .monospaced))
                                             .textSelection(.enabled)

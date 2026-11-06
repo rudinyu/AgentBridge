@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: one file could stop a whole session being reviewed, accepted or applied. A file whose diff is over 1 MiB, such as a regenerated lockfile, or a text file that is not UTF-8, such as Big5, made the diff fail. Long diffs are now hidden with a note and non-UTF-8 text is shown with replacement characters; both stay complete in the patch that is verified, exported and applied. A combined diff over 10 MiB is still refused, and autonomous reviews still stop on anything they cannot read.
 - Tests: `.codex/ci.sh` now builds and tests under both SwiftPM build systems. It used only the native one, so it could not catch the `zh-hant.lproj` bug below, which appears only under `swiftbuild`.
 - Fixed: the App showed English instead of Traditional Chinese on macOS 27, where bundle lookups are case-sensitive. It asked for `zh-hant.lproj` while the newer SwiftPM build system writes `zh-Hant.lproj` (the native one, used for packaging, writes `zh-hant.lproj`); the `.lproj` folder is now found regardless of case, so both builds work.
 - Security: `.codex/ci.sh` now runs as the default verification only when it is the executable file from the pinned commit. A provider could edit that script, so a change could pass its own verification gate. A changed script is refused until you restore it or run it as an approved custom command. Autonomous runs already pinned this file. The unchanged script can still run code the change touched, such as the project's tests.
