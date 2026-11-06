@@ -13,7 +13,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     var swiftPackageLocalization: String {
         switch self {
         case .english: "en"
-        case .traditionalChinese: "zh-hant"
+        case .traditionalChinese: "zh-Hant"
         }
     }
 
@@ -32,16 +32,27 @@ enum AppLocalization {
     /// and for older stored text: audit events and records saved before the
     /// source language changed are still Chinese, so those entries live in
     /// `Legacy.strings` and are translated by fragment.
-    private static let englishStrings = loadStrings(table: "Localizable", subdirectory: "en.lproj")
-        .merging(loadStrings(table: "Legacy", subdirectory: "en.lproj")) { current, _ in current }
+    private static let englishStrings = loadStrings(table: "Localizable", localization: AppLanguage.english.swiftPackageLocalization)
+        .merging(loadStrings(table: "Legacy", localization: AppLanguage.english.swiftPackageLocalization)) { current, _ in current }
     private static let chineseTemplates = loadChineseTemplates()
 
     static func string(_ key: String, language: AppLanguage) -> String {
-        guard let path = Bundle.module.path(forResource: language.swiftPackageLocalization, ofType: "lproj"),
-              let bundle = Bundle(path: path) else {
-            return key
-        }
+        guard let bundle = language == .english ? englishBundle : chineseBundle else { return key }
         return bundle.localizedString(forKey: key, value: key, table: "Localizable")
+    }
+
+    private static let englishBundle = localizationDirectory(AppLanguage.english.swiftPackageLocalization).flatMap(Bundle.init(url:))
+    private static let chineseBundle = localizationDirectory(AppLanguage.traditionalChinese.swiftPackageLocalization).flatMap(Bundle.init(url:))
+
+    /// The `.lproj` folder for a localization, matched without regard to case.
+    /// SwiftPM's native build system writes `zh-hant.lproj` while the newer one
+    /// keeps the source spelling `zh-Hant.lproj`, and on macOS 27 Bundle lookups
+    /// are case-sensitive, so asking for one spelling misses the other.
+    private static func localizationDirectory(_ localization: String) -> URL? {
+        guard let resources = Bundle.module.resourceURL else { return nil }
+        let wanted = "\(localization).lproj".lowercased()
+        let contents = (try? FileManager.default.contentsOfDirectory(at: resources, includingPropertiesForKeys: nil)) ?? []
+        return contents.first { $0.lastPathComponent.lowercased() == wanted }
     }
 
     /// Localizes dynamic status and error strings while preserving provider output and identifiers.
@@ -123,7 +134,7 @@ enum AppLocalization {
     }
 
     private static func loadChineseTemplates() -> [ChineseTemplate] {
-        let table = loadStrings(table: "Localizable", subdirectory: "zh-Hant.lproj")
+        let table = loadStrings(table: "Localizable", localization: AppLanguage.traditionalChinese.swiftPackageLocalization)
         var templates: [(weight: Int, template: ChineseTemplate)] = []
         for (key, value) in table {
             let keyParts = split(key)
@@ -137,12 +148,12 @@ enum AppLocalization {
 
     /// The Traditional Chinese table, for tests that check every entry.
     static var chineseTable: [String: String] {
-        loadStrings(table: "Localizable", subdirectory: "zh-Hant.lproj")
+        loadStrings(table: "Localizable", localization: AppLanguage.traditionalChinese.swiftPackageLocalization)
     }
 
-    private static func loadStrings(table: String, subdirectory: String) -> [String: String] {
-        guard let url = Bundle.module.url(forResource: table, withExtension: "strings", subdirectory: subdirectory),
-              let data = try? Data(contentsOf: url),
+    private static func loadStrings(table: String, localization: String) -> [String: String] {
+        guard let directory = localizationDirectory(localization),
+              let data = try? Data(contentsOf: directory.appendingPathComponent("\(table).strings")),
               let dictionary = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: String] else {
             return [:]
         }
