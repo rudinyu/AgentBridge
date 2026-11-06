@@ -83,7 +83,7 @@ App 與 CLI 共用已保存的根目錄。CLI 可用 `agentbridge workspace set 
 
 ### 變更審查、驗證、任務與擴充政策
 
-變更流程會將計畫摘要綁定工作階段；計畫內容變更會使先前核准失效。修改留在隔離工作區，不會寫入來源樹。App 提供完整逐檔 diff、單檔／全部還原與 patch 匯出。驗證是由使用者另行啟動、在工作階段工作區執行的程序：預設為 `.codex/ci.sh`；自訂 executable 路徑和 argv 必須明確核准，並直接傳入程序，不經 shell 拼接。接受或套用必須先成功驗證與目前 diff 完全相同的內容。套用前檢查來源 base commit，並在具名本機 branch 建立未提交 worktree。AgentBridge 不會 commit、push 或 merge。
+變更流程會將計畫摘要綁定工作階段；計畫內容變更會使先前核准失效。修改留在隔離工作區，不會寫入來源樹。App 提供完整逐檔 diff、單檔／全部還原與 patch 匯出。驗證是由使用者另行啟動、在工作階段工作區執行的程序，以 macOS 使用者身分執行且沒有沙箱，因此即使指令碼未變更，也會執行它呼叫的工作區程式碼：預設為 `.codex/ci.sh`，且因供應商可編輯工作區，只有它仍是固定提交版本中的可執行檔時才會執行，變更過的指令碼需以自訂命令核准後執行；自訂 executable 路徑和 argv 必須明確核准，並直接傳入程序，不經 shell 拼接。接受或套用必須先成功驗證與目前 diff 完全相同的內容。套用前檢查來源 base commit，並在具名本機 branch 建立未提交 worktree。AgentBridge 不會 commit、push 或 merge。
 
 活動時間軸呈現排序後且已遮蔽的 `AuditEvent`，provider 輸出只在官方 CLI 確實回報時才顯示。任務看板保存每個實際啟動的操作、進度、核准狀態、終止狀態及 diff／驗證參照。App、CLI 與自主流程合計最多同時進行三個供應商執行（唯讀、變更與驗證執行）：每個執行持有工作階段租約，再加上私有根目錄中三個名額鎖檔之一；檢視差異、核准計畫、接受變更等短操作只取工作階段租約，不受此上限阻擋，因此上限跨程序有效，程序當掉也會釋放名額。同一個租約也會阻止同一工作階段重複執行。取消與執行租約以各工作階段為範圍。未啟動的操作不會被記為執行中。
 
@@ -111,7 +111,7 @@ provider CLI 決定原生互動 TUI transcript 是否保存。AgentBridge 不會
 
 內嵌終端直接將 PTY 接到官方 CLI，不保存原始終端畫面或輸入。只有按下固定的 `/usage` 按鈕後，App 才會將有限數量的可見 SwiftTerm 列暫存在記憶體供盡力解析；辨識到用量值或 15 秒後停止取樣，再按固定按鈕可重新啟動。正規化報告產生後即丟棄原始文字，不會記錄、保存或傳給模型。SwiftTerm 不允許 OSC 52 剪貼簿讀寫及 terminal link 開啟，並限制 scrollback。獨立「本機終端機」使用者 shell 以目前 macOS 帳戶權限執行；Repository clone 不會限制其檔案或網路存取。
 
-Git clone 停用 hooks、fsmonitor、untracked cache 及 LFS smudge，移除 origin 並使用私有 Git 設定目錄。未提交內容、LFS 實體檔及未另行初始化的 submodule 不會因此成為完整快照。AgentBridge 不會自動對來源 Repository 做 commit、push、merge 或清理。
+Git clone 停用 hooks、fsmonitor、untracked cache 及 LFS smudge，移除 origin 並使用私有 Git 設定目錄。在工作區執行任何 Git 命令前，AgentBridge 會拒絕 clone 寫入項目與 `user.name`、`user.email` 以外的本機設定，因為 `filter.*.clean` 這類設定會在供應商沙箱外執行程式。未提交內容、LFS 實體檔及未另行初始化的 submodule 不會因此成為完整快照。AgentBridge 不會自動對來源 Repository 做 commit、push、merge 或清理。
 
 ## Claude API 額度
 

@@ -166,7 +166,7 @@ printf '%s' '依核准計畫完成修改。' | \
   "$CLI" changes run "$SESSION_ID" PLAN_ID REVIEW_DIGEST
 ```
 
-在 **Changes** 檢視完整檔案清單與 diff。拒絕某個變更時還原該檔，或將全部檔案還原到基準快照，也可匯出 patch。**Verify** 只有按下後才會執行 `.codex/ci.sh`。自訂驗證需先明確核准，並以 executable 和分開的 argv 傳入；AgentBridge 不會組合 shell 命令。結果顯示 executable、參數、工作目錄、退出代碼、耗時及遮蔽後的 stdout/stderr。接受與套用只適用於已成功驗證的目前完整 diff。套用時須輸入本機 branch 名稱；AgentBridge 先檢查來源 base commit 未改變，再建立未提交 worktree。AgentBridge 不會 commit、push 或 merge。
+在 **Changes** 檢視完整檔案清單與 diff。拒絕某個變更時還原該檔，或將全部檔案還原到基準快照，也可匯出 patch。**Verify** 只有按下後才會執行 `.codex/ci.sh`，且會拒絕與固定提交版本不同的指令碼；請還原它，或以已核准的自訂驗證執行。自訂驗證需先明確核准，並以 executable 和分開的 argv 傳入；AgentBridge 不會組合 shell 命令。結果顯示 executable、參數、工作目錄、退出代碼、耗時及遮蔽後的 stdout/stderr。接受與套用只適用於已成功驗證的目前完整 diff。套用時須輸入本機 branch 名稱；AgentBridge 先檢查來源 base commit 未改變，再建立未提交 worktree。AgentBridge 不會 commit、push 或 merge。
 
 **Activity** 時間軸呈現排序後、已遮蔽的稽核事件，包括可取得的進度、計畫核准、取消、錯誤、diff 變化與驗證結果。只有官方 CLI 實際回報的 provider 輸出才會顯示。**Parallel task board** 列出所有工作階段實際啟動的操作、狀態、核准、進度、取消及 diff／驗證參照。App、CLI 與自主流程合計最多同時進行三個供應商執行（唯讀、變更與驗證執行），第四個會被拒絕，直到有一個結束；檢視差異、核准計畫、接受變更等操作不受此上限阻擋；共用的程序鎖也會阻止同一工作階段重複執行。請在對應任務按 **Cancel this session**。
 

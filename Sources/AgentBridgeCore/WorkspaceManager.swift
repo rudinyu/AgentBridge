@@ -222,12 +222,52 @@ public final class WorkspaceManager: @unchecked Sendable {
         guard !fileManager.fileExists(atPath: alternateObjects.path) else {
             throw AgentBridgeError.sessionMismatch("The isolated workspace still references another Git object directory.")
         }
+        try await validateWorkspaceGitConfig(workspace)
         let topLevel = try await gitText(["-C", workspace.path, "rev-parse", "--show-toplevel"])
         guard URL(fileURLWithPath: topLevel, isDirectory: true).standardizedFileURL.path == workspace.path else {
             throw AgentBridgeError.sessionMismatch("The Git workspace root does not match the session record.")
         }
         let commit = try await gitText(["-C", workspace.path, "rev-parse", "HEAD"])
         guard commit == session.snapshotCommit else { throw AgentBridgeError.workspaceChanged }
+    }
+
+    /// Refuses any local Git setting beyond those a clone writes. Providers can edit
+    /// this workspace, and settings such as `filter.*.clean` make later Git commands
+    /// here run a program of their choosing, outside any provider sandbox.
+    private func validateWorkspaceGitConfig(_ workspace: URL) async throws {
+        let result = try await runGit(
+            arguments: ["-C", workspace.path, "config", "--local", "--name-only", "--list"],
+            workingDirectory: nil
+        )
+        guard !result.outputWasTruncated, let keys = String(data: result.standardOutput, encoding: .utf8) else {
+            throw AgentBridgeError.git("Git returned information that could not be recognized.")
+        }
+        for key in keys.split(whereSeparator: \.isNewline) where !Self.allowedWorkspaceGitConfigKeys.contains(key.lowercased()) {
+            throw AgentBridgeError.sessionMismatch("The isolated workspace's Git settings were changed. Create a new session.")
+        }
+    }
+
+    /// What `git clone` writes on macOS, plus a commit identity set from a terminal
+    /// in the workspace.
+    private static let allowedWorkspaceGitConfigKeys: Set<String> = [
+        "core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates",
+        "core.ignorecase", "core.precomposeunicode", "core.symlinks",
+        "extensions.objectformat", "extensions.refstorage",
+        "user.name", "user.email"
+    ]
+
+    /// Whether `.codex/ci.sh` is still the executable file from the pinned commit.
+    /// Call after `validateWorkspace`, which keeps Git filters out of the hash.
+    func projectVerificationScriptIsUnchanged(for session: SessionRecord) async throws -> Bool {
+        let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
+        let path = ".codex/ci.sh"
+        try validateNoSymlinkParent(of: workspace.appendingPathComponent(path), inside: workspace)
+        let hash = try await gitText(["-C", workspace.path, "hash-object", "--", path])
+        let entry = try await runGit(
+            arguments: ["-C", workspace.path, "ls-tree", "-z", session.snapshotCommit, "--", path],
+            workingDirectory: nil
+        )
+        return entry.standardOutput == Data("100755 blob \(hash)\t\(path)\0".utf8)
     }
 
     public func diff(for session: SessionRecord) async throws -> WorkspaceChangeDiff {
