@@ -50,6 +50,7 @@
 "Some changed files are not fully shown. Export the patch to review them, then confirm before accepting or applying." = "Some changed files are not fully shown. Export the patch to review them, then confirm before accepting or applying.";
 "Confirmed %@ file(s) that were not fully shown, for diff sha256:%@." = "Confirmed %@ file(s) that were not fully shown, for diff sha256:%@.";
 "I exported the patch and reviewed the files that are not fully shown above." = "I exported the patch and reviewed the files that are not fully shown above.";
+"These Git-ignored paths are in the workspace but not in this diff. Verification can see them, and they will not reach your branch." = "These Git-ignored paths are in the workspace but not in this diff. Verification can see them, and they will not reach your branch.";
 "Reject / restore file" = "Reject / restore file";
 "No changes in the isolated workspace" = "No changes in the isolated workspace";
 "Accept this verified diff" = "Accept this verified diff";
