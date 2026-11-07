@@ -1505,3 +1505,6 @@
 "The shared memory changed after this plan was approved. Approve the plan again to use the current memory." = "The shared memory changed after this plan was approved. Approve the plan again to use the current memory.";
 "Include shared memory in the change run" = "Include shared memory in the change run";
 "Off by default. Earlier runs write shared memory, and its folder can be synced, so a run that edits files sees it only when you include it. Approval covers the memory as it is then; if it changes, approve again." = "Off by default. Earlier runs write shared memory, and its folder can be synced, so a run that edits files sees it only when you include it. Approval covers the memory as it is then; if it changes, approve again.";
+"All %@ run slots are in use; this run starts when one is free." = "All %@ run slots are in use; this run starts when one is free.";
+"The process running this session stopped before the run finished, so the session was marked failed." = "The process running this session stopped before the run finished, so the session was marked failed.";
+"The source repository no longer has this session's base commit, so the changes cannot be applied. Export the patch instead." = "The source repository no longer has this session's base commit, so the changes cannot be applied. Export the patch instead.";

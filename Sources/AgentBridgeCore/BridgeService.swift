@@ -81,7 +81,29 @@ public final class BridgeService: @unchecked Sendable {
         let localSettings = try settings ?? store.loadSettings().localModel
         return try await localModelClient.testConnection(settings: localSettings)
     }
-    public func sessions() throws -> [SessionRecord] { try store.loadSessions() }
+    public func sessions() throws -> [SessionRecord] {
+        try? recoverInterruptedSessions()
+        return try store.loadSessions()
+    }
+
+    /// Marks failed a session left `.running` by a process that stopped, such as one
+    /// that crashed or was killed. A live run holds the session's lease, so a lease
+    /// that can be taken means nothing is running the session any more.
+    func recoverInterruptedSessions() throws {
+        for session in try store.loadSessions() where session.status == .running {
+            guard let lease = try? store.acquireRunLease(for: session.id) else { continue }
+            defer { withExtendedLifetime(lease) {} }
+            guard var current = try store.session(id: session.id), current.status == .running else { continue }
+            current.status = .failed
+            current.updatedAt = Date()
+            try store.saveSession(current)
+            try store.appendEvent(AuditEvent(
+                sessionID: session.id,
+                kind: "session.interrupted_run_recovered",
+                message: "The process running this session stopped before the run finished, so the session was marked failed."
+            ))
+        }
+    }
     public func events(sessionID: UUID) throws -> [AuditEvent] { try store.events(sessionID: sessionID) }
 
     public func taskRecords(sessionID: UUID? = nil) throws -> [ParallelTaskRecord] {

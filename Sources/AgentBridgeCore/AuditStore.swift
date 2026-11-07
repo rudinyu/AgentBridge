@@ -252,29 +252,67 @@ public final class AuditStore: @unchecked Sendable {
     /// approving a plan or accepting changes must keep working while the limit is
     /// reached, so they take the session lock alone.
     public func acquireRunLease(for sessionID: UUID, countsTowardRunLimit: Bool = false) throws -> SessionRunLease {
-        let url = rootURL.appendingPathComponent("session-\(sessionID.uuidString.lowercased()).run.lock")
-        let descriptor = try openPrivateLockFile(at: url, failure: "Could not lock the session.")
-        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
-            _ = close(descriptor)
-            throw AgentBridgeError.sessionMismatch("This session is already running in another window or terminal.")
-        }
+        let descriptor = try lockSession(sessionID)
         guard countsTowardRunLimit else { return SessionRunLease(descriptor: descriptor, slotDescriptor: -1) }
         do {
-            return SessionRunLease(descriptor: descriptor, slotDescriptor: try acquireRunSlot())
+            guard let slot = try tryAcquireRunSlot() else {
+                throw AgentBridgeError.sessionMismatch("Up to \(Self.maximumConcurrentRuns) tasks can run at once; wait for one to finish.")
+            }
+            return SessionRunLease(descriptor: descriptor, slotDescriptor: slot)
         } catch {
             _ = close(descriptor)
             throw error
         }
     }
 
-    private func acquireRunSlot() throws -> Int32 {
+    /// For work approved as a whole, such as an autonomous workflow: waits for a free
+    /// run slot instead of failing, so a chat started meanwhile cannot end the
+    /// workflow. Waiting stops on cancellation, in this process or from another one.
+    public func acquireRunLeaseWaitingForSlot(for sessionID: UUID, cancellation: CancellationFlag) async throws -> SessionRunLease {
+        let descriptor = try lockSession(sessionID)
+        var reportedWait = false
+        do {
+            while true {
+                if let slot = try tryAcquireRunSlot() { return SessionRunLease(descriptor: descriptor, slotDescriptor: slot) }
+                if !reportedWait {
+                    reportedWait = true
+                    try? appendEvent(AuditEvent(
+                        sessionID: sessionID,
+                        kind: "run.waiting_for_slot",
+                        message: "All \(Self.maximumConcurrentRuns) run slots are in use; this run starts when one is free."
+                    ))
+                }
+                if cancellation.isCancelled || Task.isCancelled
+                    || fileManager.fileExists(atPath: cancellationRequestURL(for: sessionID).path) {
+                    throw AgentBridgeError.processCancelled
+                }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        } catch {
+            _ = close(descriptor)
+            throw error
+        }
+    }
+
+    private func lockSession(_ sessionID: UUID) throws -> Int32 {
+        let url = rootURL.appendingPathComponent("session-\(sessionID.uuidString.lowercased()).run.lock")
+        let descriptor = try openPrivateLockFile(at: url, failure: "Could not lock the session.")
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            _ = close(descriptor)
+            throw AgentBridgeError.sessionMismatch("This session is already running in another window or terminal.")
+        }
+        return descriptor
+    }
+
+    /// A locked slot, or nil when every slot is taken.
+    private func tryAcquireRunSlot() throws -> Int32? {
         for index in 0..<Self.maximumConcurrentRuns {
             let url = rootURL.appendingPathComponent("run-slot-\(index).lock")
             let descriptor = try openPrivateLockFile(at: url, failure: "Could not count the running tasks.")
             if flock(descriptor, LOCK_EX | LOCK_NB) == 0 { return descriptor }
             _ = close(descriptor)
         }
-        throw AgentBridgeError.sessionMismatch("Up to \(Self.maximumConcurrentRuns) tasks can run at once; wait for one to finish.")
+        return nil
     }
 
     private func openPrivateLockFile(at url: URL, failure: String) throws -> Int32 {
