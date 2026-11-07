@@ -76,6 +76,8 @@ enum AgentBridgeCLI {
             try showEvents(Array(arguments.dropFirst()), service: service)
         case "budget":
             try budgetCommand(Array(arguments.dropFirst()), service: service)
+        case "usage":
+            try usageCommand(Array(arguments.dropFirst()), service: service)
         default:
             throw AgentBridgeError.invalidInput("Unknown command \(command). Run `agentbridge help` for usage.")
         }

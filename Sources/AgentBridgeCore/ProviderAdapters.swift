@@ -286,7 +286,7 @@ public final class ProviderAdapter: Sendable {
         guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "CLI exit code \(result.exitCode).") }
         let parsed = try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated)
         let output = stateless
-            ? ProviderOutput(text: parsed.text, providerSessionID: nil, actualCostUSD: parsed.actualCostUSD)
+            ? ProviderOutput(text: parsed.text, providerSessionID: nil, actualCostUSD: parsed.actualCostUSD, tokenUsage: parsed.tokenUsage)
             : parsed
         return (result, output)
     }

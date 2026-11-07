@@ -425,19 +425,64 @@ public struct VerificationResult: Equatable, Sendable {
     }
 }
 
+/// Tokens a provider reported for one run. Codex counts cached input inside its
+/// input total and Claude does not, so `inputTokens` is always the uncached part.
+public struct TokenUsage: Codable, Equatable, Sendable {
+    public var inputTokens: Int
+    public var cachedInputTokens: Int
+    public var cacheWriteTokens: Int
+    public var outputTokens: Int
+
+    public init(inputTokens: Int = 0, cachedInputTokens: Int = 0, cacheWriteTokens: Int = 0, outputTokens: Int = 0) {
+        self.inputTokens = inputTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.cacheWriteTokens = cacheWriteTokens
+        self.outputTokens = outputTokens
+    }
+
+    public static let zero = TokenUsage()
+
+    public var totalTokens: Int { inputTokens + cachedInputTokens + cacheWriteTokens + outputTokens }
+
+    public static func + (lhs: TokenUsage, rhs: TokenUsage) -> TokenUsage {
+        TokenUsage(
+            inputTokens: lhs.inputTokens + rhs.inputTokens,
+            cachedInputTokens: lhs.cachedInputTokens + rhs.cachedInputTokens,
+            cacheWriteTokens: lhs.cacheWriteTokens + rhs.cacheWriteTokens,
+            outputTokens: lhs.outputTokens + rhs.outputTokens
+        )
+    }
+
+    /// A local model server reports no cache, and may leave either count out.
+    init?(local usage: LocalModelUsage) {
+        guard usage.inputTokens != nil || usage.outputTokens != nil else { return nil }
+        self.init(inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0)
+    }
+}
+
 public struct AuditEvent: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public let timestamp: Date
     public let sessionID: UUID
     public let kind: String
     public let message: String
+    /// Set on `usage.tokens` events. Older events decode without it.
+    public let tokenUsage: TokenUsage?
 
-    public init(id: UUID = UUID(), timestamp: Date = Date(), sessionID: UUID, kind: String, message: String) {
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        sessionID: UUID,
+        kind: String,
+        message: String,
+        tokenUsage: TokenUsage? = nil
+    ) {
         self.id = id
         self.timestamp = timestamp
         self.sessionID = sessionID
         self.kind = kind
         self.message = OutputRedactor.redact(message)
+        self.tokenUsage = tokenUsage
     }
 }
 
@@ -445,11 +490,13 @@ public struct ProviderOutput: Equatable, Sendable {
     public let text: String
     public let providerSessionID: String?
     public let actualCostUSD: Double?
+    public let tokenUsage: TokenUsage?
 
-    public init(text: String, providerSessionID: String?, actualCostUSD: Double? = nil) {
+    public init(text: String, providerSessionID: String?, actualCostUSD: Double? = nil, tokenUsage: TokenUsage? = nil) {
         self.text = OutputRedactor.redact(text)
         self.providerSessionID = providerSessionID
         self.actualCostUSD = actualCostUSD
+        self.tokenUsage = tokenUsage
     }
 }
 

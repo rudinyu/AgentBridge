@@ -1482,3 +1482,7 @@
 "The program is not in the reviewed changes, so it cannot run in the verification checkout." = "此程式不在已檢視的變更內，因此無法在驗證用副本中執行。";
 "Could not find the macOS temporary folder for verification." = "找不到驗證所需的 macOS 暫存資料夾。";
 "Could not create the macOS temporary folder for verification." = "無法建立驗證所需的 macOS 暫存資料夾。";
+"Tokens, Last 5 Hours" = "近 5 小時 Token";
+"Tokens, Last 7 Days" = "近 7 天 Token";
+"reported by the CLI" = "由 CLI 回報";
+"Last 24 hours: %@ input, %@ cached input, %@ cache write and %@ output tokens. Current AgentBridge session: %@ tokens. Only AgentBridge runs whose CLI reported tokens are counted, not interactive terminals or other apps." = "近 24 小時：輸入 %@、快取輸入 %@、快取寫入 %@、輸出 %@ 個 Token。目前 AgentBridge 工作階段：%@ 個 Token。只計算 CLI 有回報 Token 的 AgentBridge 執行，不含互動終端機或其他 App。";

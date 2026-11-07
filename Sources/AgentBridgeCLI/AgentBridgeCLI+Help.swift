@@ -59,6 +59,7 @@ extension AgentBridgeCLI {
           agentbridge memory carry-forward SOURCE-SESSION TARGET-SESSION [--turn TURN-ID ...] [--notes]
           agentbridge cancel SESSION-ID
           agentbridge events SESSION-ID
+          agentbridge usage codex|claude|local [--profile PROFILE-ID]
           agentbridge budget
           agentbridge budget reconcile SESSION-ID --profile PROFILE-ID --actual-usd USD --confirm
           agentbridge budget reconcile SESSION-ID --profile PROFILE-ID --settle-at-reserved --confirm

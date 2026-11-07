@@ -1482,3 +1482,7 @@
 "The program is not in the reviewed changes, so it cannot run in the verification checkout." = "The program is not in the reviewed changes, so it cannot run in the verification checkout.";
 "Could not find the macOS temporary folder for verification." = "Could not find the macOS temporary folder for verification.";
 "Could not create the macOS temporary folder for verification." = "Could not create the macOS temporary folder for verification.";
+"Tokens, Last 5 Hours" = "Tokens, Last 5 Hours";
+"Tokens, Last 7 Days" = "Tokens, Last 7 Days";
+"reported by the CLI" = "reported by the CLI";
+"Last 24 hours: %@ input, %@ cached input, %@ cache write and %@ output tokens. Current AgentBridge session: %@ tokens. Only AgentBridge runs whose CLI reported tokens are counted, not interactive terminals or other apps." = "Last 24 hours: %@ input, %@ cached input, %@ cache write and %@ output tokens. Current AgentBridge session: %@ tokens. Only AgentBridge runs whose CLI reported tokens are counted, not interactive terminals or other apps.";

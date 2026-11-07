@@ -55,6 +55,7 @@ public enum ProviderOutputParser {
         var finalText = ""
         var sessionID: String?
         var completed = false
+        var tokenUsage: TokenUsage?
         for line in text.split(whereSeparator: \Character.isNewline) {
             if completed { throw AgentBridgeError.unsupportedProviderOutput(.codex) }
             guard let data = String(line).data(using: .utf8),
@@ -72,6 +73,13 @@ public enum ProviderOutputParser {
                 }
             case "turn.completed":
                 completed = true
+                // Codex's input total includes the cached part.
+                if let usage = event["usage"] as? [String: Any],
+                   let input = tokenCount(usage["input_tokens"]),
+                   let output = tokenCount(usage["output_tokens"]) {
+                    let cached = min(input, tokenCount(usage["cached_input_tokens"]) ?? 0)
+                    tokenUsage = TokenUsage(inputTokens: input - cached, cachedInputTokens: cached, outputTokens: output)
+                }
             case "turn.failed", "error", "turn_error":
                 throw AgentBridgeError.providerFailed(.codex, "The service reported that the session failed.")
             default:
@@ -79,13 +87,14 @@ public enum ProviderOutputParser {
             }
         }
         guard completed, !finalText.isEmpty else { throw AgentBridgeError.unsupportedProviderOutput(.codex) }
-        return ProviderOutput(text: finalText, providerSessionID: sessionID)
+        return ProviderOutput(text: finalText, providerSessionID: sessionID, tokenUsage: tokenUsage)
     }
 
     private static func parseClaude(_ text: String) throws -> ProviderOutput {
         var finalText = ""
         var sessionID: String?
         var actualCostUSD: Double?
+        var tokenUsage: TokenUsage?
         var succeeded = false
         for line in text.split(whereSeparator: \Character.isNewline) {
             if succeeded { throw AgentBridgeError.unsupportedProviderOutput(.claude) }
@@ -112,6 +121,16 @@ public enum ProviderOutputParser {
                     }
                     actualCostUSD = cost.doubleValue
                 }
+                if let usage = event["usage"] as? [String: Any],
+                   let input = tokenCount(usage["input_tokens"]),
+                   let output = tokenCount(usage["output_tokens"]) {
+                    tokenUsage = TokenUsage(
+                        inputTokens: input,
+                        cachedInputTokens: tokenCount(usage["cache_read_input_tokens"]) ?? 0,
+                        cacheWriteTokens: tokenCount(usage["cache_creation_input_tokens"]) ?? 0,
+                        outputTokens: output
+                    )
+                }
             case "stream_event":
                 if let eventBody = event["event"] as? [String: Any],
                    let delta = eventBody["delta"] as? [String: Any],
@@ -130,6 +149,15 @@ public enum ProviderOutputParser {
             }
         }
         guard succeeded, !finalText.isEmpty else { throw AgentBridgeError.unsupportedProviderOutput(.claude) }
-        return ProviderOutput(text: finalText, providerSessionID: sessionID, actualCostUSD: actualCostUSD)
+        return ProviderOutput(text: finalText, providerSessionID: sessionID, actualCostUSD: actualCostUSD, tokenUsage: tokenUsage)
+    }
+
+    /// Token counts only inform the usage dashboard, so a malformed one is left
+    /// out instead of failing a run that otherwise succeeded.
+    private static func tokenCount(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue >= 0, number.doubleValue <= Double(Int32.max),
+              number.doubleValue.rounded() == number.doubleValue else { return nil }
+        return number.intValue
     }
 }

@@ -147,6 +147,11 @@ public struct UsageStatisticsSnapshot: Equatable, Sendable {
     public let localDailyRuns: Int
     public let localSessionRuns: Int
     public let sevenDayBuckets: [UsageActivityBucket]
+    /// Tokens the provider reported for AgentBridge runs, in every usage mode.
+    public let fiveHourTokens: TokenUsage
+    public let dailyTokens: TokenUsage
+    public let sevenDayTokens: TokenUsage
+    public let sessionTokens: TokenUsage
 
     public init(
         provider: AgentProvider,
@@ -160,7 +165,11 @@ public struct UsageStatisticsSnapshot: Equatable, Sendable {
         apiSessionRuns: Int,
         localDailyRuns: Int = 0,
         localSessionRuns: Int = 0,
-        sevenDayBuckets: [UsageActivityBucket]
+        sevenDayBuckets: [UsageActivityBucket],
+        fiveHourTokens: TokenUsage = .zero,
+        dailyTokens: TokenUsage = .zero,
+        sevenDayTokens: TokenUsage = .zero,
+        sessionTokens: TokenUsage = .zero
     ) {
         self.provider = provider
         self.accountProfileID = accountProfileID
@@ -174,6 +183,10 @@ public struct UsageStatisticsSnapshot: Equatable, Sendable {
         self.localDailyRuns = localDailyRuns
         self.localSessionRuns = localSessionRuns
         self.sevenDayBuckets = sevenDayBuckets
+        self.fiveHourTokens = fiveHourTokens
+        self.dailyTokens = dailyTokens
+        self.sevenDayTokens = sevenDayTokens
+        self.sessionTokens = sessionTokens
     }
 }
 
@@ -239,6 +252,10 @@ public enum UsageStatisticsAggregator {
             guard let selectedSessionID else { return false }
             return event.sessionID == selectedSessionID
         }
+        let tokenEvents = uniqueEvents.values.filter { $0.kind == "usage.tokens" && $0.tokenUsage != nil }
+        let tokens: ((AuditEvent) -> Bool) -> TokenUsage = { include in
+            tokenEvents.filter(include).reduce(.zero) { $0 + ($1.tokenUsage ?? .zero) }
+        }
 
         return UsageStatisticsSnapshot(
             provider: provider,
@@ -252,7 +269,11 @@ public enum UsageStatisticsAggregator {
             apiSessionRuns: apiEvents.filter(sessionMatches).count,
             localDailyRuns: localEvents.filter { $0.timestamp >= dayStart }.count,
             localSessionRuns: localEvents.filter(sessionMatches).count,
-            sevenDayBuckets: buckets
+            sevenDayBuckets: buckets,
+            fiveHourTokens: tokens { $0.timestamp >= fiveHourStart },
+            dailyTokens: tokens { $0.timestamp >= dayStart },
+            sevenDayTokens: tokens { $0.timestamp >= weekStart },
+            sessionTokens: tokens(sessionMatches)
         )
     }
 
