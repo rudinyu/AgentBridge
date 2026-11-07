@@ -150,7 +150,7 @@ printf '%s' 'Summarize the repository architecture.' | \
 
 唯讀仍是預設。若要隔離修改，請在 **Access mode** 選取 **Isolated Changes**，並在訂閱模式建立新工作階段。它會依來源 Repository 已提交的 `HEAD` 建立新工作區；來源未提交檔案不會複製。原生互動 TUI 是獨立模式。
 
-在 **Changes** 填入計畫標題、摘要和步驟，保存後先完整檢視。可先調整計畫，確認符合預期後再按 **Approve reviewed plan**；只有核准後 **Run approved changes** 才能執行。Provider 只會在隔離工作階段工作區寫檔。Codex 變更使用非互動 `codex exec`：AgentBridge 不會啟用自動核准，也無法在執行途中顯示核准提示。需要超出 sandbox 權限的命令會失敗停止；請將工作限制在已核准計畫和隔離工作區內。CLI 流程如下：
+在 **Changes** 填入計畫標題、摘要和步驟，保存後先完整檢視。除非勾選 **在變更執行中包含共享記憶**（或對 `changes plan` 加上 `--with-memory`），變更執行不會看到共享記憶；核准涵蓋當下的記憶，記憶變更後請重新核准。可先調整計畫，確認符合預期後再按 **Approve reviewed plan**；只有核准後 **Run approved changes** 才能執行。Provider 只會在隔離工作階段工作區寫檔。Codex 變更使用非互動 `codex exec`：AgentBridge 不會啟用自動核准，也無法在執行途中顯示核准提示。需要超出 sandbox 權限的命令會失敗停止；請將工作限制在已核准計畫和隔離工作區內。CLI 流程如下：
 
 ```sh
 CLI=build/swiftpm/debug/agentbridge

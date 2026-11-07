@@ -12,6 +12,7 @@ final class ChangeReviewModel {
     var changePlanTitle = ""
     var changePlanSummary = ""
     var changePlanStepsText = ""
+    var changePlanIncludesSharedMemory = false
     var changeDiff: WorkspaceChangeDiff?
     var verificationResult: VerificationResult?
     var branchName = ""
@@ -25,7 +26,8 @@ final class ChangeReviewModel {
         return ChangePlanDraft(
             title: changePlanTitle,
             summary: changePlanSummary,
-            stepsText: changePlanStepsText
+            stepsText: changePlanStepsText,
+            includesSharedMemory: changePlanIncludesSharedMemory
         ).matches(plan)
     }
 
@@ -60,10 +62,12 @@ final class ChangeReviewModel {
             changePlanTitle = plan.title
             changePlanSummary = plan.summary
             changePlanStepsText = plan.steps.joined(separator: "\n")
+            changePlanIncludesSharedMemory = plan.includesSharedMemory
         } else {
             changePlanTitle = ""
             changePlanSummary = ""
             changePlanStepsText = ""
+            changePlanIncludesSharedMemory = false
         }
     }
 
@@ -86,7 +90,8 @@ final class ChangeReviewModel {
                 sessionID: session.id,
                 title: changePlanTitle,
                 summary: changePlanSummary,
-                steps: steps
+                steps: steps,
+                includesSharedMemory: changePlanIncludesSharedMemory
             )
             changePlanTitle = plan.title
             changePlanSummary = plan.summary

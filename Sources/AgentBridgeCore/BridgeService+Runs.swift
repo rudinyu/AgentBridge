@@ -574,7 +574,16 @@ extension BridgeService {
         try verifyExtensionInvocation(extensionInvocation, expectedFingerprint: expectedExtensionFingerprint)
         let mcpControlPlane = try makeMCPRunDirectoryLease(for: extensionInvocation, session: session, providerTemporaryDirectory: temp)
         defer { mcpControlPlane?.remove() }
-        let (promptWithMemory, memoryContext) = allowSharedMemoryForRun
+        // Memory reaches a run that edits files only when the plan asked for it, and
+        // only as approved.
+        let includesMemory = allowSharedMemoryForRun && plan.includesSharedMemory
+        if includesMemory {
+            guard let approved = session.approvedChangePlanMemoryDigest,
+                  try changeRunMemoryDigest(session: session, profile: profile) == approved else {
+                throw AgentBridgeError.invalidChangePlan("The shared memory changed after this plan was approved. Approve the plan again to use the current memory.")
+            }
+        }
+        let (promptWithMemory, memoryContext) = includesMemory
             ? try legacyPromptWithSharedMemory(trimmedPrompt, session: session, profile: profile)
             : (trimmedPrompt, nil)
         let providerPrompt = makeChangePrompt(plan: plan, extensionInvocation: extensionInvocation, promptWithMemory: promptWithMemory)
@@ -600,6 +609,7 @@ extension BridgeService {
             taskID = startedTaskID
             activeSession.status = .running
             activeSession.approvedChangePlanDigest = nil
+            activeSession.approvedChangePlanMemoryDigest = nil
             activeSession.lastChangeRunAt = Date()
             activeSession.verificationPassed = nil
             activeSession.verificationDiffDigest = nil

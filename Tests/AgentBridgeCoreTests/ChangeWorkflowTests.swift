@@ -493,6 +493,73 @@ final class ChangeWorkflowTests: XCTestCase {
         }
     }
 
+    func testChangeRunsSeeSharedMemoryOnlyWhenThePlanIncludesItAsApproved() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let codex = fixture.rootURL.appendingPathComponent("mock-bin/codex")
+        try FileManager.default.createDirectory(at: codex.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"""
+        #!/bin/sh
+        case " $* " in *"login status"*) printf '%s\n' 'Logged in using ChatGPT'; exit 0 ;; esac
+        case "$(/bin/cat)" in *planted-memory-marker*) seen=saw-memory ;; *) seen=no-memory ;; esac
+        printf '{"type":"item.completed","item":{"type":"agent_message","text":"%s"}}\n' "$seen"
+        printf '%s\n' '{"type":"turn.completed"}'
+        """#.utf8).write(to: codex)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: codex.path)
+        var settings = try fixture.service.settings()
+        settings.codexBinaryPath = codex.path
+        settings.usageMode = .subscription
+        try fixture.service.saveSettings(settings)
+        try fixture.service.setSharedMemoryNotes(sessionID: fixture.session.id, notes: "planted-memory-marker")
+
+        func run(includingMemory: Bool, approve: Bool = true) async throws -> String {
+            let plan = try fixture.service.createChangePlan(
+                sessionID: fixture.session.id, title: "Edit", summary: "Edit source.txt.", steps: ["Edit it."],
+                includesSharedMemory: includingMemory
+            )
+            if approve {
+                _ = try fixture.service.approveChangePlan(sessionID: fixture.session.id, planID: plan.id, reviewedDigest: plan.reviewDigest)
+            }
+            return try await fixture.service.runChanges(
+                sessionID: fixture.session.id, prompt: "Edit it.", planID: plan.id, reviewedDigest: plan.reviewDigest
+            ).text
+        }
+        let withoutMemory = try await run(includingMemory: false)
+        XCTAssertEqual(withoutMemory, "no-memory", "Memory reached a change run whose plan did not include it.")
+        let withMemory = try await run(includingMemory: true)
+        XCTAssertEqual(withMemory, "saw-memory")
+
+        // Memory that changes after approval is not used until approved again.
+        let plan = try fixture.service.createChangePlan(
+            sessionID: fixture.session.id, title: "Edit", summary: "Edit source.txt.", steps: ["Edit it."], includesSharedMemory: true
+        )
+        XCTAssertNotEqual(plan.reviewDigest, ChangePlan(id: plan.id, sessionID: plan.sessionID, title: plan.title, summary: plan.summary, steps: plan.steps).reviewDigest)
+        _ = try fixture.service.approveChangePlan(sessionID: fixture.session.id, planID: plan.id, reviewedDigest: plan.reviewDigest)
+        try fixture.service.setSharedMemoryNotes(sessionID: fixture.session.id, notes: "planted-memory-marker, then changed")
+        do {
+            _ = try await fixture.service.runChanges(sessionID: fixture.session.id, prompt: "Edit it.", planID: plan.id, reviewedDigest: plan.reviewDigest)
+            XCTFail("A change run used memory that changed after approval.")
+        } catch let error as AgentBridgeError {
+            guard case .invalidChangePlan(let message) = error, message.contains("changed after this plan was approved") else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+        _ = try fixture.service.approveChangePlan(sessionID: fixture.session.id, planID: plan.id, reviewedDigest: plan.reviewDigest)
+        let reapproved = try await fixture.service.runChanges(sessionID: fixture.session.id, prompt: "Edit it.", planID: plan.id, reviewedDigest: plan.reviewDigest)
+        XCTAssertEqual(reapproved.text, "saw-memory")
+    }
+
+    func testPlansSavedBeforeMemoryWasAChoiceLoadWithoutItAndKeepTheirDigest() throws {
+        let plan = ChangePlan(sessionID: UUID(), title: "t", summary: "s", steps: ["a"])
+        var json = try XCTUnwrap(String(data: JSONEncoder().encode(plan), encoding: .utf8))
+        json = json.replacingOccurrences(of: #","includesSharedMemory":false"#, with: "")
+            .replacingOccurrences(of: #""includesSharedMemory":false,"#, with: "")
+        XCTAssertFalse(json.contains("includesSharedMemory"))
+        let loaded = try JSONDecoder().decode(ChangePlan.self, from: Data(json.utf8))
+        XCTAssertFalse(loaded.includesSharedMemory)
+        XCTAssertEqual(loaded.reviewDigest, plan.reviewDigest)
+    }
+
     func testVerificationThatEditsTheCheckoutFails() async throws {
         try skipInsideVerificationSandbox()
         let fixture = try await makeFixture(projectScript: "#!/bin/sh\necho edited > source.txt\n")

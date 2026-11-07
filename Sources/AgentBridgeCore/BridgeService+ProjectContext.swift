@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -122,6 +123,25 @@ extension BridgeService {
             userText: OutputRedactor.redact(userText),
             assistantText: OutputRedactor.redact(assistantText)
         )
+    }
+
+    /// A digest of everything `legacyPromptWithSharedMemory` would add for this
+    /// session: its turns, notes and handoffs. Nil when the account does not allow
+    /// memory or there is none.
+    func changeRunMemoryDigest(session: SessionRecord, profile: AccountProfile) throws -> String? {
+        guard profile.allowsSharedMemory else { return nil }
+        let snapshot = try sharedMemoryStore.snapshot(scope: memoryScope(for: session))
+        let handoffs = try projectMemoryHandoffContext(session: session, profile: profile).text
+        guard !snapshot.turns.isEmpty || !snapshot.notes.isEmpty || !handoffs.isEmpty else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        var payload = try encoder.encode(snapshot.turns)
+        for part in [snapshot.notes, handoffs] {
+            payload.append(contentsOf: Data("\n\(part.utf8.count):".utf8))
+            payload.append(contentsOf: Data(part.utf8))
+        }
+        return SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
     }
 
     func legacyPromptWithSharedMemory(

@@ -141,10 +141,15 @@ extension AgentBridgeCLI {
         var title: String?
         var summary: String?
         var steps: [String] = []
+        var includesSharedMemory = false
         var index = 2
         while index < arguments.count {
             let option = arguments[index]
             index += 1
+            if option == "--with-memory" {
+                includesSharedMemory = true
+                continue
+            }
             guard index < arguments.count else { throw AgentBridgeError.invalidInput("\(option) needs a value.") }
             switch option {
             case "--title": title = arguments[index]
@@ -155,9 +160,12 @@ extension AgentBridgeCLI {
             index += 1
         }
         guard let title, let summary else { throw AgentBridgeError.invalidInput("Specify --title and --summary.") }
-        let plan = try service.createChangePlan(sessionID: sessionID, title: title, summary: summary, steps: steps)
+        let plan = try service.createChangePlan(
+            sessionID: sessionID, title: title, summary: summary, steps: steps, includesSharedMemory: includesSharedMemory
+        )
         print("Plan awaiting review: \(plan.id.uuidString.lowercased())")
-        print("Title: \(plan.title)\nSummary: \(plan.summary)\nSteps:")
+        print("Title: \(plan.title)\nSummary: \(plan.summary)")
+        print("Shared memory: \(plan.includesSharedMemory ? "included, as it is when the plan is approved" : "not included")\nSteps:")
         for (offset, step) in plan.steps.enumerated() { print("  \(offset + 1). \(step)") }
         print("Review digest: \(plan.reviewDigest)")
         print("The plan is not approved; it does not authorize writes yet.")

@@ -6,7 +6,8 @@ extension BridgeService {
         sessionID: UUID,
         title: String,
         summary: String,
-        steps: [String]
+        steps: [String],
+        includesSharedMemory: Bool = false
     ) throws -> ChangePlan {
         let initialSession = try loadSession(sessionID)
         guard initialSession.provider != .local else {
@@ -26,14 +27,22 @@ extension BridgeService {
               !trimmedTitle.contains("\0"), !trimmedSummary.contains("\0") else {
             throw AgentBridgeError.invalidChangePlan("The title, summary and 1 to 32 steps must all have content and fit the size limits.")
         }
+        if includesSharedMemory {
+            let profile = try requireBoundProfile(for: session, allowUnselected: true)
+            guard profile.allowsSharedMemory else {
+                throw AgentBridgeError.invalidChangePlan("This account does not allow shared memory, so the plan cannot include it.")
+            }
+        }
         let plan = ChangePlan(
             sessionID: sessionID,
             title: trimmedTitle,
             summary: trimmedSummary,
-            steps: trimmedSteps
+            steps: trimmedSteps,
+            includesSharedMemory: includesSharedMemory
         )
         session.changePlan = plan
         session.approvedChangePlanDigest = nil
+        session.approvedChangePlanMemoryDigest = nil
         session.verificationPassed = nil
         session.verificationDiffDigest = nil
         session.verificationCompletedAt = nil
@@ -43,7 +52,9 @@ extension BridgeService {
         try store.appendEvent(AuditEvent(
             sessionID: sessionID,
             kind: "change.plan.created",
-            message: "Created a change plan awaiting review (summary hash \(plan.reviewDigest), \(plan.steps.count) steps); file writes are not authorized yet."
+            message: plan.includesSharedMemory
+                ? "Created a change plan awaiting review that includes shared memory (summary hash \(plan.reviewDigest), \(plan.steps.count) steps); file writes are not authorized yet."
+                : "Created a change plan awaiting review (summary hash \(plan.reviewDigest), \(plan.steps.count) steps); file writes are not authorized yet."
         ))
         return plan
     }
@@ -58,13 +69,23 @@ extension BridgeService {
               plan.reviewDigest == reviewedDigest.lowercased() else {
             throw AgentBridgeError.invalidChangePlan("The plan content changed or the review identifier does not match; review the current plan again.")
         }
+        // Approval covers the memory as it is now. A later run, or a sync, can change it.
+        let memoryDigest = plan.includesSharedMemory
+            ? try changeRunMemoryDigest(session: session, profile: requireBoundProfile(for: session, allowUnselected: true))
+            : nil
+        if plan.includesSharedMemory, memoryDigest == nil {
+            throw AgentBridgeError.invalidChangePlan("The plan includes shared memory, but this account does not allow it or there is none for this commit. Save the plan without memory.")
+        }
         session.approvedChangePlanDigest = plan.reviewDigest
+        session.approvedChangePlanMemoryDigest = memoryDigest
         session.updatedAt = Date()
         try store.saveSession(session)
         try store.appendEvent(AuditEvent(
             sessionID: sessionID,
             kind: "change.plan.approved",
-            message: "The user explicitly reviewed and approved the change plan (summary hash \(plan.reviewDigest))."
+            message: memoryDigest.map {
+                "The user explicitly reviewed and approved the change plan (summary hash \(plan.reviewDigest)) with shared memory sha256:\($0)."
+            } ?? "The user explicitly reviewed and approved the change plan (summary hash \(plan.reviewDigest))."
         ))
         return plan
     }
@@ -212,6 +233,7 @@ extension BridgeService {
 
     private func clearChangeAcceptanceState(_ session: inout SessionRecord) {
         session.approvedChangePlanDigest = nil
+        session.approvedChangePlanMemoryDigest = nil
         session.verificationPassed = nil
         session.verificationDiffDigest = nil
         session.verificationCompletedAt = nil

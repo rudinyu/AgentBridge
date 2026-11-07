@@ -193,6 +193,9 @@ public struct SessionRecord: Codable, Equatable, Identifiable, Sendable {
     public let policy: SessionPolicy
     public var changePlan: ChangePlan?
     public var approvedChangePlanDigest: String?
+    /// The shared memory approved with a plan that includes it. A change run uses
+    /// memory only while it still matches, because memory can change after approval.
+    public var approvedChangePlanMemoryDigest: String?
     public var lastChangeRunAt: Date?
     public var verificationPassed: Bool?
     public var verificationDiffDigest: String?
@@ -252,6 +255,10 @@ public struct ChangePlan: Codable, Equatable, Identifiable, Sendable {
     public let title: String
     public let summary: String
     public let steps: [String]
+    /// Whether the change run may see the repository's shared memory and handoffs.
+    /// It may not by default: memory is written by earlier runs and lives in a folder
+    /// that can be synced, so it reaches a run that edits files only when asked for.
+    public let includesSharedMemory: Bool
 
     public init(
         id: UUID = UUID(),
@@ -259,7 +266,8 @@ public struct ChangePlan: Codable, Equatable, Identifiable, Sendable {
         createdAt: Date = Date(),
         title: String,
         summary: String,
-        steps: [String]
+        steps: [String],
+        includesSharedMemory: Bool = false
     ) {
         self.id = id
         self.sessionID = sessionID
@@ -267,11 +275,30 @@ public struct ChangePlan: Codable, Equatable, Identifiable, Sendable {
         self.title = title
         self.summary = summary
         self.steps = steps
+        self.includesSharedMemory = includesSharedMemory
     }
 
-    /// A stable token binds approval to this exact plan and session.
+    private enum CodingKeys: String, CodingKey {
+        case id, sessionID, createdAt, title, summary, steps, includesSharedMemory
+    }
+
+    /// Plans saved before memory had to be chosen load without it.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        sessionID = try container.decode(UUID.self, forKey: .sessionID)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        title = try container.decode(String.self, forKey: .title)
+        summary = try container.decode(String.self, forKey: .summary)
+        steps = try container.decode([String].self, forKey: .steps)
+        includesSharedMemory = try container.decodeIfPresent(Bool.self, forKey: .includesSharedMemory) ?? false
+    }
+
+    /// A stable token binds approval to this exact plan and session. A plan without
+    /// memory keeps the digest it had before memory became a choice.
     public var reviewDigest: String {
         let fields = [id.uuidString.lowercased(), sessionID.uuidString.lowercased(), title, summary] + steps
+            + (includesSharedMemory ? ["includes-shared-memory"] : [])
         let payload = fields.map { "\($0.utf8.count):\($0)" }.joined()
         return SHA256.hash(data: Data(payload.utf8))
             .map { String(format: "%02x", $0) }
@@ -285,18 +312,21 @@ public struct ChangePlanDraft: Equatable, Sendable {
     public let title: String
     public let summary: String
     public let steps: [String]
+    public let includesSharedMemory: Bool
 
-    public init(title: String, summary: String, stepsText: String) {
+    public init(title: String, summary: String, stepsText: String, includesSharedMemory: Bool = false) {
         self.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         self.summary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         self.steps = stepsText
             .split(whereSeparator: \.isNewline)
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+        self.includesSharedMemory = includesSharedMemory
     }
 
     public func matches(_ plan: ChangePlan) -> Bool {
         title == plan.title && summary == plan.summary && steps == plan.steps
+            && includesSharedMemory == plan.includesSharedMemory
     }
 }
 
