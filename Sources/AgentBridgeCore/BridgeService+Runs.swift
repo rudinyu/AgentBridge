@@ -112,7 +112,8 @@ extension BridgeService {
         expectedExtensionFingerprint: String? = nil,
         allowBoundProfileWithoutGlobalSelection: Bool = false,
         allowSharedMemoryForRun: Bool = true,
-        maximumMCPToolCallsPerServer: Int? = nil
+        maximumMCPToolCallsPerServer: Int? = nil,
+        waitsForRunSlot: Bool = false
     ) async throws -> ProviderOutput {
         try validateRunRequest(prompt: prompt, maximumMCPToolCallsPerServer: maximumMCPToolCallsPerServer)
         let initialSession = try loadSession(sessionID)
@@ -126,7 +127,7 @@ extension BridgeService {
                 throw AgentBridgeError.sessionMismatch("Local models do not support Skills, MCP or other project tools yet; nothing was started.")
             }
         }
-        let lease = try store.acquireRunLease(for: sessionID, countsTowardRunLimit: true)
+        let lease = try await acquireProviderRunLease(for: sessionID, waitsForRunSlot: waitsForRunSlot, cancellation: cancellation)
         defer { withExtendedLifetime(lease) {} }
         let settings = try store.loadSettings()
         let session = try loadSession(sessionID)
@@ -528,7 +529,8 @@ extension BridgeService {
         expectedExtensionFingerprint: String? = nil,
         allowBoundProfileWithoutGlobalSelection: Bool = false,
         allowSharedMemoryForRun: Bool = true,
-        maximumMCPToolCallsPerServer: Int? = nil
+        maximumMCPToolCallsPerServer: Int? = nil,
+        waitsForRunSlot: Bool = false
     ) async throws -> ProviderOutput {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { throw AgentBridgeError.invalidInput("Enter content to send to the assistant.") }
@@ -542,7 +544,7 @@ extension BridgeService {
             throw AgentBridgeError.sessionMismatch("Local models currently support only read-only project conversations; no changes were run.")
         }
 
-        let lease = try store.acquireRunLease(for: sessionID, countsTowardRunLimit: true)
+        let lease = try await acquireProviderRunLease(for: sessionID, waitsForRunSlot: waitsForRunSlot, cancellation: cancellation)
         defer { withExtendedLifetime(lease) {} }
         let settings = try store.loadSettings()
         guard settings.usageMode == .subscription else {
@@ -792,9 +794,10 @@ extension BridgeService {
         customExecutableURL: URL? = nil,
         arguments: [String] = [],
         customCommandApproved: Bool = false,
-        cancellation: CancellationFlag = CancellationFlag()
+        cancellation: CancellationFlag = CancellationFlag(),
+        waitsForRunSlot: Bool = false
     ) async throws -> VerificationResult {
-        let lease = try store.acquireRunLease(for: sessionID, countsTowardRunLimit: true)
+        let lease = try await acquireProviderRunLease(for: sessionID, waitsForRunSlot: waitsForRunSlot, cancellation: cancellation)
         defer { withExtendedLifetime(lease) {} }
         var session = try loadSession(sessionID)
         try requireIsolatedChangesSession(session)
@@ -1206,6 +1209,18 @@ extension BridgeService {
         }
         environment.merge(overrides, uniquingKeysWith: { _, new in new })
         return environment
+    }
+
+    /// A run started by hand fails at once when every run slot is busy, so the user
+    /// can choose what to stop. Work approved as a whole waits for a slot.
+    func acquireProviderRunLease(
+        for sessionID: UUID,
+        waitsForRunSlot: Bool,
+        cancellation: CancellationFlag
+    ) async throws -> SessionRunLease {
+        waitsForRunSlot
+            ? try await store.acquireRunLeaseWaitingForSlot(for: sessionID, cancellation: cancellation)
+            : try store.acquireRunLease(for: sessionID, countsTowardRunLimit: true)
     }
 
     /// What a sandboxed run must not read or write besides the home folder.

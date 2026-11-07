@@ -161,7 +161,9 @@ extension BridgeService {
             throw AgentBridgeError.invalidInput("Enter something to discuss.")
         }
 
-        let lease = try store.acquireRunLease(for: id)
+        // A discussion turn is a provider run like any other, so it takes one of the
+        // shared run slots; a local model does not.
+        let lease = try store.acquireRunLease(for: id, countsTowardRunLimit: try rawDiscussion(id: id).provider != .local)
         defer { withExtendedLifetime(lease) {} }
         var record = try rawDiscussion(id: id)
         try recoverStaleDiscussionRun(&record)

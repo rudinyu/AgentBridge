@@ -543,7 +543,7 @@ public final class WorkspaceManager: @unchecked Sendable {
             throw AgentBridgeError.invalidInput("The workspace has no changes to apply.")
         }
         let source = URL(fileURLWithPath: session.sourceRepositoryPath, isDirectory: true).standardizedFileURL
-        try await validateSourceRepository(source, expectedCommit: session.snapshotCommit)
+        try await validateSourceRepository(source, containing: session.snapshotCommit)
         try await validateBranchName(branchName, in: source)
 
         let branchRef = "refs/heads/\(branchName)"
@@ -582,7 +582,7 @@ public final class WorkspaceManager: @unchecked Sendable {
             guard isWithinManagedWorkspaces(destination), isDirectory(destination), !isSymbolicLink(destination) else {
                 throw AgentBridgeError.git("The created branch worktree is not inside an AgentBridge-managed isolated folder.")
             }
-            try await validateSourceRepository(source, expectedCommit: session.snapshotCommit)
+            try await validateSourceRepository(source, containing: session.snapshotCommit)
             _ = try await runGit(
                 arguments: ["-C", destination.path, "apply", "--binary", "--check"],
                 workingDirectory: nil,
@@ -683,7 +683,10 @@ public final class WorkspaceManager: @unchecked Sendable {
         return resolved
     }
 
-    private func validateSourceRepository(_ source: URL, expectedCommit: String) async throws {
+    /// The branch and its worktree start at the session's base commit, so the source
+    /// may have moved on; it only has to still hold that commit. The user's checkout
+    /// is never touched.
+    private func validateSourceRepository(_ source: URL, containing commit: String) async throws {
         guard isDirectory(source), !isSymbolicLink(source) else {
             throw AgentBridgeError.sessionMismatch("The original Git repository no longer exists or is no longer a regular folder.")
         }
@@ -695,9 +698,13 @@ public final class WorkspaceManager: @unchecked Sendable {
         guard URL(fileURLWithPath: topLevel, isDirectory: true).standardizedFileURL.path == source.path else {
             throw AgentBridgeError.sessionMismatch("The original repository root does not match the session record.")
         }
-        let actualCommit = try await gitText(["-C", source.path, "rev-parse", "HEAD"])
-        guard actualCommit == expectedCommit else {
-            throw AgentBridgeError.sourceBaseConflict(expected: expectedCommit, actual: actualCommit)
+        let found = try await runGit(
+            arguments: ["-C", source.path, "cat-file", "-e", "\(commit)^{commit}"],
+            workingDirectory: nil,
+            allowedExitCodes: [0, 1, 128]
+        )
+        guard found.exitCode == 0 else {
+            throw AgentBridgeError.sessionMismatch("The source repository no longer has this session's base commit, so the changes cannot be applied. Export the patch instead.")
         }
     }
 

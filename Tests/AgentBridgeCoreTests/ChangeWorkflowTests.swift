@@ -212,7 +212,7 @@ final class ChangeWorkflowTests: XCTestCase {
         XCTAssertFalse(changedDraft.matches(plan))
     }
 
-    func testApplyToNamedBranchRejectsChangedSourceBaseWithoutCreatingBranch() async throws {
+    func testApplyAfterTheSourceMovedOnCreatesTheBranchAtTheSessionBase() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
@@ -234,19 +234,55 @@ final class ChangeWorkflowTests: XCTestCase {
         session.updatedAt = changeAt.addingTimeInterval(2)
         try fixture.store.saveSession(session)
 
+        // The branch starts at the session's base, so the source moving on does not matter.
+        let result = try await fixture.service.applyChangesToLocalBranch(sessionID: fixture.session.id, branchName: "agentbridge/review-test")
+        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "rev-parse", "refs/heads/agentbridge/review-test"]), fixture.session.snapshotCommit)
+        XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: result.worktreePath).appendingPathComponent("source.txt"), encoding: .utf8), "isolated change\n")
+        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"]), advancedHead)
+        XCTAssertEqual(try String(contentsOf: fixture.sourceURL.appendingPathComponent("source.txt"), encoding: .utf8), advancedText)
+        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
+    }
+
+    func testApplyIsRefusedWhenTheSourceNoLongerHasTheBaseCommit() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try Data("isolated change\n".utf8).write(to: URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent("source.txt"))
+        let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        try markVerified(diff, fixture)
+        let source = fixture.sourceURL.path
+        try git(["-C", source, "checkout", "-q", "--orphan", "rewritten"])
+        try git(["-C", source, "commit", "-q", "-m", "rewritten history"])
+        let oldBranches = try gitText(["-C", source, "for-each-ref", "--format=%(refname:short)", "refs/heads/"])
+            .split(separator: "\n").map(String.init).filter { $0 != "rewritten" }
+        for branch in oldBranches { try git(["-C", source, "branch", "-q", "-D", branch]) }
+        try git(["-C", source, "reflog", "expire", "--expire=now", "--all"])
+        try git(["-C", source, "gc", "-q", "--prune=now"])
         do {
-            _ = try await fixture.service.applyChangesToLocalBranch(sessionID: fixture.session.id, branchName: "agentbridge/review-test")
-            XCTFail("Changes were applied after the source base commit changed.")
+            _ = try await fixture.service.applyChangesToLocalBranch(sessionID: fixture.session.id, branchName: "agentbridge/gone")
+            XCTFail("Changes were applied without the session's base commit.")
         } catch let error as AgentBridgeError {
-            guard case .sourceBaseConflict = error else {
+            guard case .sessionMismatch(let message) = error, message.contains("no longer has this session's base commit") else {
                 return XCTFail("Unexpected error: \(error)")
             }
         }
+        XCTAssertEqual(try git(["-C", source, "show-ref", "--verify", "--quiet", "refs/heads/agentbridge/gone"], allowedExitCodes: [0, 1]), 1)
+    }
 
-        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"]), advancedHead)
-        XCTAssertEqual(try String(contentsOf: fixture.sourceURL.appendingPathComponent("source.txt"), encoding: .utf8), advancedText)
-        XCTAssertEqual(try git(["-C", fixture.sourceURL.path, "show-ref", "--verify", "--quiet", "refs/heads/agentbridge/review-test"], allowedExitCodes: [0, 1]), 1)
-        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
+    func testASessionLeftRunningByAStoppedProcessIsMarkedFailed() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        var session = try XCTUnwrap(fixture.store.session(id: fixture.session.id))
+        session.status = .running
+        try fixture.store.saveSession(session)
+
+        do {
+            // While a run holds the lease, the session really is running.
+            let lease = try fixture.store.acquireRunLease(for: session.id)
+            XCTAssertEqual(try fixture.service.sessions().first { $0.id == session.id }?.status, .running)
+            withExtendedLifetime(lease) {}
+        }
+        XCTAssertEqual(try fixture.service.sessions().first { $0.id == session.id }?.status, .failed)
+        XCTAssertTrue(try fixture.service.events(sessionID: session.id).contains { $0.kind == "session.interrupted_run_recovered" })
     }
 
     func testApplyToNamedBranchCreatesOnlyAnUncommittedIsolatedWorktree() async throws {

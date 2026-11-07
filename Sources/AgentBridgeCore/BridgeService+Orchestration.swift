@@ -555,7 +555,8 @@ extension BridgeService {
                     expectedExtensionFingerprint: agent.extensionFingerprint,
                     allowBoundProfileWithoutGlobalSelection: true,
                     allowSharedMemoryForRun: false,
-                    maximumMCPToolCallsPerServer: plan.limits.maxMCPToolCallsPerServer
+                    maximumMCPToolCallsPerServer: plan.limits.maxMCPToolCallsPerServer,
+                    waitsForRunSlot: true
                 )
                 try self.checkAutonomousCancellation(runID: id, cancellation: cancellation)
                 try self.validateAutonomousPlanConfiguration(plan)
@@ -638,7 +639,8 @@ extension BridgeService {
                     expectedExtensionFingerprint: writerAgent.extensionFingerprint,
                     allowBoundProfileWithoutGlobalSelection: true,
                     allowSharedMemoryForRun: false,
-                    maximumMCPToolCallsPerServer: plan.limits.maxMCPToolCallsPerServer
+                    maximumMCPToolCallsPerServer: plan.limits.maxMCPToolCallsPerServer,
+                    waitsForRunSlot: true
                 )
             } catch {
                 try? checkAutonomousCancellation(runID: id, cancellation: cancellation)
@@ -688,7 +690,8 @@ extension BridgeService {
                 expectedExtensionFingerprint: reviewAgent.extensionFingerprint,
                 allowBoundProfileWithoutGlobalSelection: true,
                 allowSharedMemoryForRun: false,
-                maximumMCPToolCallsPerServer: plan.limits.maxMCPToolCallsPerServer
+                maximumMCPToolCallsPerServer: plan.limits.maxMCPToolCallsPerServer,
+                waitsForRunSlot: true
             )
             try checkAutonomousCancellation(runID: id, cancellation: cancellation)
             let review = try AutonomousReviewParser.parse(reviewOutput.text, expectedDiffDigest: exactDiff.digest)
@@ -743,7 +746,7 @@ extension BridgeService {
             try validateProjectCIVerificationBinding(plan)
             try reserveAutonomousVerification(runID: plan.id, mode: plan.verification.mode)
             try checkAutonomousCancellation(runID: plan.id, cancellation: cancellation)
-            result = try await runVerification(sessionID: writerSessionID, cancellation: cancellation)
+            result = try await runVerification(sessionID: writerSessionID, cancellation: cancellation, waitsForRunSlot: true)
         case .custom:
             guard let path = plan.verification.executablePath,
                   let expectedDigest = plan.verification.executableDigest,
@@ -757,7 +760,8 @@ extension BridgeService {
                 customExecutableURL: URL(fileURLWithPath: path),
                 arguments: plan.verification.arguments,
                 customCommandApproved: true,
-                cancellation: cancellation
+                cancellation: cancellation,
+                waitsForRunSlot: true
             )
         }
         try checkAutonomousCancellation(runID: plan.id, cancellation: cancellation)

@@ -1505,3 +1505,6 @@
 "The shared memory changed after this plan was approved. Approve the plan again to use the current memory." = "共享記憶在此計畫核准後已變更。請重新核准計畫以使用目前的記憶。";
 "Include shared memory in the change run" = "在變更執行中包含共享記憶";
 "Off by default. Earlier runs write shared memory, and its folder can be synced, so a run that edits files sees it only when you include it. Approval covers the memory as it is then; if it changes, approve again." = "預設關閉。共享記憶由先前的執行寫入，且其資料夾可能被同步，因此會修改檔案的執行只有在你選擇包含時才會看到它。核准涵蓋當下的記憶；記憶變更後請重新核准。";
+"All %@ run slots are in use; this run starts when one is free." = "%@ 個執行名額都已占用；名額空出時此執行就會開始。";
+"The process running this session stopped before the run finished, so the session was marked failed." = "執行此工作階段的程序在執行完成前已停止，因此此工作階段已標示為失敗。";
+"The source repository no longer has this session's base commit, so the changes cannot be applied. Export the patch instead." = "來源 Repository 已沒有此工作階段的 base commit，因此無法套用變更。請改為匯出 patch。";
