@@ -278,6 +278,7 @@ public final class ProviderAdapter: Sendable {
             timeout: 300,
             outputLimit: 1_048_576,
             cancellationRequestURL: cancellationRequestURL,
+            endsWithParent: true,
             standardOutputLineHandler: lineHandler
         )
         let result = try await runner.run(spec, cancellation: cancellation)
@@ -329,6 +330,7 @@ public final class ProviderAdapter: Sendable {
             timeout: 300,
             outputLimit: 1_048_576,
             cancellationRequestURL: cancellationRequestURL,
+            endsWithParent: true,
             standardOutputLineHandler: lineHandler
         )
         let result = try await runner.run(spec, cancellation: cancellation)
@@ -398,6 +400,7 @@ public final class ProviderAdapter: Sendable {
             timeout: 900,
             outputLimit: 1_048_576,
             cancellationRequestURL: cancellationRequestURL,
+            endsWithParent: true,
             standardOutputLineHandler: lineHandler
         )
         let result = try await runner.run(spec, cancellation: cancellation)
