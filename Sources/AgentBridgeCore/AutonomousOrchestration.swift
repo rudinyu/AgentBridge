@@ -84,7 +84,7 @@ public struct AutonomousVerificationSelection: Codable, Equatable, Sendable {
         case .none:
             return nil
         case .projectCI, .custom:
-            return "The approved verification command executes project code with the current macOS user's rights; it is not an OS sandbox."
+            return "The approved verification command runs project code in a macOS sandbox on a throwaway copy of the reviewed diff. It cannot read your home folder or write outside that copy, but it can use the network."
         }
     }
 

@@ -342,8 +342,8 @@ public struct WorkspaceChangeDiff: Equatable, Sendable {
     public let baseCommit: String
     public let files: [ChangeFileDiff]
     public let patch: Data
-    /// Git-ignored paths in the workspace. Verification can see them, but they are not
-    /// in the patch. They stay out of the digest because verification itself writes them.
+    /// Git-ignored paths in the workspace. They are not in the patch or the digest, so
+    /// verification's checkout leaves them out and they do not reach the branch.
     public let ignoredPaths: [String]
 
     public init(baseCommit: String, files: [ChangeFileDiff], patch: Data, ignoredPaths: [String] = []) {

@@ -784,7 +784,7 @@ extension BridgeService {
         try await workspaceManager.validateWorkspace(for: session, accessMode: .isolatedChanges)
         let diffBeforeVerification = try await workspaceManager.diff(for: session)
 
-        let workingDirectory = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
+        let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
         let executableURL: URL
         let commandArguments: [String]
         if let customExecutableURL {
@@ -798,7 +798,7 @@ extension BridgeService {
             guard arguments.isEmpty, !customCommandApproved else {
                 throw AgentBridgeError.verificationCommandRejected("The default verification does not accept extra arguments or a custom-command approval flag.")
             }
-            let script = workingDirectory.appendingPathComponent(".codex/ci.sh")
+            let script = workspace.appendingPathComponent(".codex/ci.sh")
             var metadata = stat()
             guard lstat(script.path, &metadata) == 0 else {
                 if errno != ENOENT { throw AgentBridgeError.verificationCommandRejected("Could not safely inspect .codex/ci.sh.") }
@@ -835,22 +835,50 @@ extension BridgeService {
             commandArguments = []
         }
 
+        let temp = try VerificationSandbox.makeWritableRoot(label: "verify-\(sessionID.uuidString.lowercased())")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let home = temp.appendingPathComponent("home", isDirectory: true)
+        let temporaryFiles = temp.appendingPathComponent("tmp", isDirectory: true)
+        try AuditStore.createPrivateDirectory(home)
+        try AuditStore.createPrivateDirectory(temporaryFiles)
+        let workingDirectory = temp.appendingPathComponent("checkout", isDirectory: true)
+        try await workspaceManager.createVerificationCheckout(
+            for: session,
+            patch: diffBeforeVerification.patch,
+            at: workingDirectory
+        )
+        // A program inside the workspace runs from the checkout, so what it does is
+        // limited to the patch. An ignored file is not there, and is refused below.
+        let workspacePrefix = workspace.path + "/"
+        let runExecutableURL = executableURL.path.hasPrefix(workspacePrefix)
+            ? workingDirectory.appendingPathComponent(String(executableURL.path.dropFirst(workspacePrefix.count)))
+            : executableURL
+        guard FileManager.default.isExecutableFile(atPath: runExecutableURL.path) else {
+            throw AgentBridgeError.verificationCommandRejected("The program is not in the reviewed changes, so it cannot run in the verification checkout.")
+        }
+        let sandboxedCommand = try VerificationSandbox(
+            writableRoot: temp,
+            protectedRoots: store.managedWorkspaceRootURLs + [
+                store.rootURL,
+                URL(fileURLWithPath: session.sourceRepositoryPath, isDirectory: true)
+            ]
+        ).command(executable: runExecutableURL, arguments: commandArguments)
+
         let command = VerificationCommand(
             executablePath: executableURL.path,
             arguments: commandArguments,
             workingDirectoryPath: workingDirectory.path
         )
-        let temp = try makeFreshPrivateTemporaryDirectory(label: "verify-\(sessionID.uuidString.lowercased())")
-        defer { try? FileManager.default.removeItem(at: temp) }
         let environment = [
-            "HOME": temp.path,
-            "TMPDIR": temp.path,
+            "HOME": home.path,
+            "TMPDIR": temporaryFiles.path,
             "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "LANG": "C",
             "TERM": "dumb",
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_TERMINAL_PROMPT": "0"
+            "GIT_TERMINAL_PROMPT": "0",
+            VerificationSandbox.environmentMarker: "1"
         ]
         let start = DispatchTime.now().uptimeNanoseconds
         let verificationTaskID = try beginTrackedRun(
@@ -880,8 +908,8 @@ extension BridgeService {
 
         do {
             let processResult = try await runner.run(ProcessSpec(
-                executableURL: executableURL,
-                arguments: commandArguments,
+                executableURL: sandboxedCommand.executable,
+                arguments: sandboxedCommand.arguments,
                 environment: environment,
                 workingDirectoryURL: workingDirectory,
                 standardInput: Data(),
@@ -893,6 +921,11 @@ extension BridgeService {
             let stdout = String(decoding: processResult.standardOutput, as: UTF8.self)
             let stderr = String(decoding: processResult.standardError, as: UTF8.self)
             let diffAfterVerification = try await workspaceManager.diff(for: session)
+            let checkoutUnchanged = try await workspaceManager.verificationCheckoutMatches(
+                workingDirectory,
+                baseCommit: session.snapshotCommit,
+                digest: diffBeforeVerification.digest
+            )
             let result = VerificationResult(
                 command: command,
                 exitCode: processResult.exitCode,
@@ -901,7 +934,7 @@ extension BridgeService {
                 standardError: stderr,
                 wasCancelled: processResult.wasCancelled,
                 timedOut: processResult.timedOut,
-                workspaceChangedDuringVerification: diffAfterVerification.digest != diffBeforeVerification.digest
+                workspaceChangedDuringVerification: diffAfterVerification.digest != diffBeforeVerification.digest || !checkoutUnchanged
             )
             try? finishTrackedRun(
                 taskID: verificationTaskID,

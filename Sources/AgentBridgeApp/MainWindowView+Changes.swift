@@ -172,7 +172,7 @@ extension MainWindowView {
                         .frame(minHeight: 90)
                 }
                 if let ignoredPaths = model.changes.changeDiff?.ignoredPaths, !ignoredPaths.isEmpty {
-                    Text("These Git-ignored paths are in the workspace but not in this diff. Verification can see them, and they will not reach your branch.")
+                    Text("These Git-ignored paths are in the workspace but not in this diff. Verification does not see them, and they will not reach your branch.")
                         .font(.caption2).foregroundStyle(.secondary)
                     Text(ignoredPaths.joined(separator: "\n"))
                         .font(.caption2.monospaced()).foregroundStyle(.secondary)

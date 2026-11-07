@@ -548,6 +548,7 @@ final class AutonomousOrchestrationTests: XCTestCase {
     }
 
     func testProjectCIVerificationPassesForThePinnedUnchangedScript() async throws {
+        try skipInsideVerificationSandbox()
         let fixture = try makeWorkflowFixture(repairMode: false, includeProjectCI: true)
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let profileID = AccountProfile.defaultID(for: .codex)
@@ -573,7 +574,7 @@ final class AutonomousOrchestrationTests: XCTestCase {
             URL(fileURLWithPath: writerSession.workspacePath).appendingPathComponent(".codex/ci.sh").path
         )
         XCTAssertEqual(prepared.plan.verification.executableDigest?.count, 64)
-        XCTAssertTrue(prepared.plan.verification.executionTrustDisclosure?.contains("not an OS sandbox") == true)
+        XCTAssertTrue(prepared.plan.verification.executionTrustDisclosure?.contains("macOS sandbox") == true)
 
         try fixture.service.approveAutonomousRun(id: prepared.id, reviewedDigest: prepared.planDigest)
         let completed = try await fixture.service.runAutonomousRun(id: prepared.id, reviewedDigest: prepared.planDigest)
@@ -582,10 +583,7 @@ final class AutonomousOrchestrationTests: XCTestCase {
         XCTAssertEqual(completed.verificationPassed, true)
         let completedWriter = try XCTUnwrap(completed.writerSessionID)
         let workspacePath = try XCTUnwrap(try fixture.service.sessions().first(where: { $0.id == completedWriter })?.workspacePath)
-        XCTAssertEqual(
-            try String(contentsOf: URL(fileURLWithPath: workspacePath).appendingPathComponent(".ci-executed"), encoding: .utf8),
-            "verified\n"
-        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: URL(fileURLWithPath: workspacePath).appendingPathComponent(".ci-executed").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.sourceURL.appendingPathComponent(".ci-executed").path))
     }
 
