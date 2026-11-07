@@ -10,6 +10,7 @@ extension BridgeService {
         }
         let fileManager = FileManager.default
         try AuditStore.createPrivateDirectory(store.workspacesURL, fileManager: fileManager)
+        try recoverInterruptedSessions()
         let sessions = try store.loadSessions()
         guard !sessions.contains(where: { $0.status == .running }) else {
             throw AgentBridgeError.sessionMismatch("A session is still running. Stop all sessions before changing the data root.")

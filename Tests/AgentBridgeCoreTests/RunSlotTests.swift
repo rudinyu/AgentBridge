@@ -23,6 +23,41 @@ final class RunSlotTests: XCTestCase {
         XCTAssertNoThrow(try store.acquireRunLease(for: extra, countsTowardRunLimit: true), "A finished run must free its slot.")
     }
 
+    func testApprovedWorkWaitsForAFreeSlotInsteadOfFailing() async throws {
+        let (root, store) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var held: [SessionRunLease] = []
+        for _ in 0..<AuditStore.maximumConcurrentRuns { held.append(try store.acquireRunLease(for: UUID(), countsTowardRunLimit: true)) }
+        let waiting = UUID()
+        let task = Task { try await store.acquireRunLeaseWaitingForSlot(for: waiting, cancellation: CancellationFlag()) }
+        try await Task.sleep(nanoseconds: 600_000_000)
+        XCTAssertTrue(try store.events(sessionID: waiting).contains { $0.kind == "run.waiting_for_slot" })
+        held.removeFirst()
+        let lease = try await task.value
+        withExtendedLifetime(lease) {}
+        XCTAssertEqual(try store.events(sessionID: waiting).filter { $0.kind == "run.waiting_for_slot" }.count, 1)
+    }
+
+    func testWaitingForASlotStopsWhenCancelledAndLeavesTheSessionFree() async throws {
+        let (root, store) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var held: [SessionRunLease] = []
+        for _ in 0..<AuditStore.maximumConcurrentRuns { held.append(try store.acquireRunLease(for: UUID(), countsTowardRunLimit: true)) }
+        let waiting = UUID()
+        let cancellation = CancellationFlag()
+        let task = Task { try await store.acquireRunLeaseWaitingForSlot(for: waiting, cancellation: cancellation) }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        cancellation.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("Waiting continued after cancellation.")
+        } catch let error as AgentBridgeError {
+            XCTAssertEqual(error, .processCancelled)
+        }
+        held.removeAll()
+        XCTAssertNoThrow(try store.acquireRunLease(for: waiting, countsTowardRunLimit: true), "The cancelled session must not stay locked.")
+    }
+
     func testARefusedRunDoesNotKeepItsSessionLocked() throws {
         let (root, store) = try makeStore()
         defer { try? FileManager.default.removeItem(at: root) }
