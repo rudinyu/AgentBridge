@@ -220,7 +220,10 @@ public final class SafeProcessRunner: Sendable {
             _ = close(stdoutPipe[1]); stdoutPipe[1] = -1
             _ = close(stderrPipe[1]); stderrPipe[1] = -1
         }
-        let watchdog = !interactive && spec.endsWithParent ? Self.startParentWatchdog(parent: getpid(), group: processID) : nil
+        // An interactive TUI gets one too: when the CLI that started it in a Terminal is
+        // killed, the shell takes the terminal back and the TUI would stay behind,
+        // orphaned. Inside the App, closing the PTY already ends it.
+        let watchdog = interactive || spec.endsWithParent ? Self.startParentWatchdog(parent: getpid(), group: processID) : nil
         defer {
             if let watchdog {
                 _ = kill(watchdog, SIGKILL)
