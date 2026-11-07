@@ -1498,3 +1498,10 @@
 "The private copy of the session's commit could not be confirmed." = "無法確認此工作階段提交的私人副本。";
 "The source repository no longer has this session's commit, so its changes cannot be reviewed. Create a new session." = "來源 Repository 已沒有此工作階段的提交，因此無法檢視其變更。請建立新的工作階段。";
 "%@ in the workspace is its own Git repository, so its files cannot be reviewed. Remove its .git folder, or restore all changes." = "工作區中的 %@ 是獨立的 Git Repository，因此無法檢視其中的檔案。請移除它的 .git 資料夾，或還原全部變更。";
+"Created a change plan awaiting review that includes shared memory (summary hash %@, %@ steps); file writes are not authorized yet." = "已建立包含共享記憶、等待檢視的變更計畫（摘要雜湊 %@，%@ 個步驟）；尚未授權寫入檔案。";
+"The user explicitly reviewed and approved the change plan (summary hash %@) with shared memory sha256:%@." = "使用者已明確檢視並核准變更計畫（摘要雜湊 %@），並包含共享記憶 sha256:%@。";
+"This account does not allow shared memory, so the plan cannot include it." = "此帳號不允許共享記憶，因此計畫無法包含它。";
+"The plan includes shared memory, but this account does not allow it or there is none for this commit. Save the plan without memory." = "此計畫包含共享記憶，但此帳號不允許，或此提交沒有共享記憶。請儲存不含記憶的計畫。";
+"The shared memory changed after this plan was approved. Approve the plan again to use the current memory." = "共享記憶在此計畫核准後已變更。請重新核准計畫以使用目前的記憶。";
+"Include shared memory in the change run" = "在變更執行中包含共享記憶";
+"Off by default. Earlier runs write shared memory, and its folder can be synced, so a run that edits files sees it only when you include it. Approval covers the memory as it is then; if it changes, approve again." = "預設關閉。共享記憶由先前的執行寫入，且其資料夾可能被同步，因此會修改檔案的執行只有在你選擇包含時才會看到它。核准涵蓋當下的記憶；記憶變更後請重新核准。";

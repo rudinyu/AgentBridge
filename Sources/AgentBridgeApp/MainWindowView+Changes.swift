@@ -19,6 +19,11 @@ extension MainWindowView {
                             .font(.system(.caption, design: .monospaced))
                             .frame(minHeight: 70, maxHeight: 130)
                             .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                        Toggle("Include shared memory in the change run", isOn: Bindable(model.changes).changePlanIncludesSharedMemory)
+                            .font(.caption)
+                        Text("Off by default. Earlier runs write shared memory, and its folder can be synced, so a run that edits files sees it only when you include it. Approval covers the memory as it is then; if it changes, approve again.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                         HStack {
                             Button("Save plan for review") { model.changes.saveChangePlan() }
                             if let plan = session.changePlan {

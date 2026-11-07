@@ -27,7 +27,7 @@ extension AgentBridgeCLI {
           agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes]
           agentbridge sessions
           agentbridge run SESSION-ID [--api-budget USD --confirm-api-spend --api-key-env ANTHROPIC_API_KEY]
-          agentbridge changes plan SESSION-ID --title TITLE --summary SUMMARY --step STEP [--step STEP ...]
+          agentbridge changes plan SESSION-ID --title TITLE --summary SUMMARY --step STEP [--step STEP ...] [--with-memory]
           agentbridge changes approve SESSION-ID PLAN-ID REVIEW-DIGEST
           agentbridge changes run SESSION-ID PLAN-ID REVIEW-DIGEST < prompt.txt
           agentbridge changes diff|restore|restore-all|export|verify|accept|apply ...
