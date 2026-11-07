@@ -214,6 +214,7 @@ public final class MCPStdioConnection {
     private let cancellation: CancellationFlag
     private let createsProcessGroup: Bool
     private var processID: pid_t = 0
+    private var watchdogID: pid_t?
     private var inputFD: Int32 = -1
     private var outputFD: Int32 = -1
     private var errorFD: Int32 = -1
@@ -462,6 +463,11 @@ public final class MCPStdioConnection {
         for fd in [inputFD, outputFD, errorFD] {
             _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         }
+        // A server in a group of its own would outlive a crashed App or CLI. One that
+        // shares a provider run's group ends with that run, whose watchdog covers it.
+        if createsProcessGroup {
+            watchdogID = SafeProcessRunner.startParentWatchdog(parent: getpid(), group: processID)
+        }
         started = true
     }
 
@@ -603,6 +609,11 @@ public final class MCPStdioConnection {
         for fd in [outputFD, errorFD] where fd >= 0 { _ = Darwin.close(fd) }
         outputFD = -1
         errorFD = -1
+        if let watchdogID {
+            _ = kill(watchdogID, SIGKILL)
+            _ = waitpid(watchdogID, &status, 0)
+            self.watchdogID = nil
+        }
     }
 
     private func closeAll(_ descriptors: [Int32]) {

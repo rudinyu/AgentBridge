@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Fixed: a provider or verification run kept going, with no timeout, after the App or CLI that started it crashed or was killed, because AgentBridge itself enforces the timeout. A watchdog now ends the run within a few seconds of AgentBridge stopping.
+- Fixed: a provider or verification run kept going, with no timeout, after the App or CLI that started it crashed or was killed, because AgentBridge itself enforces the timeout. A watchdog now ends the run within a few seconds of AgentBridge stopping. The same applies to an MCP server the App or CLI starts to inspect or test it.
 - Changed: an approved autonomous workflow now waits for a free run slot instead of failing when the App, the CLI or a chat is using all three. Runs started by hand still fail at once. Discussion turns now count toward the limit, except with a local model.
 - Changed: applying to a local branch no longer requires the source repository's `HEAD` to still be the session's base commit, only that the commit still exists. The branch starts at that commit, as before.
 - Fixed: a session left marked running by a process that crashed or was killed is now marked failed, so it no longer blocks changing the data root.

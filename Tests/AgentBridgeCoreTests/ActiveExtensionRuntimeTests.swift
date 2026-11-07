@@ -628,6 +628,57 @@ final class ActiveExtensionRuntimeTests: XCTestCase {
         ))
     }
 
+    /// Watchdogs started by this test process, found by the arguments they run with.
+    private func watchdogsForThisProcess() throws -> Int {
+        let ps = Process()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-axo", "command"]
+        let output = Pipe()
+        ps.standardOutput = output
+        try ps.run()
+        let listing = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        ps.waitUntilExit()
+        return listing.split(separator: "\n").filter { $0.contains("agentbridge-watchdog \(getpid()) ") }.count
+    }
+
+    func testAnMCPServerInItsOwnGroupIsWatchedOnlyWhileConnected() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let python = try MCPExecutableValidation.resolveAndDigest(pythonExecutable())
+        let configuration = try ActiveMCPConfiguration(
+            manifest: MCPRuntimeImportManifest(
+                id: "fixture.watchdog",
+                name: "Watchdog fixture",
+                version: "1",
+                summary: "Offline fake MCP server",
+                command: python.path,
+                args: ["-u", "-c", FakeMCPServer.program],
+                allowedTools: ["echo"],
+                startupTimeoutSeconds: 10,
+                toolTimeoutSeconds: 10,
+                maximumToolCallsPerRun: 2,
+                maximumToolResponseBytes: 4 * 1_024 * 1_024,
+                maximumTotalToolResponseBytes: 5 * 1_024 * 1_024
+            ),
+            sourceReference: "offline test fixture",
+            resolvedExecutablePath: python.path,
+            executableDigest: python.digest
+        )
+        let before = try watchdogsForThisProcess()
+        for createsProcessGroup in [true, false] {
+            let connection = try MCPStdioConnection(
+                configuration: configuration,
+                environment: ["HOME": root.path, "PATH": "/usr/bin:/bin"],
+                createsProcessGroup: createsProcessGroup
+            )
+            _ = try connection.initializeAndListTools()
+            // A server sharing a provider run's group is covered by that run's watchdog.
+            XCTAssertEqual(try watchdogsForThisProcess(), before + (createsProcessGroup ? 1 : 0))
+            connection.close()
+            XCTAssertEqual(try watchdogsForThisProcess(), before, "The watchdog outlived its connection.")
+        }
+    }
+
     func testOfflineMCPWireClientHandlesPaginationCallsAndImageContent() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
