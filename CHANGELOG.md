@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: the Claude usage terminal failed to start, because Claude Code 2.1.311 refuses `--no-session-persistence` outside `--print`. It now starts without it, and when it closes AgentBridge runs `claude purge --yes` for its one-time folder, which removes the trust entry accepting Claude's folder prompt leaves in `.claude.json`, along with any transcript.
 - Fixed: a provider or verification run kept going, with no timeout, after the App or CLI that started it crashed or was killed, because AgentBridge itself enforces the timeout. A watchdog now ends the run within a few seconds of AgentBridge stopping. The same applies to an MCP server the App or CLI starts to inspect or test it, and to a native interactive TUI started from the CLI in a Terminal, which was left running when the CLI was killed.
 - Changed: an approved autonomous workflow now waits for a free run slot instead of failing when the App, the CLI or a chat is using all three. Runs started by hand still fail at once. Discussion turns now count toward the limit, except with a local model.
 - Changed: applying to a local branch no longer requires the source repository's `HEAD` to still be the session's base commit, only that the commit still exists. The branch starts at that commit, as before.

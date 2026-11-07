@@ -85,13 +85,37 @@ extension BridgeService {
         if profile.provider == .claude {
             environment["CLAUDE_CODE_SKIP_PROMPT_HISTORY"] = "1"
         }
-        return try await adapter.runUsageTUI(
-            provider: provider,
+        let result: ProcessResult
+        do {
+            result = try await adapter.runUsageTUI(
+                provider: provider,
+                executableURL: executable,
+                environment: environment,
+                workingDirectoryURL: temporaryDirectory,
+                cancellation: cancellation
+            )
+        } catch {
+            if provider == .claude { await purgeClaudeData(for: temporaryDirectory, executable: executable, environment: environment) }
+            throw error
+        }
+        if provider == .claude { await purgeClaudeData(for: temporaryDirectory, executable: executable, environment: environment) }
+        return result
+    }
+
+    /// The usage terminal starts in a new folder each time, and accepting Claude's
+    /// folder-trust prompt records that folder in the account's `.claude.json`,
+    /// beside any transcript. This removes them for that folder only. It is best
+    /// effort: Claude exits 1 when there is nothing to purge, and a failure never
+    /// fails the terminal.
+    func purgeClaudeData(for directory: URL, executable: URL, environment: [String: String]) async {
+        _ = try? await runner.run(ProcessSpec(
             executableURL: executable,
+            arguments: ["purge", "--yes", ProcessSandbox.canonicalPath(directory)],
             environment: environment,
-            workingDirectoryURL: temporaryDirectory,
-            cancellation: cancellation
-        )
+            workingDirectoryURL: directory,
+            timeout: 30,
+            outputLimit: 64_000
+        ))
     }
 
     func checkAuthentication(profile: AccountProfile, executable: URL) async throws -> AuthAssessment {
