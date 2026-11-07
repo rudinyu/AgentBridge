@@ -346,6 +346,7 @@ public final class ProviderAdapter: Sendable {
         environment: [String: String],
         cancellationRequestURL: URL?,
         mcpServerCommands: [MCPServerCommandConfiguration] = [],
+        wrapCommand: (@Sendable (URL, [String]) throws -> (URL, [String]))? = nil,
         onProgress: (@Sendable (String) -> Void)? = nil,
         cancellation: CancellationFlag = CancellationFlag()
     ) async throws -> (ProcessResult, ProviderOutput) {
@@ -354,7 +355,7 @@ public final class ProviderAdapter: Sendable {
             provider: provider,
             privateDirectory: mcpPrivateDirectory(from: environment, fallback: session.workspacePath)
         )
-        let arguments: [String]
+        var arguments: [String]
         switch provider {
         case .codex:
             arguments = try ProviderCommandBuilder.codexChangeArguments(
@@ -386,8 +387,10 @@ public final class ProviderAdapter: Sendable {
         } else {
             lineHandler = nil
         }
+        var launchedExecutable = executableURL
+        if let wrapCommand { (launchedExecutable, arguments) = try wrapCommand(executableURL, arguments) }
         let spec = ProcessSpec(
-            executableURL: executableURL,
+            executableURL: launchedExecutable,
             arguments: arguments,
             environment: environment,
             workingDirectoryURL: URL(fileURLWithPath: session.workspacePath, isDirectory: true),

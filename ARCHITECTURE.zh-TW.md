@@ -107,7 +107,7 @@ provider CLI 決定原生互動 TUI transcript 是否保存。AgentBridge 不會
 
 非互動程序使用直接 executable/argv，不經 shell；提示透過標準輸入提供。子程序環境採白名單，不繼承 API key、proxy 或雲端憑證。輸出與錯誤緩衝有上限，稽核事件會遮蔽常見祕密。執行有每 session 租約、取消標記、程序群組終止及 bounded escalation；CLI 的 SIGINT/SIGTERM/SIGHUP 也會轉為取消。
 
-唯讀 Codex 非互動使用 read-only sandbox 且不要求升權；唯讀 Claude 將內建工具限於 `Read,Glob,Grep` 並使用 `dontAsk`，hooks 與未核准 MCP 仍停用。明確核准的 MCP 經過代理，因為 Claude 的 `--tools` 只限制內建工具，不能過濾 MCP。外部工具仍可能影響 Repository 以外的系統，其獨立核准能力必須保持可見。隔離變更使用 Codex `workspace-write` 或 Claude `acceptEdits` 與狹窄內建工具；工作區是流程邊界，不是 macOS sandbox。非互動 Codex 無法在執行中提示額外權限，AgentBridge 不會繞過核准。原生互動模式保留供應商 TUI：Codex 維持唯讀，Claude 使用 Manual 權限；原生 TUI 中核准的指令可能存取工作區外檔案或網路。
+唯讀 Codex 非互動使用 read-only sandbox 且不要求升權；唯讀 Claude 將內建工具限於 `Read,Glob,Grep` 並使用 `dontAsk`，hooks 與未核准 MCP 仍停用。明確核准的 MCP 經過代理，因為 Claude 的 `--tools` 只限制內建工具，不能過濾 MCP。外部工具仍可能影響 Repository 以外的系統，其獨立核准能力必須保持可見。隔離變更使用 Codex `workspace-write`（Codex 自身的 macOS 沙箱），或 Claude `acceptEdits` 與狹窄內建工具。Claude 的檔案工具在其自身程序內執行，因此 AgentBridge 另以 Seatbelt 設定檔執行 Claude 變更：它只能寫入工作區、其暫存資料夾、Claude 設定資料夾、`/tmp` 及每位使用者的暫存與快取資料夾；工作區的 `.git` 為唯讀；除了 Claude 讀取登入資訊所用的登入鑰匙圈檔案外，無法讀取家目錄其餘部分、資料根目錄或來源 Repository。啟用 MCP 伺服器的 Claude 變更不使用此沙箱，因為它啟動的 AgentBridge MCP 代理需要讀取私人資料根目錄。非互動 Codex 無法在執行中提示額外權限，AgentBridge 不會繞過核准。原生互動模式保留供應商 TUI：Codex 維持唯讀，Claude 使用 Manual 權限；原生 TUI 中核准的指令可能存取工作區外檔案或網路。
 
 內嵌終端直接將 PTY 接到官方 CLI，不保存原始終端畫面或輸入。只有按下固定的 `/usage` 按鈕後，App 才會將有限數量的可見 SwiftTerm 列暫存在記憶體供盡力解析；辨識到用量值或 15 秒後停止取樣，再按固定按鈕可重新啟動。正規化報告產生後即丟棄原始文字，不會記錄、保存或傳給模型。SwiftTerm 不允許 OSC 52 剪貼簿讀寫及 terminal link 開啟，並限制 scrollback。獨立「本機終端機」使用者 shell 以目前 macOS 帳戶權限執行；Repository clone 不會限制其檔案或網路存取。
 

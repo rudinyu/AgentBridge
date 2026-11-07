@@ -560,6 +560,7 @@ extension BridgeService {
         let temp = try makePrivateTemporaryDirectory(label: "change-\(sessionID.uuidString.lowercased())")
         defer { try? FileManager.default.removeItem(at: temp) }
         let environment = try providerEnvironment(profile: profile, privateTemporaryDirectory: temp)
+        let commandWrapper = try claudeChangeSandbox(session: session, environment: environment, temporaryDirectory: temp)
         let extensionInvocation = try activeExtensionRuntimeStore.invocation(
             projectID: extensionProjectID(for: session),
             provider: session.provider,
@@ -627,6 +628,7 @@ extension BridgeService {
                 environment: environment,
                 cancellationRequestURL: store.cancellationRequestURL(for: sessionID),
                 mcpServerCommands: mcpServerCommands,
+                wrapCommand: mcpServerCommands.isEmpty ? commandWrapper : nil,
                 onProgress: { [weak self] message in
                     emitter.emit(message)
                     _ = try? self?.parallelTaskBoard.updateProgress(taskID: startedTaskID, summary: OutputRedactor.redact(message))
@@ -835,7 +837,7 @@ extension BridgeService {
             commandArguments = []
         }
 
-        let temp = try VerificationSandbox.makeWritableRoot(label: "verify-\(sessionID.uuidString.lowercased())")
+        let temp = try ProcessSandbox.makeWritableRoot(label: "verify-\(sessionID.uuidString.lowercased())")
         defer { try? FileManager.default.removeItem(at: temp) }
         let home = temp.appendingPathComponent("home", isDirectory: true)
         let temporaryFiles = temp.appendingPathComponent("tmp", isDirectory: true)
@@ -856,12 +858,9 @@ extension BridgeService {
         guard FileManager.default.isExecutableFile(atPath: runExecutableURL.path) else {
             throw AgentBridgeError.verificationCommandRejected("The program is not in the reviewed changes, so it cannot run in the verification checkout.")
         }
-        let sandboxedCommand = try VerificationSandbox(
-            writableRoot: temp,
-            protectedRoots: store.managedWorkspaceRootURLs + [
-                store.rootURL,
-                URL(fileURLWithPath: session.sourceRepositoryPath, isDirectory: true)
-            ]
+        let sandboxedCommand = try ProcessSandbox(
+            writableRoots: [temp],
+            protectedRoots: sandboxProtectedRoots(for: session)
         ).command(executable: runExecutableURL, arguments: commandArguments)
 
         let command = VerificationCommand(
@@ -878,7 +877,7 @@ extension BridgeService {
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": "/dev/null",
             "GIT_TERMINAL_PROMPT": "0",
-            VerificationSandbox.environmentMarker: "1"
+            ProcessSandbox.verificationMarker: "1"
         ]
         let start = DispatchTime.now().uptimeNanoseconds
         let verificationTaskID = try beginTrackedRun(
@@ -1192,6 +1191,47 @@ extension BridgeService {
         }
         environment.merge(overrides, uniquingKeysWith: { _, new in new })
         return environment
+    }
+
+    /// What a sandboxed run must not read or write besides the home folder.
+    func sandboxProtectedRoots(for session: SessionRecord) -> [URL] {
+        store.managedWorkspaceRootURLs + [store.rootURL, URL(fileURLWithPath: session.sourceRepositoryPath, isDirectory: true)]
+    }
+
+    /// Claude's change tools run in its own process and decide for themselves which
+    /// paths they may edit. This confines them to the workspace at the OS level, and
+    /// keeps `.git` read-only; a change run has no shell to work around that. Codex
+    /// runs its own Seatbelt sandbox, which cannot be nested. Runs with MCP servers
+    /// are left out, because the AgentBridge MCP proxy reads the private data root.
+    func claudeChangeSandbox(
+        session: SessionRecord,
+        environment: [String: String],
+        temporaryDirectory: URL
+    ) throws -> (@Sendable (URL, [String]) throws -> (URL, [String]))? {
+        guard session.provider == .claude else { return nil }
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true)
+        // A custom profile keeps `.claude.json` inside its configuration folder.
+        let configuration = environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let writableRoots = [workspace, temporaryDirectory, configuration ?? home.appendingPathComponent(".claude", isDirectory: true)]
+        let writablePrefixes = configuration == nil ? [home.appendingPathComponent(".claude.json")] : []
+        let protectedRoots = sandboxProtectedRoots(for: session)
+        return { executable, arguments in
+            // Claude keeps its sign-in in the login keychain, read through this file.
+            let sandbox = ProcessSandbox(
+                writableRoots: writableRoots,
+                protectedRoots: protectedRoots,
+                writablePrefixes: writablePrefixes,
+                readableRoots: [
+                    home.appendingPathComponent("Library/Keychains/login.keychain-db"),
+                    URL(fileURLWithPath: ProcessSandbox.canonicalPath(executable)).deletingLastPathComponent()
+                ],
+                readOnlyRoots: [workspace.appendingPathComponent(".git", isDirectory: true)],
+                allowsKeychain: true
+            )
+            let command = try sandbox.command(executable: executable, arguments: arguments)
+            return (command.executable, command.arguments)
+        }
     }
 
     func memoryScope(for session: SessionRecord) throws -> SharedMemoryScope {

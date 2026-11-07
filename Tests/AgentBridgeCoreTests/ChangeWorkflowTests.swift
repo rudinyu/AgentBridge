@@ -5,7 +5,7 @@ import XCTest
 
 /// macOS refuses a nested sandbox, so these cannot run when AgentBridge verifies itself.
 func skipInsideVerificationSandbox() throws {
-    try XCTSkipIf(ProcessInfo.processInfo.environment[VerificationSandbox.environmentMarker] != nil)
+    try XCTSkipIf(ProcessInfo.processInfo.environment[ProcessSandbox.verificationMarker] != nil)
 }
 
 final class ChangeWorkflowTests: XCTestCase {
@@ -420,6 +420,60 @@ final class ChangeWorkflowTests: XCTestCase {
         XCTAssertEqual(result.standardOutput, "wrote-checkout\n")
         XCTAssertFalse(FileManager.default.fileExists(atPath: outside.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("escaped").path))
+    }
+
+    func testClaudeChangeRunIsConfinedToTheWorkspaceAndCannotEditGitMetadata() async throws {
+        try skipInsideVerificationSandbox()
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let secret = fixture.store.rootURL.appendingPathComponent("planted-secret")
+        try Data("secret\n".utf8).write(to: secret)
+        let claude = fixture.rootURL.appendingPathComponent("mock-bin/claude")
+        try FileManager.default.createDirectory(at: claude.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("""
+        #!/bin/sh
+        case " $* " in
+          *" auth status "*)
+            printf '%s\\n' '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}'
+            exit 0 ;;
+        esac
+        /bin/cat >/dev/null
+        found=""
+        echo edited > source.txt && found="$found edited-workspace"
+        echo x >> .git/config 2>/dev/null && found="$found wrote-git"
+        cat '\(secret.path)' >/dev/null 2>&1 && found="$found read-secret"
+        cat '\(fixture.sourceURL.appendingPathComponent("source.txt").path)' >/dev/null 2>&1 && found="$found read-source"
+        touch '\(fixture.sourceURL.appendingPathComponent("escaped").path)' 2>/dev/null && found="$found wrote-source"
+        printf '{"type":"result","subtype":"success","result":"%s"}\\n' "$found"
+        """.utf8).write(to: claude)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: claude.path)
+        var settings = try fixture.service.settings()
+        settings.claudeBinaryPath = claude.path
+        settings.usageMode = .subscription
+        try fixture.service.saveSettings(settings)
+        let session = try await fixture.service.createSession(
+            sourcePath: fixture.sourceURL.path,
+            provider: .claude,
+            accessMode: .isolatedChanges
+        )
+        let plan = try fixture.service.createChangePlan(
+            sessionID: session.id,
+            title: "Edit the file",
+            summary: "Change source.txt.",
+            steps: ["Edit source.txt."]
+        )
+        _ = try fixture.service.approveChangePlan(sessionID: session.id, planID: plan.id, reviewedDigest: plan.reviewDigest)
+
+        let output = try await fixture.service.runChanges(
+            sessionID: session.id,
+            prompt: "Edit source.txt.",
+            planID: plan.id,
+            reviewedDigest: plan.reviewDigest
+        )
+        XCTAssertEqual(output.text, " edited-workspace")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.sourceURL.appendingPathComponent("escaped").path))
+        let diff = try await fixture.service.changesDiff(sessionID: session.id)
+        XCTAssertEqual(diff.files.map(\.path), ["source.txt"])
     }
 
     func testVerificationThatEditsTheCheckoutFails() async throws {
