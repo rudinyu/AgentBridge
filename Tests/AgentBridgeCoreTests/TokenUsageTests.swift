@@ -111,5 +111,35 @@ final class TokenUsageTests: XCTestCase {
         let snapshot = try service.usageStatistics(provider: .codex, selectedSessionID: session.id)
         XCTAssertEqual(snapshot.dailyTokens, TokenUsage(inputTokens: 600, cachedInputTokens: 1_200, outputTokens: 80))
         XCTAssertEqual(snapshot.sessionTokens.totalTokens, 1_880)
+
+        // Each run reports 940 tokens. Below the limit a run starts; once it is
+        // reached the next one is refused before the CLI is launched.
+        let profileID = AccountProfile.defaultID(for: .codex)
+        var controls = try service.usageControlSettings(provider: .codex, profileID: profileID)
+        controls.dailyTokenLimit = 1_880
+        try service.saveUsageControlSettings(controls, provider: .codex, profileID: profileID)
+        do {
+            _ = try await service.runReadOnly(sessionID: session.id, prompt: "question")
+            XCTFail("A run started after the token limit was reached.")
+        } catch let error as UsageControlError {
+            XCTAssertEqual(error, .tokenLimitReached(window: .rolling24Hours, used: 1_880, limit: 1_880))
+        }
+        XCTAssertEqual(try service.events(sessionID: session.id).filter { $0.kind == "usage.tokens" }.count, 2)
+
+        controls.dailyTokenLimit = 1_881
+        try service.saveUsageControlSettings(controls, provider: .codex, profileID: profileID)
+        _ = try await service.runReadOnly(sessionID: session.id, prompt: "question")
+        XCTAssertEqual(try service.usageStatistics(provider: .codex).dailyTokens.totalTokens, 2_820, "The run that crosses a limit still finishes.")
+    }
+
+    func testTokenLimitsAreValidatedAndOptional() throws {
+        XCTAssertNoThrow(try UsageControlSettings().validate())
+        XCTAssertNoThrow(try UsageControlSettings(fiveHourTokenLimit: 1_000, sessionTokenLimit: 10_000_000_000).validate())
+        for limits in [UsageControlSettings(dailyTokenLimit: 999), UsageControlSettings(weeklyTokenLimit: 10_000_000_001), UsageControlSettings(sessionTokenLimit: 0)] {
+            XCTAssertThrowsError(try limits.validate()) { XCTAssertEqual($0 as? UsageControlError, .invalidTokenLimit) }
+        }
+        let saved = try JSONDecoder().decode(UsageControlSettings.self, from: Data(#"{"disableFutureAPI":false,"macOSNotificationsEnabled":false,"notifiedThresholds":{},"subscriptionDailyRunLimit":5}"#.utf8))
+        XCTAssertEqual(saved.subscriptionDailyRunLimit, 5)
+        XCTAssertNil(saved.dailyTokenLimit, "Settings saved before token limits existed still load, with no token limit.")
     }
 }

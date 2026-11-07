@@ -17,6 +17,12 @@ public struct UsageControlSettings: Codable, Equatable, Sendable {
     public var disableFutureAPI: Bool
     public var macOSNotificationsEnabled: Bool
     public var notifiedThresholds: [String: Date]
+    /// Total reported tokens, in every usage mode. A run cannot know its tokens
+    /// before it starts, so the last run allowed below a limit can pass it.
+    public var fiveHourTokenLimit: Int?
+    public var dailyTokenLimit: Int?
+    public var weeklyTokenLimit: Int?
+    public var sessionTokenLimit: Int?
 
     public init(
         subscriptionFiveHourRunLimit: Int? = nil,
@@ -30,7 +36,11 @@ public struct UsageControlSettings: Codable, Equatable, Sendable {
         apiSessionLimitUSD: Double? = nil,
         disableFutureAPI: Bool = false,
         macOSNotificationsEnabled: Bool = false,
-        notifiedThresholds: [String: Date] = [:]
+        notifiedThresholds: [String: Date] = [:],
+        fiveHourTokenLimit: Int? = nil,
+        dailyTokenLimit: Int? = nil,
+        weeklyTokenLimit: Int? = nil,
+        sessionTokenLimit: Int? = nil
     ) {
         self.subscriptionFiveHourRunLimit = subscriptionFiveHourRunLimit
         self.subscriptionDailyRunLimit = subscriptionDailyRunLimit
@@ -44,6 +54,10 @@ public struct UsageControlSettings: Codable, Equatable, Sendable {
         self.disableFutureAPI = disableFutureAPI
         self.macOSNotificationsEnabled = macOSNotificationsEnabled
         self.notifiedThresholds = notifiedThresholds
+        self.fiveHourTokenLimit = fiveHourTokenLimit
+        self.dailyTokenLimit = dailyTokenLimit
+        self.weeklyTokenLimit = weeklyTokenLimit
+        self.sessionTokenLimit = sessionTokenLimit
     }
 
     public func validate() throws {
@@ -57,6 +71,10 @@ public struct UsageControlSettings: Codable, Equatable, Sendable {
         ]
         guard runLimits.allSatisfy({ $0 == nil || (1...100_000).contains($0!) }) else {
             throw UsageControlError.invalidRunLimit
+        }
+        let tokenLimits = [fiveHourTokenLimit, dailyTokenLimit, weeklyTokenLimit, sessionTokenLimit]
+        guard tokenLimits.allSatisfy({ $0 == nil || (1_000...10_000_000_000).contains($0!) }) else {
+            throw UsageControlError.invalidTokenLimit
         }
         for limit in [apiMonthlyLimitUSD, apiDailyLimitUSD, apiSessionLimitUSD].compactMap({ $0 }) {
             guard limit.isFinite, (0.01...100_000).contains(limit) else {
@@ -72,6 +90,7 @@ public struct UsageControlSettings: Codable, Equatable, Sendable {
 
 public enum UsageControlError: Error, LocalizedError, Equatable {
     case invalidRunLimit
+    case invalidTokenLimit
     case invalidAPIDollarLimit
     case apiMonthlyLimitRequired(UUID)
     case apiDisabled(UUID)
@@ -79,12 +98,15 @@ public enum UsageControlError: Error, LocalizedError, Equatable {
     case apiReconciliationConfirmationRequired
     case apiReconciliationNotFound(UUID)
     case runLimitReached(window: UsageLimitWindow, used: Int, limit: Int)
+    case tokenLimitReached(window: UsageLimitWindow, used: Int, limit: Int)
     case persistence(String)
 
     public var errorDescription: String? {
         switch self {
         case .invalidRunLimit:
             "A local run limit must be an integer from 1 to 100000. Leave it empty for no limit."
+        case .invalidTokenLimit:
+            "A local token limit must be an integer from 1000 to 10000000000. Leave it empty for no limit."
         case .invalidAPIDollarLimit:
             "A Claude API local USD limit must be a finite amount between US$0.01 and US$100000."
         case .apiMonthlyLimitRequired(let profileID):
@@ -99,6 +121,8 @@ public enum UsageControlError: Error, LocalizedError, Equatable {
             "Could not find session \(sessionID.uuidString) has no unsettled Claude API reservation record."
         case .runLimitReached(let window, let used, let limit):
             "AgentBridge local \(window.displayName) run limit reached (\(used)/\(limit)); wait for usage to leave this window or adjust the local limit."
+        case .tokenLimitReached(let window, let used, let limit):
+            "AgentBridge local \(window.displayName) token limit reached (\(used)/\(limit)); wait for usage to leave this window or adjust the local limit."
         case .persistence(let message):
             "Could not safely read or write local usage controls: \(message)"
         }
@@ -567,6 +591,10 @@ public final class UsageControlStore: @unchecked Sendable {
         recordOptional("apiMonthlyLimitUSD", oldValue: old.apiMonthlyLimitUSD, newValue: new.apiMonthlyLimitUSD)
         recordOptional("apiDailyLimitUSD", oldValue: old.apiDailyLimitUSD, newValue: new.apiDailyLimitUSD)
         recordOptional("apiSessionLimitUSD", oldValue: old.apiSessionLimitUSD, newValue: new.apiSessionLimitUSD)
+        recordOptional("fiveHourTokenLimit", oldValue: old.fiveHourTokenLimit, newValue: new.fiveHourTokenLimit)
+        recordOptional("dailyTokenLimit", oldValue: old.dailyTokenLimit, newValue: new.dailyTokenLimit)
+        recordOptional("weeklyTokenLimit", oldValue: old.weeklyTokenLimit, newValue: new.weeklyTokenLimit)
+        recordOptional("sessionTokenLimit", oldValue: old.sessionTokenLimit, newValue: new.sessionTokenLimit)
         record("disableFutureAPI", oldValue: old.disableFutureAPI, newValue: new.disableFutureAPI)
         record("macOSNotificationsEnabled", oldValue: old.macOSNotificationsEnabled, newValue: new.macOSNotificationsEnabled)
         return changes

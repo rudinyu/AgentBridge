@@ -117,7 +117,10 @@ final class UsageModel {
         usageStatistics = snapshot
         refreshedUsageStatisticsScopeKey = scopeKey
         lastUsageStatisticsRefresh = now
-        if provider != .local { evaluateSubscriptionThresholds(snapshot: snapshot) }
+        if provider != .local {
+            evaluateSubscriptionThresholds(snapshot: snapshot)
+            evaluateTokenThresholds(snapshot: snapshot)
+        }
     }
 
     func refreshLocalModelUsageStatisticsIfNeeded(service: BridgeService, force: Bool) throws {
@@ -332,6 +335,34 @@ final class UsageModel {
             used: snapshot.subscriptionSessionRuns,
             limit: usageControls.subscriptionSessionRunLimit,
             key: "\(profileKey):subscription-session:\(app.selectedSessionID?.uuidString ?? "none")"
+        )
+    }
+
+    private func evaluateTokenThresholds(snapshot: UsageStatisticsSnapshot) {
+        let profileKey = "\(snapshot.provider.rawValue):\(snapshot.accountProfileID.uuidString.lowercased())"
+        evaluateThreshold(
+            title: "Tokens in the Last 5 Hours",
+            used: snapshot.fiveHourTokens.totalTokens,
+            limit: usageControls.fiveHourTokenLimit,
+            key: "\(profileKey):tokens-5h:\(usageAlertPeriodID(duration: 5 * 60 * 60, at: snapshot.generatedAt))"
+        )
+        evaluateThreshold(
+            title: "Tokens in the Last 24 Hours",
+            used: snapshot.dailyTokens.totalTokens,
+            limit: usageControls.dailyTokenLimit,
+            key: "\(profileKey):tokens-24h:\(usageAlertPeriodID(duration: 24 * 60 * 60, at: snapshot.generatedAt))"
+        )
+        evaluateThreshold(
+            title: "Tokens in the Last 7 Days",
+            used: snapshot.sevenDayTokens.totalTokens,
+            limit: usageControls.weeklyTokenLimit,
+            key: "\(profileKey):tokens-7d:\(usageAlertPeriodID(duration: 7 * 24 * 60 * 60, at: snapshot.generatedAt))"
+        )
+        evaluateThreshold(
+            title: "Tokens in the Current Session",
+            used: snapshot.sessionTokens.totalTokens,
+            limit: usageControls.sessionTokenLimit,
+            key: "\(profileKey):tokens-session:\(app.selectedSessionID?.uuidString ?? "none")"
         )
     }
 

@@ -57,6 +57,7 @@ struct RunGate {
                         window: .currentSession
                     )
                 }
+                try enforceTokenLimits(statistics, controls: controls)
                 if usageMode == .subscription {
                     try store.appendEvent(AuditEvent(
                         sessionID: runID,
@@ -126,6 +127,19 @@ struct RunGate {
                 try? store.appendEvent(AuditEvent(sessionID: runID, kind: "usage.run.blocked", message: error.localizedDescription))
                 throw error
             }
+        }
+    }
+
+    /// Tokens count in every usage mode, so one set of limits covers both.
+    private func enforceTokenLimits(_ statistics: UsageStatisticsSnapshot, controls: UsageControlSettings) throws {
+        for (used, limit, window) in [
+            (statistics.fiveHourTokens, controls.fiveHourTokenLimit, UsageLimitWindow.fiveHours),
+            (statistics.dailyTokens, controls.dailyTokenLimit, .rolling24Hours),
+            (statistics.sevenDayTokens, controls.weeklyTokenLimit, .rollingSevenDays),
+            (statistics.sessionTokens, controls.sessionTokenLimit, .currentSession)
+        ] {
+            guard let limit, used.totalTokens >= limit else { continue }
+            throw UsageControlError.tokenLimitReached(window: window, used: used.totalTokens, limit: limit)
         }
     }
 
