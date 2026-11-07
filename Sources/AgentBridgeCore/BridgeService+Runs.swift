@@ -932,7 +932,8 @@ extension BridgeService {
                 standardInput: Data(),
                 timeout: 3_600,
                 outputLimit: 2 * 1_024 * 1_024,
-                cancellationRequestURL: store.cancellationRequestURL(for: sessionID)
+                cancellationRequestURL: store.cancellationRequestURL(for: sessionID),
+                endsWithParent: true
             ), cancellation: cancellation)
             let duration = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000_000
             let stdout = String(decoding: processResult.standardOutput, as: UTF8.self)
