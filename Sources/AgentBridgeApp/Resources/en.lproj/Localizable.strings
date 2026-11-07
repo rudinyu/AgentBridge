@@ -50,7 +50,7 @@
 "Some changed files are not fully shown. Export the patch to review them, then confirm before accepting or applying." = "Some changed files are not fully shown. Export the patch to review them, then confirm before accepting or applying.";
 "Confirmed %@ file(s) that were not fully shown, for diff sha256:%@." = "Confirmed %@ file(s) that were not fully shown, for diff sha256:%@.";
 "I exported the patch and reviewed the files that are not fully shown above." = "I exported the patch and reviewed the files that are not fully shown above.";
-"These Git-ignored paths are in the workspace but not in this diff. Verification can see them, and they will not reach your branch." = "These Git-ignored paths are in the workspace but not in this diff. Verification can see them, and they will not reach your branch.";
+"These Git-ignored paths are in the workspace but not in this diff. Verification does not see them, and they will not reach your branch." = "These Git-ignored paths are in the workspace but not in this diff. Verification does not see them, and they will not reach your branch.";
 "Reject / restore file" = "Reject / restore file";
 "No changes in the isolated workspace" = "No changes in the isolated workspace";
 "Accept this verified diff" = "Accept this verified diff";
@@ -294,7 +294,7 @@
 "Mode: %@" = "Mode: %@";
 "Executable: %@" = "Executable: %@";
 "No verification command was requested; this exact choice is part of the approved digest." = "No verification command was requested; this exact choice is part of the approved digest.";
-"The approved verification command executes project code with the current macOS user's rights; it is not an OS sandbox." = "The approved verification command executes project code with the current macOS user's rights; it is not an OS sandbox.";
+"The approved verification command runs project code in a macOS sandbox on a throwaway copy of the reviewed diff. It cannot read your home folder or write outside that copy, but it can use the network." = "The approved verification command runs project code in a macOS sandbox on a throwaway copy of the reviewed diff. It cannot read your home folder or write outside that copy, but it can use the network.";
 "I reviewed this immutable plan, task dependencies, permissions, extension scopes, memory sharing, limits, exact verification command, and digest." = "I reviewed this immutable plan, task dependencies, permissions, extension scopes, memory sharing, limits, exact verification command, and digest.";
 "One approval covers only this digest-bound run, including its displayed bounded repair rounds and verification. Any changed configuration or plan requires a new plan and approval." = "One approval covers only this digest-bound run, including its displayed bounded repair rounds and verification. Any changed configuration or plan requires a new plan and approval.";
 "Approve this plan" = "Approve this plan";
@@ -1477,3 +1477,8 @@
 "Could not read the CLI help, so the required flags were not confirmed." = "Could not read the CLI help, so the required flags were not confirmed.";
 "The CLI help no longer lists flags AgentBridge needs: %@." = "The CLI help no longer lists flags AgentBridge needs: %@.";
 "Could not compact the audit file." = "Could not compact the audit file.";
+"macOS sandbox-exec is unavailable, so verification cannot be isolated." = "macOS sandbox-exec is unavailable, so verification cannot be isolated.";
+"The verification checkout commit does not match the session." = "The verification checkout commit does not match the session.";
+"The program is not in the reviewed changes, so it cannot run in the verification checkout." = "The program is not in the reviewed changes, so it cannot run in the verification checkout.";
+"Could not find the macOS temporary folder for verification." = "Could not find the macOS temporary folder for verification.";
+"Could not create the macOS temporary folder for verification." = "Could not create the macOS temporary folder for verification.";

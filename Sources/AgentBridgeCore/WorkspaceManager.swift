@@ -301,8 +301,12 @@ public final class WorkspaceManager: @unchecked Sendable {
         }
         try await validateWorkspace(for: session, accessMode: .isolatedChanges)
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
+        return try await changeDiff(in: workspace, baseCommit: session.snapshotCommit)
+    }
+
+    private func changeDiff(in workspace: URL, baseCommit: String) async throws -> WorkspaceChangeDiff {
         let trackedResult = try await runGit(arguments: [
-            "-C", workspace.path, "diff", "--name-status", "-z", "--no-renames", session.snapshotCommit, "--"
+            "-C", workspace.path, "diff", "--name-status", "-z", "--no-renames", baseCommit, "--"
         ], workingDirectory: nil)
         let trackedEntries = try parseNameStatus(trackedResult.standardOutput)
         let untrackedResult = try await runGit(arguments: [
@@ -326,7 +330,7 @@ public final class WorkspaceManager: @unchecked Sendable {
             } else {
                 arguments = [
                     "-C", workspace.path, "diff", "--no-ext-diff", "--no-textconv", "--no-color",
-                    "--binary", "--unified=3", "--no-renames", session.snapshotCommit, "--", path
+                    "--binary", "--unified=3", "--no-renames", baseCommit, "--", path
                 ]
             }
             let patchResult = try await runGit(
@@ -361,7 +365,7 @@ public final class WorkspaceManager: @unchecked Sendable {
         ], workingDirectory: nil)
         guard !ignoredResult.outputWasTruncated else { throw AgentBridgeError.git("The Git file index exceeds the size limit.") }
         return WorkspaceChangeDiff(
-            baseCommit: session.snapshotCommit,
+            baseCommit: baseCommit,
             files: fileDiffs,
             patch: combinedPatch,
             ignoredPaths: ignoredResult.standardOutput
@@ -369,6 +373,54 @@ public final class WorkspaceManager: @unchecked Sendable {
                 .map { String(decoding: $0, as: UTF8.self) }
                 .sorted()
         )
+    }
+
+    /// Builds what verification runs: the pinned commit plus exactly this patch.
+    /// Git-ignored files stay behind, so a pass cannot rest on anything outside the
+    /// digest. `--no-local` makes Git rehash every object it copies from the
+    /// provider-writable workspace.
+    func createVerificationCheckout(for session: SessionRecord, patch: Data, at destination: URL) async throws {
+        let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
+        _ = try await runGit(arguments: [
+            "-c", "uploadpack.packObjectsHook=",
+            "clone", "--no-local", "--no-hardlinks", "--no-checkout", "--",
+            workspace.path, destination.path
+        ], workingDirectory: nil)
+        _ = try await runGit(arguments: ["-C", destination.path, "remote", "remove", "origin"], workingDirectory: nil)
+        _ = try await runGit(arguments: [
+            "-c", "filter.lfs.smudge=",
+            "-c", "filter.lfs.required=false",
+            "-C", destination.path, "checkout", "--detach", session.snapshotCommit
+        ], workingDirectory: nil)
+        guard try await gitText(["-C", destination.path, "rev-parse", "HEAD"]) == session.snapshotCommit else {
+            throw AgentBridgeError.git("The verification checkout commit does not match the session.")
+        }
+        guard !patch.isEmpty else { return }
+        _ = try await runGit(
+            arguments: ["-C", destination.path, "apply", "--binary"],
+            workingDirectory: nil,
+            standardInput: patch
+        )
+    }
+
+    /// Whether a finished verification left the checkout's diff as it started.
+    /// Verified code could write this `.git`, so its settings are checked before Git
+    /// reads them; a filter left there must not run outside the sandbox.
+    func verificationCheckoutMatches(_ checkout: URL, baseCommit: String, digest: String) async throws -> Bool {
+        let gitMetadata = checkout.appendingPathComponent(".git")
+        guard isDirectory(checkout), !isSymbolicLink(checkout),
+              isDirectory(gitMetadata), !isSymbolicLink(gitMetadata),
+              !fileManager.fileExists(atPath: gitMetadata.appendingPathComponent("objects/info/alternates").path) else {
+            return false
+        }
+        do {
+            try await validateWorkspaceGitConfig(checkout)
+            try await validateNothingHiddenFromDiff(checkout)
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch = error else { throw error }
+            return false
+        }
+        return try await changeDiff(in: checkout, baseCommit: baseCommit).digest == digest
     }
 
     private static let maximumPatchBytes = 10 * 1_024 * 1_024

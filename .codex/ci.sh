@@ -20,6 +20,10 @@ check_build_system() {
     --security-path "$ROOT/build/package-security"
     --disable-automatic-resolution
   )
+  # macOS refuses a nested sandbox, so SwiftPM cannot start its own under AgentBridge's.
+  if [[ -n "${AGENTBRIDGE_VERIFICATION_SANDBOX:-}" ]]; then
+    options+=(--disable-sandbox)
+  fi
   swift build "${options[@]}" --product agentbridge
   swift build "${options[@]}" --product AgentBridgeApp
   swift test "${options[@]}"

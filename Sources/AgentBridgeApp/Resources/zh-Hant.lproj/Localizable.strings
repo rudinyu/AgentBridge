@@ -50,7 +50,7 @@
 "Some changed files are not fully shown. Export the patch to review them, then confirm before accepting or applying." = "有些變更的檔案未完整顯示。請匯出 patch 檢視後，再確認並接受或套用。";
 "Confirmed %@ file(s) that were not fully shown, for diff sha256:%@." = "已確認 %@ 個未完整顯示的檔案，差異 sha256:%@。";
 "I exported the patch and reviewed the files that are not fully shown above." = "我已匯出 patch 並檢視上方未完整顯示的檔案。";
-"These Git-ignored paths are in the workspace but not in this diff. Verification can see them, and they will not reach your branch." = "這些被 Git 忽略的路徑在工作區中，但不在此差異內。驗證時讀得到它們，它們卻不會進入你的分支。";
+"These Git-ignored paths are in the workspace but not in this diff. Verification does not see them, and they will not reach your branch." = "這些被 Git 忽略的路徑在工作區中，但不在此差異內。驗證看不到它們，它們也不會進入你的分支。";
 "Reject / restore file" = "拒絕／還原檔案";
 "No changes in the isolated workspace" = "隔離工作區沒有變更";
 "Accept this verified diff" = "接受這份已驗證差異";
@@ -294,7 +294,7 @@
 "Mode: %@" = "模式：%@";
 "Executable: %@" = "執行檔：%@";
 "No verification command was requested; this exact choice is part of the approved digest." = "此計畫未要求執行驗證指令；這項選擇已納入核准摘要。";
-"The approved verification command executes project code with the current macOS user's rights; it is not an OS sandbox." = "已核准的驗證命令會以目前 macOS 使用者的權限執行專案程式碼；這不屬於作業系統沙盒。";
+"The approved verification command runs project code in a macOS sandbox on a throwaway copy of the reviewed diff. It cannot read your home folder or write outside that copy, but it can use the network." = "已核准的驗證命令會在 macOS 沙箱中，以已檢視 diff 的拋棄式副本執行專案程式碼。它無法讀取你的家目錄，也無法寫入副本以外的位置，但可以使用網路。";
 "I reviewed this immutable plan, task dependencies, permissions, extension scopes, memory sharing, limits, exact verification command, and digest." = "我已檢視此不可變計畫、任務相依關係、權限、擴充功能範圍、記憶分享、執行限制、確切驗證指令及摘要。";
 "One approval covers only this digest-bound run, including its displayed bounded repair rounds and verification. Any changed configuration or plan requires a new plan and approval." = "一次核准只適用於此摘要綁定的執行，包含畫面列出的有限修正回合及驗證。設定或計畫變更後必須重新產生並核准計畫。";
 "Approve this plan" = "核准此計畫";
@@ -1477,3 +1477,8 @@
 "Could not read the CLI help, so the required flags were not confirmed." = "無法讀取 CLI 說明，未能確認所需旗標。";
 "The CLI help no longer lists flags AgentBridge needs: %@." = "CLI 說明中已找不到 AgentBridge 需要的旗標：%@。";
 "Could not compact the audit file." = "無法壓縮稽核檔案。";
+"macOS sandbox-exec is unavailable, so verification cannot be isolated." = "找不到 macOS sandbox-exec，因此無法隔離驗證。";
+"The verification checkout commit does not match the session." = "驗證用副本的提交版本與工作階段不符。";
+"The program is not in the reviewed changes, so it cannot run in the verification checkout." = "此程式不在已檢視的變更內，因此無法在驗證用副本中執行。";
+"Could not find the macOS temporary folder for verification." = "找不到驗證所需的 macOS 暫存資料夾。";
+"Could not create the macOS temporary folder for verification." = "無法建立驗證所需的 macOS 暫存資料夾。";

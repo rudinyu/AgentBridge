@@ -3,6 +3,11 @@ import Foundation
 import XCTest
 @testable import AgentBridgeCore
 
+/// macOS refuses a nested sandbox, so these cannot run when AgentBridge verifies itself.
+func skipInsideVerificationSandbox() throws {
+    try XCTSkipIf(ProcessInfo.processInfo.environment[VerificationSandbox.environmentMarker] != nil)
+}
+
 final class ChangeWorkflowTests: XCTestCase {
     func testChangeCommandArgumentsUseTheDocumentedScopedWriteModes() throws {
         let workspace = "/tmp/AgentBridge changes;$(touch /tmp/should-not-exist)"
@@ -281,6 +286,7 @@ final class ChangeWorkflowTests: XCTestCase {
     }
 
     func testVerificationRequiresCustomCommandApprovalAndPassesArgumentsLiterally() async throws {
+        try skipInsideVerificationSandbox()
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         do {
@@ -317,6 +323,7 @@ final class ChangeWorkflowTests: XCTestCase {
     }
 
     func testDefaultVerificationRunsAnUnchangedProjectScript() async throws {
+        try skipInsideVerificationSandbox()
         let fixture = try await makeFixture(projectScript: "#!/bin/sh\necho project\n")
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let result = try await fixture.service.runVerification(sessionID: fixture.session.id)
@@ -325,14 +332,13 @@ final class ChangeWorkflowTests: XCTestCase {
     }
 
     func testChangedProjectScriptRunsOnlyAfterApprovalAsACustomCommand() async throws {
+        try skipInsideVerificationSandbox()
         let fixture = try await makeFixture(projectScript: "#!/bin/sh\nexit 1\n")
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let script = URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent(".codex/ci.sh")
-        let marker = fixture.rootURL.appendingPathComponent("script-ran")
-        try Data("#!/bin/sh\ntouch \(marker.path)\n".utf8).write(to: script)
+        try Data("#!/bin/sh\necho changed script\n".utf8).write(to: script)
 
         try await assertDefaultVerificationRejected(fixture)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
 
         let result = try await fixture.service.runVerification(
             sessionID: fixture.session.id,
@@ -340,7 +346,105 @@ final class ChangeWorkflowTests: XCTestCase {
             customCommandApproved: true
         )
         XCTAssertTrue(result.succeeded)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
+        XCTAssertEqual(result.standardOutput, "changed script\n")
+    }
+
+    func testVerificationRunsThePatchAndNotGitIgnoredFiles() async throws {
+        try skipInsideVerificationSandbox()
+        let fixture = try await makeFixture(projectScript: """
+        #!/bin/sh
+        grep -q patched source.txt || exit 1
+        [ ! -e planted ] || exit 2
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath)
+        try Data("patched\n".utf8).write(to: workspace.appendingPathComponent("source.txt"))
+        try Data("planted\n".utf8).write(to: workspace.appendingPathComponent(".gitignore"))
+        try Data("from the provider\n".utf8).write(to: workspace.appendingPathComponent("planted"))
+        let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        XCTAssertEqual(diff.ignoredPaths, ["planted"])
+
+        let result = try await fixture.service.runVerification(sessionID: fixture.session.id)
+        XCTAssertTrue(result.succeeded, result.standardError)
+        XCTAssertNoThrow(try FileManager.default.contentsOfDirectory(atPath: workspace.path))
+    }
+
+    func testIgnoredCustomProgramIsRefusedBecauseItIsNotInThePatch() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath)
+        let program = workspace.appendingPathComponent("planted")
+        try Data("planted\n".utf8).write(to: workspace.appendingPathComponent(".gitignore"))
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: program)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: program.path)
+        do {
+            _ = try await fixture.service.runVerification(
+                sessionID: fixture.session.id,
+                customExecutableURL: program,
+                customCommandApproved: true
+            )
+            XCTFail("An ignored program passed verification.")
+        } catch let error as AgentBridgeError {
+            guard case .verificationCommandRejected = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testVerificationCannotWriteOrReadOutsideItsCheckout() async throws {
+        try skipInsideVerificationSandbox()
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath)
+        let outside = fixture.sourceURL.appendingPathComponent("escaped")
+        let secret = fixture.store.rootURL.appendingPathComponent("planted-secret")
+        try Data("secret\n".utf8).write(to: secret)
+        let script = workspace.appendingPathComponent("probe.sh")
+        try Data("""
+        #!/bin/sh
+        touch '\(workspace.appendingPathComponent("escaped").path)' 2>/dev/null && echo wrote-workspace
+        touch '\(outside.path)' 2>/dev/null && echo wrote-source
+        cat '\(secret.path)' 2>/dev/null && echo read-secret
+        cat '\(fixture.sourceURL.appendingPathComponent("source.txt").path)' 2>/dev/null && echo read-source
+        ls '\(NSHomeDirectory())' >/dev/null 2>&1 && echo listed-home
+        touch inside && echo wrote-checkout
+        exit 0
+        """.utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let result = try await fixture.service.runVerification(
+            sessionID: fixture.session.id,
+            customExecutableURL: script,
+            customCommandApproved: true
+        )
+        XCTAssertEqual(result.standardOutput, "wrote-checkout\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outside.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("escaped").path))
+    }
+
+    func testVerificationThatEditsTheCheckoutFails() async throws {
+        try skipInsideVerificationSandbox()
+        let fixture = try await makeFixture(projectScript: "#!/bin/sh\necho edited > source.txt\n")
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let result = try await fixture.service.runVerification(sessionID: fixture.session.id)
+        XCTAssertTrue(result.workspaceChangedDuringVerification)
+        XCTAssertFalse(result.succeeded)
+    }
+
+    func testGitFilterLeftInTheCheckoutDoesNotRunOutsideTheSandbox() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appendingPathComponent("filter-ran")
+        let fixture = try await makeFixture(projectScript: """
+        #!/bin/sh
+        git config filter.review.clean 'touch \(marker.path); cat'
+        echo 'source.txt filter=review' > .gitattributes
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let result = try await fixture.service.runVerification(sessionID: fixture.session.id)
+        XCTAssertFalse(result.succeeded)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
     }
 
     func testProjectScriptAddedToTheWorkspaceIsRefusedEvenWhenGitIgnoresIt() async throws {
@@ -516,6 +620,7 @@ final class ChangeWorkflowTests: XCTestCase {
     }
 
     func testVerificationCancellationIsReportedAndDoesNotPassAcceptanceGate() async throws {
+        try skipInsideVerificationSandbox()
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let cancellation = CancellationFlag()

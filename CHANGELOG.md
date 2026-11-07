@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Changed: verification now runs in a throwaway checkout of the base commit plus the exact patch, inside a macOS sandbox, instead of in the provider's workspace with no sandbox. It cannot read or write your home folder, the data roots or the source repository, and a pass can no longer depend on Git-ignored files. Network access stays on. Builds no longer reuse caches between runs, and a verifier that starts its own sandbox must turn it off when `AGENTBRIDGE_VERIFICATION_SANDBOX` is set, because macOS refuses nested sandboxes; `.codex/ci.sh` now does this for SwiftPM. Verification is refused if `sandbox-exec` is unavailable.
 - Fixed: a workspace is now refused when `.git/info/exclude` has a pattern or a tracked file is marked assume-unchanged or skip-worktree. Either one hid edits from the review while verification still ran them.
 - Added: the review now lists Git-ignored paths in the workspace, in the App and in `changes diff`. Verification can see them, but they are not in the patch or the digest and do not reach your branch.
 - Added: accepting or applying a diff with files that are not fully shown, meaning long or non-UTF-8 files, now needs a separate confirmation bound to that exact diff. The App shows a checkbox; the CLI takes `--confirm-partial DIFF-DIGEST`, and `changes diff` prints the digest. Binary files still need no confirmation.
