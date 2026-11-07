@@ -83,7 +83,7 @@ App 與 CLI 共用已保存的根目錄。CLI 可用 `agentbridge workspace set 
 
 ### 變更審查、驗證、任務與擴充政策
 
-變更流程會將計畫摘要綁定工作階段；計畫內容變更會使先前核准失效。修改留在隔離工作區，不會寫入來源樹。App 提供完整逐檔 diff、單檔／全部還原與 patch 匯出。驗證是由使用者另行啟動的程序，不在工作階段工作區執行，而是在由固定提交版本加上完整 patch 建立的拋棄式副本中執行，因此通過驗證的內容就是摘要涵蓋的內容。未變更的指令碼仍會執行 patch 修改的程式碼，所以驗證在 Seatbelt 設定檔（`sandbox-exec`）中執行，無法使用時會拒絕執行：它無法讀寫家目錄、資料根目錄與來源 Repository，只能寫入該副本、`/tmp` 及每位使用者的暫存與快取資料夾，也無法傳送 Apple 事件或啟動 `launchctl`、`open`、`osascript`、`security`。網路仍保持開啟，以便全新副本取得相依套件；macOS 不允許巢狀沙箱，因此會自行啟動沙箱的工具須在設定 `AGENTBRIDGE_VERIFICATION_SANDBOX` 時關閉該功能，`.codex/ci.sh` 會對 SwiftPM 傳入 `--disable-sandbox`。預設為 `.codex/ci.sh`，且因供應商可編輯工作區，只有它仍是固定提交版本中的可執行檔時才會執行，變更過的指令碼需以自訂命令核准後執行；自訂 executable 路徑和 argv 必須明確核准，並直接傳入程序，不經 shell 拼接。被 Git 忽略的工作區檔案不會複製，因此驗證看不到它們；檢視畫面會列出它們，而所有讓編輯避開 diff 的方式都會被拒絕。若驗證改變了副本的 diff 即視為失敗，且因受驗證程式可寫入副本的 Git 設定，會先重新檢查這些設定。建置快取不會在兩次驗證之間保留。接受或套用必須先成功驗證與目前 diff 完全相同的內容；若有過長或非 UTF-8 檔案未完整顯示，還需另行確認，且確認綁定該摘要。套用前檢查來源 base commit，並在具名本機 branch 建立未提交 worktree。AgentBridge 不會 commit、push 或 merge。
+變更流程會將計畫摘要綁定工作階段；計畫內容變更會使先前核准失效。修改留在隔離工作區，不會寫入來源樹。App 提供完整逐檔 diff、單檔／全部還原與 patch 匯出。驗證是由使用者另行啟動的程序，不在工作階段工作區執行，而是在由固定提交版本加上完整 patch 建立的拋棄式副本中執行，因此通過驗證的內容就是摘要涵蓋的內容。未變更的指令碼仍會執行 patch 修改的程式碼，所以驗證在 Seatbelt 設定檔（`sandbox-exec`）中執行，無法使用時會拒絕執行：它無法讀寫家目錄、資料根目錄與來源 Repository，只能寫入該副本、`/tmp` 及每位使用者的暫存與快取資料夾，也無法傳送 Apple 事件或啟動 `launchctl`、`open`、`osascript`、`security`。網路仍保持開啟，以便全新副本取得相依套件；macOS 不允許巢狀沙箱，因此會自行啟動沙箱的工具須在設定 `AGENTBRIDGE_VERIFICATION_SANDBOX` 時關閉該功能，`.codex/ci.sh` 會對 SwiftPM 傳入 `--disable-sandbox`。預設為 `.codex/ci.sh`，且因供應商可編輯工作區，只有它仍是固定提交版本中的可執行檔時才會執行，變更過的指令碼需以自訂命令核准後執行；自訂 executable 路徑和 argv 必須明確核准，並直接傳入程序，不經 shell 拼接。被 Git 忽略的工作區檔案不會複製，因此驗證看不到它們；檢視畫面會列出它們，若驗證改變了副本的 diff 即視為失敗，且因受驗證程式可寫入副本的 Git 設定，會先重新檢查這些設定。建置快取不會在兩次驗證之間保留。接受或套用必須先成功驗證與目前 diff 完全相同的內容；若有過長或非 UTF-8 檔案未完整顯示，還需另行確認，且確認綁定該摘要。套用前檢查來源 base commit，並在具名本機 branch 建立未提交 worktree。AgentBridge 不會 commit、push 或 merge。
 
 活動時間軸呈現排序後且已遮蔽的 `AuditEvent`，provider 輸出只在官方 CLI 確實回報時才顯示。任務看板保存每個實際啟動的操作、進度、核准狀態、終止狀態及 diff／驗證參照。App、CLI 與自主流程合計最多同時進行三個供應商執行（唯讀、變更與驗證執行）：每個執行持有工作階段租約，再加上私有根目錄中三個名額鎖檔之一；檢視差異、核准計畫、接受變更等短操作只取工作階段租約，不受此上限阻擋，因此上限跨程序有效，程序當掉也會釋放名額。同一個租約也會阻止同一工作階段重複執行。取消與執行租約以各工作階段為範圍。未啟動的操作不會被記為執行中。
 
@@ -111,7 +111,7 @@ provider CLI 決定原生互動 TUI transcript 是否保存。AgentBridge 不會
 
 內嵌終端直接將 PTY 接到官方 CLI，不保存原始終端畫面或輸入。只有按下固定的 `/usage` 按鈕後，App 才會將有限數量的可見 SwiftTerm 列暫存在記憶體供盡力解析；辨識到用量值或 15 秒後停止取樣，再按固定按鈕可重新啟動。正規化報告產生後即丟棄原始文字，不會記錄、保存或傳給模型。SwiftTerm 不允許 OSC 52 剪貼簿讀寫及 terminal link 開啟，並限制 scrollback。獨立「本機終端機」使用者 shell 以目前 macOS 帳戶權限執行；Repository clone 不會限制其檔案或網路存取。
 
-Git clone 停用 hooks、fsmonitor、untracked cache 及 LFS smudge，移除 origin 並使用私有 Git 設定目錄。在工作區執行任何 Git 命令前，AgentBridge 會拒絕 clone 寫入項目與 `user.name`、`user.email` 以外的本機設定，因為 `filter.*.clean` 這類設定會在供應商沙箱外執行程式。未提交內容、LFS 實體檔及未另行初始化的 submodule 不會因此成為完整快照。AgentBridge 不會自動對來源 Repository 做 commit、push、merge 或清理。
+Git clone 停用 hooks、fsmonitor、untracked cache 及 LFS smudge，移除 origin 並使用私有 Git 設定目錄。在工作區供應商或終端機中的命令可以編輯隔離變更工作區，包括其中的 `.git`，因此 AgentBridge 檢視時絕不讀取該 `.git`。建立工作階段時，它只從來源 Repository 抓取固定的提交，存入 Application Support 下的私人 bare repository（`base-repositories/<工作階段-id>.git`），Git 會重新雜湊收到的每個物件。diff、被忽略檔案清單、還原動作、`.codex/ci.sh` 檢查與驗證用副本，都以該私人 repository 的物件與設定、工作區的檔案作為工作樹，並搭配固定提交的全新 index 執行 Git。因此工作區自己 `.git` 中的 `filter.*.clean`、`info/exclude`、index 旗標、被替換的物件或移動過的 `HEAD`，都無法隱藏修改或執行程式。工作區中若有資料夾本身是 Git Repository，檢視會停止，因為 Git 不會查看其內部。在此變更前建立的工作階段，會在第一次檢視時從來源 Repository 取得私人副本；若來源已沒有該提交，檢視會要求建立新的工作階段。未提交內容、LFS 實體檔及未另行初始化的 submodule 不會因此成為完整快照。AgentBridge 不會自動對來源 Repository 做 commit、push、merge 或清理。
 
 ## Claude API 額度
 

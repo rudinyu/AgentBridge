@@ -97,6 +97,7 @@ public final class WorkspaceManager: @unchecked Sendable {
                 policy: SessionPolicy(accessMode: accessMode, workspaceReadOnly: accessMode == .readOnly, apiModeAllowed: false),
                 accountProfileID: accountProfileID
             )
+            if accessMode == .isolatedChanges { _ = try await privateBase(for: record) }
             try store.saveSession(record)
             try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "session.created", message: "Created an isolated workspace for commit \(snapshot.commit.prefix(12)); uncommitted source changes: \(snapshot.wasDirty ? "not included" : "not present")."))
             return record
@@ -210,20 +211,24 @@ public final class WorkspaceManager: @unchecked Sendable {
             throw AgentBridgeError.sessionMismatch("The session permissions do not match the requested run mode. Create a session with the matching mode.")
         }
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
-        guard isWithinManagedWorkspaces(workspace), isDirectory(workspace), !isSymbolicLink(workspace) else {
+        guard isWithinManagedWorkspaces(workspace), isDirectory(workspace), !isSymbolicLink(workspace),
+              workspace.lastPathComponent == session.id.uuidString.lowercased() else {
             throw AgentBridgeError.sessionMismatch("The session workspace is outside AgentBridge's managed isolated directory.")
         }
+        // Providers can edit an isolated-change workspace, `.git` included, so its
+        // review reads the pinned commit from the private base instead.
+        if accessMode == .isolatedChanges {
+            _ = try await privateBase(for: session)
+            return
+        }
         let gitMetadata = workspace.appendingPathComponent(".git")
-        guard workspace.lastPathComponent == session.id.uuidString.lowercased(),
-              isDirectory(gitMetadata), !isSymbolicLink(gitMetadata) else {
+        guard isDirectory(gitMetadata), !isSymbolicLink(gitMetadata) else {
             throw AgentBridgeError.sessionMismatch("The isolated workspace has lost its Git metadata.")
         }
         let alternateObjects = gitMetadata.appendingPathComponent("objects/info/alternates")
         guard !fileManager.fileExists(atPath: alternateObjects.path) else {
             throw AgentBridgeError.sessionMismatch("The isolated workspace still references another Git object directory.")
         }
-        try await validateWorkspaceGitConfig(workspace)
-        try await validateNothingHiddenFromDiff(workspace)
         let topLevel = try await gitText(["-C", workspace.path, "rev-parse", "--show-toplevel"])
         guard URL(fileURLWithPath: topLevel, isDirectory: true).standardizedFileURL.path == workspace.path else {
             throw AgentBridgeError.sessionMismatch("The Git workspace root does not match the session record.")
@@ -232,67 +237,113 @@ public final class WorkspaceManager: @unchecked Sendable {
         guard commit == session.snapshotCommit else { throw AgentBridgeError.workspaceChanged }
     }
 
-    /// Refuses any local Git setting beyond those a clone writes. Providers can edit
-    /// this workspace, and settings such as `filter.*.clean` make later Git commands
-    /// here run a program of their choosing, outside any provider sandbox.
-    private func validateWorkspaceGitConfig(_ workspace: URL) async throws {
+    /// AgentBridge's own copy of the pinned commit, in the private data root. Review,
+    /// restore and verification read the commit and Git settings from here, never from
+    /// the workspace's `.git`, which a provider or a terminal command can change.
+    /// Only that one commit is fetched, and Git rehashes every object it receives.
+    func privateBase(for session: SessionRecord) async throws -> URL {
+        let bases = store.rootURL.appendingPathComponent("base-repositories", isDirectory: true)
+        let base = bases.appendingPathComponent("\(session.id.uuidString.lowercased()).git", isDirectory: true)
+        if try await privateBaseHasCommit(base, session.snapshotCommit) { return base }
+        try AuditStore.createPrivateDirectory(bases, fileManager: fileManager)
+        let staging = bases.appendingPathComponent(".staging-\(UUID().uuidString.lowercased()).git", isDirectory: true)
+        defer { try? fileManager.removeItem(at: staging) }
+        _ = try await runGit(arguments: ["init", "--quiet", "--bare", "--template=", "--", staging.path], workingDirectory: nil)
+        let source = URL(fileURLWithPath: session.sourceRepositoryPath, isDirectory: true).standardizedFileURL
+        do {
+            _ = try await runGit(arguments: [
+                "--git-dir", staging.path, "-c", "protocol.version=2", "-c", "transfer.fsckObjects=true",
+                "fetch", "--quiet", "--depth", "1", "--no-tags", source.path,
+                "\(session.snapshotCommit):\(Self.privateBaseReference)"
+            ], workingDirectory: nil, timeout: 300)
+            _ = try await runGit(arguments: [
+                "--git-dir", staging.path, "symbolic-ref", "HEAD", Self.privateBaseReference
+            ], workingDirectory: nil)
+        } catch {
+            throw AgentBridgeError.sessionMismatch("The source repository no longer has this session's commit, so its changes cannot be reviewed. Create a new session.")
+        }
+        guard try await privateBaseHasCommit(staging, session.snapshotCommit) else {
+            throw AgentBridgeError.git("The private copy of the session's commit could not be confirmed.")
+        }
+        if fileManager.fileExists(atPath: base.path) { try fileManager.removeItem(at: base) }
+        do {
+            try fileManager.moveItem(at: staging, to: base)
+        } catch {
+            // Another process may have finished the same copy first.
+            guard try await privateBaseHasCommit(base, session.snapshotCommit) else { throw error }
+        }
+        return base
+    }
+
+    /// The branch that holds the pinned commit, so a clone of the base carries it.
+    private static let privateBaseReference = "refs/heads/agentbridge-base"
+
+    private func privateBaseHasCommit(_ base: URL, _ commit: String) async throws -> Bool {
+        guard isDirectory(base), !isSymbolicLink(base) else { return false }
         let result = try await runGit(
-            arguments: ["-C", workspace.path, "config", "--local", "--name-only", "--list"],
-            workingDirectory: nil
-        )
-        guard !result.outputWasTruncated, let keys = String(data: result.standardOutput, encoding: .utf8) else {
-            throw AgentBridgeError.git("Git returned information that could not be recognized.")
-        }
-        for key in keys.split(whereSeparator: \.isNewline) where !Self.allowedWorkspaceGitConfigKeys.contains(key.lowercased()) {
-            throw AgentBridgeError.sessionMismatch("The isolated workspace's Git settings were changed. Create a new session.")
-        }
-    }
-
-    /// Refuses what keeps workspace edits out of the diff without changing a Git
-    /// setting. A clone has neither, and verification would still run those edits.
-    private func validateNothingHiddenFromDiff(_ workspace: URL) async throws {
-        let refused = AgentBridgeError.sessionMismatch("The isolated workspace's Git settings were changed. Create a new session.")
-        let exclude = workspace.appendingPathComponent(".git/info/exclude")
-        if fileManager.fileExists(atPath: exclude.path) {
-            guard let contents = fileManager.contents(atPath: exclude.path) else { throw refused }
-            for line in contents.split(separator: UInt8(ascii: "\n")) where line.first != UInt8(ascii: "#") {
-                throw refused
-            }
-        }
-        let index = try await runGit(
-            arguments: ["-C", workspace.path, "ls-files", "-v", "-z", "--"],
+            arguments: ["--git-dir", base.path, "rev-parse", "--verify", "--quiet", "\(Self.privateBaseReference)^{commit}"],
             workingDirectory: nil,
-            outputLimit: Self.maximumIndexListingBytes
+            allowedExitCodes: [0, 1, 128]
         )
-        guard !index.outputWasTruncated else { throw AgentBridgeError.git("The Git file index exceeds the size limit.") }
-        // `-v` tags skip-worktree entries S and assume-unchanged entries in lowercase.
-        for entry in index.standardOutput.split(separator: 0) {
-            guard let tag = entry.first, tag != UInt8(ascii: "S"),
-                  !(UInt8(ascii: "a")...UInt8(ascii: "z")).contains(tag) else { throw refused }
-        }
+        return result.exitCode == 0
+            && String(decoding: result.standardOutput, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == commit
     }
 
-    /// What `git clone` writes on macOS, plus a commit identity set from a terminal
-    /// in the workspace.
-    private static let allowedWorkspaceGitConfigKeys: Set<String> = [
-        "core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates",
-        "core.ignorecase", "core.precomposeunicode", "core.symlinks",
-        "extensions.objectformat", "extensions.refstorage",
-        "user.name", "user.email"
-    ]
+    /// Git arguments that read `workTree` against the private base, with a fresh index
+    /// of the pinned commit. Nothing in the work tree's own `.git` is read, so it can
+    /// neither hide an edit nor make Git run a program.
+    private struct ReviewRepository {
+        let arguments: [String]
+        let index: URL
+    }
+
+    private func withReviewRepository<T>(
+        _ session: SessionRecord,
+        workTree: URL,
+        _ body: (ReviewRepository) async throws -> T
+    ) async throws -> T {
+        let base = try await privateBase(for: session)
+        let directory = store.rootURL.appendingPathComponent("tmp/git", isDirectory: true)
+        try AuditStore.createPrivateDirectory(directory, fileManager: fileManager)
+        let index = directory.appendingPathComponent("index-\(UUID().uuidString.lowercased())")
+        defer {
+            try? fileManager.removeItem(at: index)
+            try? fileManager.removeItem(at: index.appendingPathExtension("lock"))
+        }
+        let review = ReviewRepository(
+            arguments: ["--git-dir", base.path, "--work-tree", workTree.path, "-C", workTree.path],
+            index: index
+        )
+        _ = try await reviewGit(review, ["read-tree", session.snapshotCommit])
+        return try await body(review)
+    }
+
+    private func reviewGit(
+        _ review: ReviewRepository,
+        _ arguments: [String],
+        allowedExitCodes: Set<Int32> = [0],
+        outputLimit: Int = 256_000
+    ) async throws -> ProcessResult {
+        try await runGit(
+            arguments: review.arguments + arguments,
+            workingDirectory: nil,
+            allowedExitCodes: allowedExitCodes,
+            outputLimit: outputLimit,
+            indexFile: review.index
+        )
+    }
 
     /// Whether `.codex/ci.sh` is still the executable file from the pinned commit.
-    /// Call after `validateWorkspace`, which keeps Git filters out of the hash.
     func projectVerificationScriptIsUnchanged(for session: SessionRecord) async throws -> Bool {
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
         let path = ".codex/ci.sh"
         try validateNoSymlinkParent(of: workspace.appendingPathComponent(path), inside: workspace)
-        let hash = try await gitText(["-C", workspace.path, "hash-object", "--", path])
-        let entry = try await runGit(
-            arguments: ["-C", workspace.path, "ls-tree", "-z", session.snapshotCommit, "--", path],
-            workingDirectory: nil
-        )
-        return entry.standardOutput == Data("100755 blob \(hash)\t\(path)\0".utf8)
+        return try await withReviewRepository(session, workTree: workspace) { review in
+            let hash = String(decoding: try await reviewGit(review, ["hash-object", "--no-filters", "--", path]).standardOutput, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let entry = try await reviewGit(review, ["ls-tree", "-z", session.snapshotCommit, "--", path])
+            return entry.standardOutput == Data("100755 blob \(hash)\t\(path)\0".utf8)
+        }
     }
 
     public func diff(for session: SessionRecord) async throws -> WorkspaceChangeDiff {
@@ -301,17 +352,19 @@ public final class WorkspaceManager: @unchecked Sendable {
         }
         try await validateWorkspace(for: session, accessMode: .isolatedChanges)
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
-        return try await changeDiff(in: workspace, baseCommit: session.snapshotCommit)
+        return try await withReviewRepository(session, workTree: workspace) { review in
+            try await changeDiff(review, baseCommit: session.snapshotCommit)
+        }
     }
 
-    private func changeDiff(in workspace: URL, baseCommit: String) async throws -> WorkspaceChangeDiff {
-        let trackedResult = try await runGit(arguments: [
-            "-C", workspace.path, "diff", "--name-status", "-z", "--no-renames", baseCommit, "--"
-        ], workingDirectory: nil)
+    private func changeDiff(_ review: ReviewRepository, baseCommit: String) async throws -> WorkspaceChangeDiff {
+        let trackedResult = try await reviewGit(review, [
+            "diff", "--name-status", "-z", "--no-renames", baseCommit, "--"
+        ])
         let trackedEntries = try parseNameStatus(trackedResult.standardOutput)
-        let untrackedResult = try await runGit(arguments: [
-            "-C", workspace.path, "ls-files", "--others", "--exclude-standard", "-z", "--"
-        ], workingDirectory: nil)
+        let untrackedResult = try await reviewGit(review, [
+            "ls-files", "--others", "--exclude-standard", "-z", "--"
+        ], outputLimit: Self.maximumIndexListingBytes)
         let untrackedPaths = try parseNULSeparatedPaths(untrackedResult.standardOutput)
         let trackedPaths = Set(trackedEntries.map(\.path))
         let allPaths = (trackedEntries.map(\.path) + untrackedPaths.filter { !trackedPaths.contains($0) }).sorted()
@@ -319,23 +372,27 @@ public final class WorkspaceManager: @unchecked Sendable {
         var fileDiffs: [ChangeFileDiff] = []
         var combinedPatch = Data()
         for path in allPaths {
+            // Git lists a folder holding its own `.git` as one entry and never looks inside.
+            if path.hasSuffix("/") {
+                throw AgentBridgeError.sessionMismatch("\(path) in the workspace is its own Git repository, so its files cannot be reviewed. Remove its .git folder, or restore all changes.")
+            }
             try validateRelativeGitPath(path)
             let isUntracked = !trackedPaths.contains(path)
             let arguments: [String]
             if isUntracked {
                 arguments = [
-                    "-C", workspace.path, "diff", "--no-index", "--no-ext-diff", "--no-textconv",
+                    "diff", "--no-index", "--no-ext-diff", "--no-textconv",
                     "--no-color", "--binary", "--unified=3", "--", "/dev/null", path
                 ]
             } else {
                 arguments = [
-                    "-C", workspace.path, "diff", "--no-ext-diff", "--no-textconv", "--no-color",
+                    "diff", "--no-ext-diff", "--no-textconv", "--no-color",
                     "--binary", "--unified=3", "--no-renames", baseCommit, "--", path
                 ]
             }
-            let patchResult = try await runGit(
-                arguments: arguments,
-                workingDirectory: nil,
+            let patchResult = try await reviewGit(
+                review,
+                arguments,
                 allowedExitCodes: isUntracked ? [0, 1] : [0],
                 outputLimit: max(1, Self.maximumPatchBytes - combinedPatch.count)
             )
@@ -360,9 +417,9 @@ public final class WorkspaceManager: @unchecked Sendable {
         }
         // A clone starts with no ignored files, so these all appeared during the session.
         // `--directory` keeps a build folder to one entry.
-        let ignoredResult = try await runGit(arguments: [
-            "-C", workspace.path, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z", "--"
-        ], workingDirectory: nil)
+        let ignoredResult = try await reviewGit(review, [
+            "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z", "--"
+        ])
         guard !ignoredResult.outputWasTruncated else { throw AgentBridgeError.git("The Git file index exceeds the size limit.") }
         return WorkspaceChangeDiff(
             baseCommit: baseCommit,
@@ -377,14 +434,11 @@ public final class WorkspaceManager: @unchecked Sendable {
 
     /// Builds what verification runs: the pinned commit plus exactly this patch.
     /// Git-ignored files stay behind, so a pass cannot rest on anything outside the
-    /// digest. `--no-local` makes Git rehash every object it copies from the
-    /// provider-writable workspace.
+    /// digest. The commit comes from the private base, not the workspace.
     func createVerificationCheckout(for session: SessionRecord, patch: Data, at destination: URL) async throws {
-        let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
+        let base = try await privateBase(for: session)
         _ = try await runGit(arguments: [
-            "-c", "uploadpack.packObjectsHook=",
-            "clone", "--no-local", "--no-hardlinks", "--no-checkout", "--",
-            workspace.path, destination.path
+            "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--template=", "--", base.path, destination.path
         ], workingDirectory: nil)
         _ = try await runGit(arguments: ["-C", destination.path, "remote", "remove", "origin"], workingDirectory: nil)
         _ = try await runGit(arguments: [
@@ -403,24 +457,19 @@ public final class WorkspaceManager: @unchecked Sendable {
         )
     }
 
-    /// Whether a finished verification left the checkout's diff as it started.
-    /// Verified code could write this `.git`, so its settings are checked before Git
-    /// reads them; a filter left there must not run outside the sandbox.
-    func verificationCheckoutMatches(_ checkout: URL, baseCommit: String, digest: String) async throws -> Bool {
-        let gitMetadata = checkout.appendingPathComponent(".git")
-        guard isDirectory(checkout), !isSymbolicLink(checkout),
-              isDirectory(gitMetadata), !isSymbolicLink(gitMetadata),
-              !fileManager.fileExists(atPath: gitMetadata.appendingPathComponent("objects/info/alternates").path) else {
-            return false
-        }
+    /// Whether a finished verification left the checkout's diff as it started. Verified
+    /// code could write the checkout's `.git`, so the diff is read against the private
+    /// base, and anything that hides an edit or blocks the review counts as a change.
+    func verificationCheckoutMatches(_ checkout: URL, session: SessionRecord, digest: String) async throws -> Bool {
+        guard isDirectory(checkout), !isSymbolicLink(checkout) else { return false }
         do {
-            try await validateWorkspaceGitConfig(checkout)
-            try await validateNothingHiddenFromDiff(checkout)
+            return try await withReviewRepository(session, workTree: checkout) { review in
+                try await changeDiff(review, baseCommit: session.snapshotCommit)
+            }.digest == digest
         } catch let error as AgentBridgeError {
             guard case .sessionMismatch = error else { throw error }
             return false
         }
-        return try await changeDiff(in: checkout, baseCommit: baseCommit).digest == digest
     }
 
     private static let maximumPatchBytes = 10 * 1_024 * 1_024
@@ -440,33 +489,20 @@ public final class WorkspaceManager: @unchecked Sendable {
             throw AgentBridgeError.invalidInput("Only files listed in the current diff can be restored.")
         }
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
-        for path in requestedPaths.sorted() {
-            let tracked = try await runGit(
-                arguments: ["-C", workspace.path, "ls-files", "--error-unmatch", "--", path],
-                workingDirectory: nil,
-                allowedExitCodes: [0, 1]
-            )
-            guard !tracked.outputWasTruncated else { throw AgentBridgeError.git("The Git file index exceeds the size limit.") }
-            if tracked.exitCode == 0 {
-                let inBaseCommit = try await runGit(arguments: [
-                    "-C", workspace.path, "ls-tree", "-r", "--name-only", "-z", session.snapshotCommit, "--", path
-                ], workingDirectory: nil)
+        try await withReviewRepository(session, workTree: workspace) { review in
+            for path in requestedPaths.sorted() {
+                let inBaseCommit = try await reviewGit(review, ["ls-tree", "-z", "--name-only", session.snapshotCommit, "--", path])
                 guard !inBaseCommit.outputWasTruncated else { throw AgentBridgeError.git("The Git base file list exceeds the size limit.") }
-                if inBaseCommit.standardOutput.isEmpty {
-                    _ = try await runGit(arguments: ["-C", workspace.path, "rm", "-f", "--", path], workingDirectory: nil)
-                } else {
-                    _ = try await runGit(arguments: [
-                        "-C", workspace.path, "restore", "--source", session.snapshotCommit,
-                        "--worktree", "--staged", "--", path
-                    ], workingDirectory: nil)
+                if !inBaseCommit.standardOutput.isEmpty {
+                    _ = try await reviewGit(review, ["checkout", session.snapshotCommit, "--", path])
+                    continue
                 }
-            } else {
                 let fileURL = workspace.appendingPathComponent(path)
                 try validateNoSymlinkParent(of: fileURL, inside: workspace)
                 var metadata = stat()
                 guard lstat(fileURL.path, &metadata) == 0,
                       (metadata.st_mode & S_IFMT) == S_IFREG || (metadata.st_mode & S_IFMT) == S_IFLNK else {
-                    throw AgentBridgeError.git("An untracked file changed or is not a regular file; nothing was restored.")
+                    throw AgentBridgeError.git("A new file changed or is not a regular file; nothing was restored.")
                 }
                 try fileManager.removeItem(at: fileURL)
             }
@@ -479,8 +515,10 @@ public final class WorkspaceManager: @unchecked Sendable {
         }
         try await validateWorkspace(for: session, accessMode: .isolatedChanges)
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
-        _ = try await runGit(arguments: ["-C", workspace.path, "reset", "--hard", session.snapshotCommit], workingDirectory: nil)
-        _ = try await runGit(arguments: ["-C", workspace.path, "clean", "-fd", "--"], workingDirectory: nil)
+        try await withReviewRepository(session, workTree: workspace) { review in
+            _ = try await reviewGit(review, ["checkout", "--force", session.snapshotCommit, "--", "."])
+            _ = try await reviewGit(review, ["clean", "-fd", "--"])
+        }
     }
 
     public func applyChangesToLocalBranch(for session: SessionRecord, branchName: String) async throws -> BranchApplyResult {
@@ -761,7 +799,9 @@ public final class WorkspaceManager: @unchecked Sendable {
         workingDirectory: URL?,
         standardInput: Data = Data(),
         allowedExitCodes: Set<Int32> = [0],
-        outputLimit: Int = 256_000
+        outputLimit: Int = 256_000,
+        indexFile: URL? = nil,
+        timeout: TimeInterval = 60
     ) async throws -> ProcessResult {
         guard fileManager.isExecutableFile(atPath: gitURL.path) else {
             throw AgentBridgeError.git("System Git could not be found.")
@@ -770,7 +810,7 @@ public final class WorkspaceManager: @unchecked Sendable {
         try AuditStore.createPrivateDirectory(privateTemp, fileManager: fileManager)
         let home = store.rootURL.appendingPathComponent("git-home", isDirectory: true)
         try AuditStore.createPrivateDirectory(home, fileManager: fileManager)
-        let environment: [String: String] = [
+        var environment: [String: String] = [
             "HOME": home.path,
             "USER": NSUserName(),
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -784,6 +824,7 @@ public final class WorkspaceManager: @unchecked Sendable {
             "GIT_NO_REPLACE_OBJECTS": "1",
             "GIT_ATTR_NOSYSTEM": "1"
         ]
+        if let indexFile { environment["GIT_INDEX_FILE"] = indexFile.path }
         let spec = ProcessSpec(
             executableURL: gitURL,
             arguments: [
@@ -795,7 +836,7 @@ public final class WorkspaceManager: @unchecked Sendable {
             environment: environment,
             workingDirectoryURL: workingDirectory,
             standardInput: standardInput,
-            timeout: 60,
+            timeout: timeout,
             outputLimit: outputLimit
         )
         let result = try await runner.run(spec)

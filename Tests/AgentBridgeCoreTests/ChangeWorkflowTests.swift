@@ -544,34 +544,35 @@ final class ChangeWorkflowTests: XCTestCase {
         try await assertDefaultVerificationRejected(fixture)
     }
 
-    func testWorkspaceGitFilterIsRefusedBeforeGitCanRunIt() async throws {
+    func testWorkspaceGitFilterNeverRuns() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let workspace = URL(fileURLWithPath: fixture.session.workspacePath)
         let marker = fixture.rootURL.appendingPathComponent("filter-ran")
         try git(["-C", workspace.path, "config", "filter.review.clean", "touch \(marker.path); cat"])
+        try Data("source.txt filter=review\n".utf8).write(to: workspace.appendingPathComponent(".git/info/attributes"))
         try Data("source.txt filter=review\n".utf8).write(to: workspace.appendingPathComponent(".gitattributes"))
         try Data("changed\n".utf8).write(to: workspace.appendingPathComponent("source.txt"))
 
-        await assertGitSettingsRejected { _ = try await fixture.service.changesDiff(sessionID: fixture.session.id) }
-        await assertGitSettingsRejected { _ = try await fixture.service.runVerification(sessionID: fixture.session.id) }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
-    }
-
-    func testWorkspaceGitIncludeIsRefused() async throws {
-        let fixture = try await makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
-        try git(["-C", fixture.session.workspacePath, "config", "include.path", "/dev/null"])
-        await assertGitSettingsRejected { _ = try await fixture.service.changesDiff(sessionID: fixture.session.id) }
-    }
-
-    func testCommitIdentitySetInTheWorkspaceIsAllowed() async throws {
-        let fixture = try await makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
-        try git(["-C", fixture.session.workspacePath, "config", "user.name", "AgentBridge Tests"])
-        try git(["-C", fixture.session.workspacePath, "config", "user.email", "agentbridge-tests@example.invalid"])
         let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
-        XCTAssertTrue(diff.files.isEmpty)
+        XCTAssertEqual(diff.files.map(\.path), [".gitattributes", "source.txt"])
+        try await fixture.service.restoreAllChanges(sessionID: fixture.session.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path), "Review read the workspace's own Git settings.")
+    }
+
+    func testWorkspaceGitIncludeIsIgnored() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath)
+        let marker = fixture.rootURL.appendingPathComponent("filter-ran")
+        let included = fixture.rootURL.appendingPathComponent("included.gitconfig")
+        try Data("[filter \"review\"]\n\tclean = touch \(marker.path); cat\n".utf8).write(to: included)
+        try git(["-C", workspace.path, "config", "include.path", included.path])
+        try Data("source.txt filter=review\n".utf8).write(to: workspace.appendingPathComponent(".git/info/attributes"))
+        try Data("changed\n".utf8).write(to: workspace.appendingPathComponent("source.txt"))
+        let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        XCTAssertEqual(diff.files.map(\.path), ["source.txt"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
     }
 
     func testNonUTF8FileIsReviewedAndAppliedWithItsOriginalBytes() async throws {
@@ -730,7 +731,7 @@ final class ChangeWorkflowTests: XCTestCase {
     }
 
     @discardableResult
-    func testWorkspaceThatHidesEditsFromTheDiffIsRefused() async throws {
+    func testEditsHiddenFromTheWorkspacesOwnGitStillAppearInTheDiff() async throws {
         let hidingMoves: [(URL) throws -> Void] = [
             { workspace in
                 try Data("hidden.txt\n".utf8).write(to: workspace.appendingPathComponent(".git/info/exclude"))
@@ -740,6 +741,11 @@ final class ChangeWorkflowTests: XCTestCase {
             },
             { workspace in
                 try self.git(["-C", workspace.path, "update-index", "--skip-worktree", "source.txt"])
+            },
+            { workspace in
+                // Committing moves the workspace's own HEAD, so its status looks clean.
+                try self.git(["-C", workspace.path, "add", "--all"])
+                try self.git(["-C", workspace.path, "commit", "-q", "-m", "hide the edit"])
             }
         ]
         for hide in hidingMoves {
@@ -747,9 +753,48 @@ final class ChangeWorkflowTests: XCTestCase {
             defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
             let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
             try Data("changed\n".utf8).write(to: workspace.appendingPathComponent("source.txt"))
+            try Data("hidden\n".utf8).write(to: workspace.appendingPathComponent("hidden.txt"))
             try hide(workspace)
-            await assertGitSettingsRejected {
-                _ = try await WorkspaceManager(store: fixture.store).diff(for: fixture.session)
+            let diff = try await WorkspaceManager(store: fixture.store).diff(for: fixture.session)
+            XCTAssertEqual(diff.files.map(\.path), ["hidden.txt", "source.txt"])
+        }
+    }
+
+    func testAFolderThatIsItsOwnRepositoryStopsTheReview() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let nested = URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent("nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try git(["init", "-q", nested.path])
+        try Data("unseen\n".utf8).write(to: nested.appendingPathComponent("inner.txt"))
+        do {
+            _ = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+            XCTFail("A nested repository's files were left out of the review.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch(let message) = error, message.contains("its own Git repository") else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testASessionWithoutAPrivateBaseGetsOneFromTheSource() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let base = fixture.store.rootURL.appendingPathComponent("base-repositories/\(fixture.session.id.uuidString.lowercased()).git")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: base.path))
+        try FileManager.default.removeItem(at: base)
+        try Data("changed\n".utf8).write(to: URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent("source.txt"))
+        let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+        XCTAssertEqual(diff.files.map(\.path), ["source.txt"])
+
+        try FileManager.default.removeItem(at: base)
+        try FileManager.default.removeItem(at: fixture.sourceURL)
+        do {
+            _ = try await fixture.service.changesDiff(sessionID: fixture.session.id)
+            XCTFail("A review ran without the pinned commit.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch(let message) = error, message.contains("no longer has this session's commit") else {
+                return XCTFail("Unexpected error: \(error)")
             }
         }
     }
@@ -825,19 +870,6 @@ final class ChangeWorkflowTests: XCTestCase {
             XCTFail("Files that were not fully shown were taken without a matching confirmation.", line: line)
         } catch let error as AgentBridgeError {
             guard case .invalidInput(let message) = error, message.contains("not fully shown") else {
-                return XCTFail("Unexpected error: \(error)", line: line)
-            }
-        } catch {
-            XCTFail("Unexpected error: \(error)", line: line)
-        }
-    }
-
-    private func assertGitSettingsRejected(line: UInt = #line, _ operation: () async throws -> Void) async {
-        do {
-            try await operation()
-            XCTFail("The workspace's changed Git settings were accepted.", line: line)
-        } catch let error as AgentBridgeError {
-            guard case .sessionMismatch(let message) = error, message.contains("Git settings were changed") else {
                 return XCTFail("Unexpected error: \(error)", line: line)
             }
         } catch {

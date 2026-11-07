@@ -1494,3 +1494,7 @@
 "Tokens in the Current Session" = "Tokens in the Current Session";
 "A local token limit must be an integer from 1000 to 10000000000. Leave it empty for no limit." = "A local token limit must be an integer from 1000 to 10000000000. Leave it empty for no limit.";
 "AgentBridge local %@ token limit reached (%@/%@); wait for usage to leave this window or adjust the local limit." = "AgentBridge local %@ token limit reached (%@/%@); wait for usage to leave this window or adjust the local limit.";
+"A new file changed or is not a regular file; nothing was restored." = "A new file changed or is not a regular file; nothing was restored.";
+"The private copy of the session's commit could not be confirmed." = "The private copy of the session's commit could not be confirmed.";
+"The source repository no longer has this session's commit, so its changes cannot be reviewed. Create a new session." = "The source repository no longer has this session's commit, so its changes cannot be reviewed. Create a new session.";
+"%@ in the workspace is its own Git repository, so its files cannot be reviewed. Remove its .git folder, or restore all changes." = "%@ in the workspace is its own Git repository, so its files cannot be reviewed. Remove its .git folder, or restore all changes.";

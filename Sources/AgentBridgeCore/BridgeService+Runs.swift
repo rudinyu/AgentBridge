@@ -927,7 +927,7 @@ extension BridgeService {
             let diffAfterVerification = try await workspaceManager.diff(for: session)
             let checkoutUnchanged = try await workspaceManager.verificationCheckoutMatches(
                 workingDirectory,
-                baseCommit: session.snapshotCommit,
+                session: session,
                 digest: diffBeforeVerification.digest
             )
             let result = VerificationResult(
