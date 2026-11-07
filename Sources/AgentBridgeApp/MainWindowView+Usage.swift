@@ -301,6 +301,20 @@ extension MainWindowView {
                         count(activity.sessionTokens.totalTokens)))
                 .font(.caption2).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup("AgentBridge Local Token Limits") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Leave a field empty or enter 0 for no limit. Limits count all reported tokens, including cached input, in both subscription and API mode. A run is refused once a limit is reached; the run that crosses it still finishes, because tokens are known only after a run.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    usageLimitRow("Last 5 Hours", keyPath: \.fiveHourTokenLimit, width: 110)
+                    usageLimitRow("Last 24 Hours", keyPath: \.dailyTokenLimit, width: 110)
+                    usageLimitRow("Last 7 Days", keyPath: \.weeklyTokenLimit, width: 110)
+                    usageLimitRow("Current Session", keyPath: \.sessionTokenLimit, width: 110)
+                    Button("Save Local Limits") { model.usage.saveUsageControlSettings() }
+                        .controlSize(.small)
+                }
+                .padding(.top, 4)
+            }
         }
     }
 
@@ -399,13 +413,13 @@ extension MainWindowView {
         }
     }
 
-    func usageLimitRow(_ title: String, keyPath: WritableKeyPath<UsageControlSettings, Int?>) -> some View {
+    func usageLimitRow(_ title: String, keyPath: WritableKeyPath<UsageControlSettings, Int?>, width: CGFloat = 75) -> some View {
         HStack {
             Text(model.localized(title)).font(.caption2)
             Spacer(minLength: 4)
             TextField("0 = No Limit", value: usageLimitBinding(keyPath), format: .number)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 75)
+                .frame(width: width)
         }
     }
 

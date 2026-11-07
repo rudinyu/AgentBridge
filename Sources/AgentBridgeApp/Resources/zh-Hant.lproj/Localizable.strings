@@ -1486,3 +1486,11 @@
 "Tokens, Last 7 Days" = "近 7 天 Token";
 "reported by the CLI" = "由 CLI 回報";
 "Last 24 hours: %@ input, %@ cached input, %@ cache write and %@ output tokens. Current AgentBridge session: %@ tokens. Only AgentBridge runs whose CLI reported tokens are counted, not interactive terminals or other apps." = "近 24 小時：輸入 %@、快取輸入 %@、快取寫入 %@、輸出 %@ 個 Token。目前 AgentBridge 工作階段：%@ 個 Token。只計算 CLI 有回報 Token 的 AgentBridge 執行，不含互動終端機或其他 App。";
+"AgentBridge Local Token Limits" = "AgentBridge 本機 Token 上限";
+"Leave a field empty or enter 0 for no limit. Limits count all reported tokens, including cached input, in both subscription and API mode. A run is refused once a limit is reached; the run that crosses it still finishes, because tokens are known only after a run." = "欄位留空或輸入 0 表示不設上限。上限計算所有回報的 Token（包含快取輸入），訂閱與 API 模式都適用。達到上限後會拒絕新的執行；越過上限的那次執行仍會完成，因為 Token 只有在執行後才知道。";
+"Tokens in the Last 5 Hours" = "近 5 小時 Token ";
+"Tokens in the Last 24 Hours" = "近 24 小時 Token ";
+"Tokens in the Last 7 Days" = "近 7 天 Token ";
+"Tokens in the Current Session" = "目前工作階段 Token ";
+"A local token limit must be an integer from 1000 to 10000000000. Leave it empty for no limit." = "本機 Token 上限必須是 1000 到 10000000000 之間的整數。留空表示不設上限。";
+"AgentBridge local %@ token limit reached (%@/%@); wait for usage to leave this window or adjust the local limit." = "已達 AgentBridge 本機%@ Token 上限（%@/%@）；請等候用量離開此期間或調整本機上限。";

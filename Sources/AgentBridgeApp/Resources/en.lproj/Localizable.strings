@@ -1486,3 +1486,11 @@
 "Tokens, Last 7 Days" = "Tokens, Last 7 Days";
 "reported by the CLI" = "reported by the CLI";
 "Last 24 hours: %@ input, %@ cached input, %@ cache write and %@ output tokens. Current AgentBridge session: %@ tokens. Only AgentBridge runs whose CLI reported tokens are counted, not interactive terminals or other apps." = "Last 24 hours: %@ input, %@ cached input, %@ cache write and %@ output tokens. Current AgentBridge session: %@ tokens. Only AgentBridge runs whose CLI reported tokens are counted, not interactive terminals or other apps.";
+"AgentBridge Local Token Limits" = "AgentBridge Local Token Limits";
+"Leave a field empty or enter 0 for no limit. Limits count all reported tokens, including cached input, in both subscription and API mode. A run is refused once a limit is reached; the run that crosses it still finishes, because tokens are known only after a run." = "Leave a field empty or enter 0 for no limit. Limits count all reported tokens, including cached input, in both subscription and API mode. A run is refused once a limit is reached; the run that crosses it still finishes, because tokens are known only after a run.";
+"Tokens in the Last 5 Hours" = "Tokens in the Last 5 Hours";
+"Tokens in the Last 24 Hours" = "Tokens in the Last 24 Hours";
+"Tokens in the Last 7 Days" = "Tokens in the Last 7 Days";
+"Tokens in the Current Session" = "Tokens in the Current Session";
+"A local token limit must be an integer from 1000 to 10000000000. Leave it empty for no limit." = "A local token limit must be an integer from 1000 to 10000000000. Leave it empty for no limit.";
+"AgentBridge local %@ token limit reached (%@/%@); wait for usage to leave this window or adjust the local limit." = "AgentBridge local %@ token limit reached (%@/%@); wait for usage to leave this window or adjust the local limit.";
