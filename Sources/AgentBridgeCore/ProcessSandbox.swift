@@ -24,8 +24,9 @@ struct ProcessSandbox {
     var readableRoots: [URL] = []
     /// Read-only even inside `writableRoots`.
     var readOnlyRoots: [URL] = []
-    /// Whether the Keychain service can be reached, for a CLI that keeps its
-    /// sign-in there. Item access is still limited by each item's own access list.
+    /// Whether the Keychain can be reached, for a CLI that keeps its sign-in there.
+    /// Claude Code reads it by running `/usr/bin/security`, so that stays allowed
+    /// too. Item access is still limited by each item's own access list.
     var allowsKeychain = false
 
     /// Lives in the per-user temporary folder and not under the private data root,
@@ -75,6 +76,7 @@ struct ProcessSandbox {
         let keychainServices = allowsKeychain ? "" : """
             (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc")
             """
+        let keychainTool = allowsKeychain ? "" : #"(literal "/usr/bin/security")"#
         return """
         (version 1)
         (allow default)
@@ -92,7 +94,7 @@ struct ProcessSandbox {
         (deny signal)
         (allow signal (target same-sandbox))
         (deny process-exec (literal "/bin/launchctl") (literal "/usr/bin/open")
-            (literal "/usr/bin/osascript") (literal "/usr/bin/security"))
+            (literal "/usr/bin/osascript") \(keychainTool))
         (deny mach-lookup \(keychainServices)
             (global-name "com.apple.coreservices.launchservicesd")
             (global-name "com.apple.coreservices.quarantine-resolver"))
