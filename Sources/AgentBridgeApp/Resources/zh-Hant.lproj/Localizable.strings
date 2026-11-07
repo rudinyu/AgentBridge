@@ -1494,3 +1494,7 @@
 "Tokens in the Current Session" = "目前工作階段 Token ";
 "A local token limit must be an integer from 1000 to 10000000000. Leave it empty for no limit." = "本機 Token 上限必須是 1000 到 10000000000 之間的整數。留空表示不設上限。";
 "AgentBridge local %@ token limit reached (%@/%@); wait for usage to leave this window or adjust the local limit." = "已達 AgentBridge 本機%@ Token 上限（%@/%@）；請等候用量離開此期間或調整本機上限。";
+"A new file changed or is not a regular file; nothing was restored." = "有新檔案已變更或不是一般檔案；未還原任何內容。";
+"The private copy of the session's commit could not be confirmed." = "無法確認此工作階段提交的私人副本。";
+"The source repository no longer has this session's commit, so its changes cannot be reviewed. Create a new session." = "來源 Repository 已沒有此工作階段的提交，因此無法檢視其變更。請建立新的工作階段。";
+"%@ in the workspace is its own Git repository, so its files cannot be reviewed. Remove its .git folder, or restore all changes." = "工作區中的 %@ 是獨立的 Git Repository，因此無法檢視其中的檔案。請移除它的 .git 資料夾，或還原全部變更。";
