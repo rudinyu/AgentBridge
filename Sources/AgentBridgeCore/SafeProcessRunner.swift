@@ -10,6 +10,10 @@ public struct ProcessSpec: Sendable {
     public let timeout: TimeInterval
     public let outputLimit: Int
     public let cancellationRequestURL: URL?
+    /// Ends the process group if AgentBridge itself stops, for a run that can last
+    /// minutes. Its timeout is enforced by AgentBridge, so without this a crashed or
+    /// killed App or CLI would leave a provider running, and editing, with no limit.
+    public let endsWithParent: Bool
     let standardOutputLineHandler: (@Sendable (String) -> Void)?
 
     public init(
@@ -21,6 +25,7 @@ public struct ProcessSpec: Sendable {
         timeout: TimeInterval = 300,
         outputLimit: Int = 1_048_576,
         cancellationRequestURL: URL? = nil,
+        endsWithParent: Bool = false,
         standardOutputLineHandler: (@Sendable (String) -> Void)? = nil
     ) {
         self.executableURL = executableURL
@@ -31,6 +36,7 @@ public struct ProcessSpec: Sendable {
         self.timeout = timeout
         self.outputLimit = outputLimit
         self.cancellationRequestURL = cancellationRequestURL
+        self.endsWithParent = endsWithParent
         self.standardOutputLineHandler = standardOutputLineHandler
     }
 }
@@ -214,6 +220,14 @@ public final class SafeProcessRunner: Sendable {
             _ = close(stdoutPipe[1]); stdoutPipe[1] = -1
             _ = close(stderrPipe[1]); stderrPipe[1] = -1
         }
+        let watchdog = !interactive && spec.endsWithParent ? Self.startParentWatchdog(parent: getpid(), group: processID) : nil
+        defer {
+            if let watchdog {
+                _ = kill(watchdog, SIGKILL)
+                var status: Int32 = 0
+                _ = waitpid(watchdog, &status, 0)
+            }
+        }
 
         var previousForegroundGroup: pid_t = -1
         if interactive {
@@ -384,6 +398,45 @@ public final class SafeProcessRunner: Sendable {
         else { exitCode = 1 }
         truncated = truncated || lineFramer.didOverflow
         return ProcessResult(exitCode: exitCode, standardOutput: output, standardError: errorOutput, outputWasTruncated: truncated, wasCancelled: cancelled, timedOut: timedOut)
+    }
+
+    /// Starts a small shell, in a group of its own, that ends `group` once `parent` is
+    /// gone and exits by itself once `group` is. It checks once a second, so an ended
+    /// group's ID is not reused while it still watches it.
+    static func startParentWatchdog(parent: pid_t, group: pid_t) -> pid_t? {
+        let script = """
+        while kill -0 "$1" 2>/dev/null; do
+          kill -0 -- "-$2" 2>/dev/null || exit 0
+          sleep 1
+        done
+        kill -TERM -- "-$2" 2>/dev/null
+        sleep 2
+        kill -KILL -- "-$2" 2>/dev/null
+        """
+        var actions: posix_spawn_file_actions_t?
+        guard posix_spawn_file_actions_init(&actions) == 0 else { return nil }
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        for descriptor in [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO] {
+            _ = posix_spawn_file_actions_addopen(&actions, descriptor, "/dev/null", descriptor == STDIN_FILENO ? O_RDONLY : O_WRONLY, 0)
+        }
+        var attributes: posix_spawnattr_t?
+        guard posix_spawnattr_init(&attributes) == 0 else { return nil }
+        defer { posix_spawnattr_destroy(&attributes) }
+        _ = posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
+        _ = posix_spawnattr_setpgroup(&attributes, 0)
+        let arguments = ["/bin/sh", "-c", script, "agentbridge-watchdog", String(parent), String(group)]
+        var argv = arguments.map { strdup($0) }
+        argv.append(nil)
+        defer { argv.forEach { free($0) } }
+        var environment: [UnsafeMutablePointer<CChar>?] = [strdup("PATH=/usr/bin:/bin"), nil]
+        defer { environment.forEach { free($0) } }
+        var watchdog: pid_t = 0
+        let result = argv.withUnsafeMutableBufferPointer { argvBuffer in
+            environment.withUnsafeMutableBufferPointer { environmentBuffer in
+                posix_spawn(&watchdog, "/bin/sh", &actions, &attributes, argvBuffer.baseAddress!, environmentBuffer.baseAddress!)
+            }
+        }
+        return result == 0 ? watchdog : nil
     }
 
     /// True when no process other than the group leader itself is left in `group`.
