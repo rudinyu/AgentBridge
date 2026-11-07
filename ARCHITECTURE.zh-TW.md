@@ -125,7 +125,7 @@ App 依選取帳戶動態統計 AgentBridge 管理的執行嘗試，顯示滾動
 
 此 App 使用的官方介面沒有提供 Codex 或 Claude 訂閱額度百分比和重置週期的穩定機器可讀來源。用量面板會引導使用者查看官方 CLI `/usage` 畫面，再以 provider 專用的盡力辨識器填入統一資料卡；只會從已辨識的用量區段讀取百分比，未知欄位顯示「Not provided / 未提供」。解析器不是穩定 API，原生 TUI 仍是依據。原生互動 TUI 回合不會計入或受本機上限控制。
 
-訂閱用量面板可透過內嵌 PTY 開啟目前所選帳戶的官方互動 CLI。命令列輔助程式會針對該帳戶重新檢查訂閱登入，套用其既有的 CODEX_HOME 或專屬 CLAUDE_CONFIG_DIR，並在全新、私有的空白暫存工作資料夾中啟動；程序結束後會刪除資料夾。Codex 使用唯讀 sandbox、不提出核准提示，並停用選用整合。Claude 使用 restricted Plan 模式，不載入內建工具、hooks 或 MCP，強制 claude.ai 登入，設定 CLAUDE_CODE_SKIP_PROMPT_HISTORY=1，並傳入 --no-session-persistence。啟動時不提供模型提示或非互動命令。使用者看到 CLI 提示符並完成登入後，可按另一個固定 UI 按鈕送出 /usage 和 Enter。Claude API 模式會隱藏此操作，核心也會拒絕 API 模式啟動。子程序環境不包含 API key 變數。正規化報告只包含 provider、所選帳戶、已辨識的方案／用量視窗百分比／重置文字、來源、狀態和擷取時間；無法辨識的值維持空值。不會宣稱這些是結構化額度資料，也不會呼叫 API、SDK 或模型。
+訂閱用量面板可透過內嵌 PTY 開啟目前所選帳戶的官方互動 CLI。命令列輔助程式會針對該帳戶重新檢查訂閱登入，套用其既有的 CODEX_HOME 或專屬 CLAUDE_CONFIG_DIR，並在全新、私有的空白暫存工作資料夾中啟動；程序結束後會刪除資料夾。Codex 使用唯讀 sandbox、不提出核准提示，並停用選用整合。Claude 使用 restricted Plan 模式，不載入內建工具、hooks 或 MCP，強制 claude.ai 登入，並設定 CLAUDE_CODE_SKIP_PROMPT_HISTORY=1。Claude 在 --print 以外拒絕 --no-session-persistence，因此終端機關閉時，AgentBridge 會以同一帳號對該資料夾執行 `claude purge --yes`，移除該資料夾在 `.claude.json` 中的信任紀錄（使用者接受 Claude 的資料夾信任提示時寫入）及任何 transcript。Claude 自行輪替的 `.claude.json` 備份可能保留該紀錄，直到被輪替掉。啟動時不提供模型提示或非互動命令。使用者看到 CLI 提示符並完成登入後，可按另一個固定 UI 按鈕送出 /usage 和 Enter。Claude API 模式會隱藏此操作，核心也會拒絕 API 模式啟動。子程序環境不包含 API key 變數。正規化報告只包含 provider、所選帳戶、已辨識的方案／用量視窗百分比／重置文字、來源、狀態和擷取時間；無法辨識的值維持空值。不會宣稱這些是結構化額度資料，也不會呼叫 API、SDK 或模型。
 
 ## 資料與剩餘邊界
 

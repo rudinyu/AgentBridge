@@ -147,7 +147,8 @@ final class AgentBridgeCoreTests: XCTestCase {
         let claude = ProviderCommandBuilder.claudeUsageArguments()
         XCTAssertTrue(claude.contains("--restricted"))
         XCTAssertTrue(claude.contains("--safe-mode"))
-        XCTAssertTrue(claude.contains("--no-session-persistence"))
+        // Claude Code refuses it outside --print, so the usage terminal would not start.
+        XCTAssertFalse(claude.contains("--no-session-persistence"))
         XCTAssertTrue(claude.contains("--permission-mode"))
         XCTAssertEqual(claude[claude.firstIndex(of: "--permission-mode")! + 1], "plan")
         XCTAssertEqual(claude[claude.firstIndex(of: "--tools")! + 1], "")
@@ -568,6 +569,24 @@ final class AgentBridgeCoreTests: XCTestCase {
             XCTAssertEqual(result.exitCode, 0)
         }
         XCTAssertLessThan(Date().timeIntervalSince(started), 2.5, "Five clean exits should not each wait out the 0.75 s grace period.")
+    }
+
+    func testClaudeUsageDataIsPurgedForItsOwnFolderWithTheAccountsEnvironment() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let record = root.appendingPathComponent("purge-call")
+        let claude = root.appendingPathComponent("bin/claude")
+        try FileManager.default.createDirectory(at: claude.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nprintf '%s|%s|%s\\n' \"$*\" \"$CLAUDE_CONFIG_DIR\" \"$(pwd -P)\" > '\(record.path)'\nexit 1\n".utf8).write(to: claude)
+        XCTAssertEqual(chmod(claude.path, 0o700), 0)
+        let folder = root.appendingPathComponent("usage-folder", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let service = try BridgeService(store: try AuditStore(rootURL: root.appendingPathComponent("state", isDirectory: true)))
+
+        // Claude exits 1 when there is nothing to purge; that must not throw.
+        await service.purgeClaudeData(for: folder, executable: claude, environment: ["PATH": "/usr/bin:/bin", "CLAUDE_CONFIG_DIR": "/profile/config"])
+        let canonical = ProcessSandbox.canonicalPath(folder)
+        XCTAssertEqual(try String(contentsOf: record, encoding: .utf8), "purge --yes \(canonical)|/profile/config|\(canonical)\n")
     }
 
     func testBackgroundProcessLeftByAnExitedLeaderIsStillCleanedUp() async throws {

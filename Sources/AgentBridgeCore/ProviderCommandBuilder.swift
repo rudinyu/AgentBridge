@@ -234,12 +234,14 @@ public enum ProviderCommandBuilder {
     }
 
     /// Starts Claude Code's native TUI without loading user customizations or
-    /// tools. Deliberately leaves slash commands enabled for /usage.
+    /// tools. Deliberately leaves slash commands enabled for /usage. Claude refuses
+    /// `--no-session-persistence` outside `--print`, so what the session leaves is
+    /// purged when it closes instead.
     public static func claudeUsageArguments() -> [String] {
         [
             "--restricted", "--safe-mode", "--setting-sources", "",
             "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
-            "--no-chrome", "--no-session-persistence",
+            "--no-chrome",
             "--settings", "{\"disableAllHooks\":true,\"apiKeyHelper\":\"\",\"forceLoginMethod\":\"claudeai\"}",
             "--permission-mode", "plan", "--tools", ""
         ]
