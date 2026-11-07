@@ -476,6 +476,23 @@ final class ChangeWorkflowTests: XCTestCase {
         XCTAssertEqual(diff.files.map(\.path), ["source.txt"])
     }
 
+    func testKeychainToolRunsOnlyWhenTheSandboxAllowsTheKeychain() async throws {
+        try skipInsideVerificationSandbox()
+        let root = try ProcessSandbox.makeWritableRoot(label: "keychain-test")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for allowsKeychain in [false, true] {
+            let command = try ProcessSandbox(writableRoots: [root], protectedRoots: [], allowsKeychain: allowsKeychain)
+                .command(executable: URL(fileURLWithPath: "/usr/bin/security"), arguments: ["list-keychains"])
+            let result = try await SafeProcessRunner().run(ProcessSpec(
+                executableURL: command.executable,
+                arguments: command.arguments,
+                environment: ["PATH": "/usr/bin:/bin"]
+            ))
+            // Claude Code reads its sign-in through this tool, so blocking it logs Claude out.
+            XCTAssertEqual(result.exitCode == 0, allowsKeychain)
+        }
+    }
+
     func testVerificationThatEditsTheCheckoutFails() async throws {
         try skipInsideVerificationSandbox()
         let fixture = try await makeFixture(projectScript: "#!/bin/sh\necho edited > source.txt\n")
