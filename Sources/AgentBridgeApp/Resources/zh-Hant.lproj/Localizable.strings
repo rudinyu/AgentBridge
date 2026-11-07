@@ -1477,7 +1477,7 @@
 "Could not read the CLI help, so the required flags were not confirmed." = "無法讀取 CLI 說明，未能確認所需旗標。";
 "The CLI help no longer lists flags AgentBridge needs: %@." = "CLI 說明中已找不到 AgentBridge 需要的旗標：%@。";
 "Could not compact the audit file." = "無法壓縮稽核檔案。";
-"macOS sandbox-exec is unavailable, so verification cannot be isolated." = "找不到 macOS sandbox-exec，因此無法隔離驗證。";
+"macOS sandbox-exec is unavailable, so the process cannot be isolated." = "找不到 macOS sandbox-exec，因此無法隔離此程序。";
 "The verification checkout commit does not match the session." = "驗證用副本的提交版本與工作階段不符。";
 "The program is not in the reviewed changes, so it cannot run in the verification checkout." = "此程式不在已檢視的變更內，因此無法在驗證用副本中執行。";
 "Could not find the macOS temporary folder for verification." = "找不到驗證所需的 macOS 暫存資料夾。";

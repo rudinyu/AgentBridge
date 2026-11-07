@@ -1477,7 +1477,7 @@
 "Could not read the CLI help, so the required flags were not confirmed." = "Could not read the CLI help, so the required flags were not confirmed.";
 "The CLI help no longer lists flags AgentBridge needs: %@." = "The CLI help no longer lists flags AgentBridge needs: %@.";
 "Could not compact the audit file." = "Could not compact the audit file.";
-"macOS sandbox-exec is unavailable, so verification cannot be isolated." = "macOS sandbox-exec is unavailable, so verification cannot be isolated.";
+"macOS sandbox-exec is unavailable, so the process cannot be isolated." = "macOS sandbox-exec is unavailable, so the process cannot be isolated.";
 "The verification checkout commit does not match the session." = "The verification checkout commit does not match the session.";
 "The program is not in the reviewed changes, so it cannot run in the verification checkout." = "The program is not in the reviewed changes, so it cannot run in the verification checkout.";
 "Could not find the macOS temporary folder for verification." = "Could not find the macOS temporary folder for verification.";
