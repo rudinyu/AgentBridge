@@ -249,7 +249,7 @@ extension BridgeService {
                     maximumOutputBytes: DiscussionStore.maximumTextBytes,
                     onProgress: { emitter.emit($0) }
                 )
-                parsedOutput = ProviderOutput(text: response.text, providerSessionID: nil)
+                parsedOutput = ProviderOutput(text: response.text, providerSessionID: nil, tokenUsage: TokenUsage(local: response.usage))
                 processOutputWasTruncated = false
                 localUsageSummary = "provider_input_tokens=\(response.usage.inputTokens.map(String.init) ?? "unavailable"); provider_output_tokens=\(response.usage.outputTokens.map(String.init) ?? "unavailable"); estimated_input_tokens_from_bytes=\(response.usage.estimatedInputTokens) (estimate, not exact tokenizer output)."
             } else {
@@ -298,6 +298,7 @@ extension BridgeService {
             activeRecord.updatedAt = Date()
             activeRecord = try discussionStore.save(activeRecord)
             try store.appendEvent(AuditEvent(sessionID: id, kind: "run.output", message: output.text))
+            recordTokenUsage(parsedOutput.tokenUsage, runID: id, profileID: profile.id)
             try store.appendEvent(AuditEvent(
                 sessionID: id,
                 kind: profile.provider == .local ? "local.run.completed" : "run.completed",

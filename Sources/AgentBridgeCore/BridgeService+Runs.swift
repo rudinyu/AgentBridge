@@ -260,7 +260,8 @@ extension BridgeService {
                 output = ProviderOutput(
                     text: OutputRedactor.redact(parsedOutput.text, knownSecrets: [apiRequest.apiKey]),
                     providerSessionID: parsedOutput.providerSessionID,
-                    actualCostUSD: parsedOutput.actualCostUSD
+                    actualCostUSD: parsedOutput.actualCostUSD,
+                    tokenUsage: parsedOutput.tokenUsage
                 )
             } else {
                 output = parsedOutput
@@ -278,6 +279,7 @@ extension BridgeService {
             try store.saveSession(activeSession)
             let storedText = String(output.text.prefix(200_000))
             try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "run.output", message: storedText))
+            recordTokenUsage(output.tokenUsage, runID: sessionID, profileID: profile.id)
             if reservation != nil {
                 let costText = output.actualCostUSD.map { "Provider reported US$\(String(format: "%.4f", $0))." } ?? "The provider did not report the actual charge. The reserved budget will not be returned."
                 try store.appendEvent(AuditEvent(sessionID: sessionID, kind: "api.run.completed", message: costText))
@@ -461,7 +463,7 @@ extension BridgeService {
                 cancellation: cancellation,
                 onProgress: { emitter.emit($0) }
             )
-            let output = ProviderOutput(text: response.text, providerSessionID: nil)
+            let output = ProviderOutput(text: response.text, providerSessionID: nil, tokenUsage: TokenUsage(local: response.usage))
             activeSession.status = .completed
             activeSession.providerSessionID = nil
             activeSession.updatedAt = Date()
@@ -477,6 +479,7 @@ extension BridgeService {
                 kind: "local.run.completed",
                 message: "Local-only response completed. \(reportedTokens) \(Self.contextCompressionAuditSummary(compression.report))"
             ))
+            recordTokenUsage(output.tokenUsage, runID: session.id, profileID: profile.id)
             if allowSharedMemory && profile.allowsSharedMemory {
                 do {
                     try sharedMemoryStore.appendTurn(
@@ -639,13 +642,15 @@ extension BridgeService {
             let output = ProviderOutput(
                 text: parsedOutput.text,
                 providerSessionID: parsedOutput.providerSessionID,
-                actualCostUSD: parsedOutput.actualCostUSD
+                actualCostUSD: parsedOutput.actualCostUSD,
+                tokenUsage: parsedOutput.tokenUsage
             )
             activeSession.providerSessionID = safeProviderSessionID(output.providerSessionID)
             activeSession.lastChangeRunAt = Date()
             activeSession.status = .completed
             activeSession.updatedAt = Date()
             try store.saveSession(activeSession)
+            recordTokenUsage(output.tokenUsage, runID: sessionID, profileID: profile.id)
             try store.appendEvent(AuditEvent(
                 sessionID: sessionID,
                 kind: "change.run.completed",

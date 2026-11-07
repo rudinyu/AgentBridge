@@ -70,7 +70,7 @@ extension BridgeService {
         let discussionProfileMarker = "account_profile_id=\(profile.id.uuidString.lowercased())"
         for discussion in matchingDiscussions {
             events.append(contentsOf: try store.events(sessionID: discussion.id).filter { event in
-                (event.kind == "run.started" || event.kind == "usage.subscription.reserved" || event.kind == "local.run.started")
+                ["run.started", "usage.subscription.reserved", "local.run.started", "usage.tokens"].contains(event.kind)
                     && event.message.contains(discussionProfileMarker)
             })
         }
@@ -83,6 +83,19 @@ extension BridgeService {
             selectedSessionID: selectedSessionID,
             now: now
         )
+    }
+
+    /// Records the tokens a provider reported. A run that reported none records
+    /// nothing, and a failed write never fails a run that succeeded. The account
+    /// marker is how a discussion's events are matched to an account.
+    func recordTokenUsage(_ usage: TokenUsage?, runID: UUID, profileID: UUID) {
+        guard let usage else { return }
+        try? store.appendEvent(AuditEvent(
+            sessionID: runID,
+            kind: "usage.tokens",
+            message: "account_profile_id=\(profileID.uuidString.lowercased()); tokens reported: input \(usage.inputTokens), cached input \(usage.cachedInputTokens), cache write \(usage.cacheWriteTokens), output \(usage.outputTokens).",
+            tokenUsage: usage
+        ))
     }
 
     public func apiCostControlSnapshot(profileID: UUID, sessionID: UUID) throws -> APICostControlSnapshot {

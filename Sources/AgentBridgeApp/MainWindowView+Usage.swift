@@ -136,6 +136,7 @@ extension MainWindowView {
                             activity.provider.rawValue.capitalized))
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                tokenUsageSummary(activity)
                 Text(String(format: model.localized("Local statistics updated %@"),
                             activity.generatedAt.formatted(Date.FormatStyle(time: .shortened).locale(model.appLanguage.locale))))
                     .font(.system(size: 8)).foregroundStyle(.tertiary)
@@ -210,6 +211,7 @@ extension MainWindowView {
                             String(activity.apiDailyRuns),
                             String(activity.apiSessionRuns)))
                     .font(.caption2).foregroundStyle(.secondary)
+                tokenUsageSummary(activity)
                 Text(String(format: model.localized("Local statistics updated %@"),
                             activity.generatedAt.formatted(Date.FormatStyle(time: .shortened).locale(model.appLanguage.locale))))
                     .font(.system(size: 8)).foregroundStyle(.tertiary)
@@ -276,6 +278,27 @@ extension MainWindowView {
                 .font(.caption2).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Label("The Claude API local ledger does not show subscription usage. To check Claude subscription usage, switch back to official CLI subscription mode and open the usage terminal from the Subscription Activity panel.", systemImage: "terminal")
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Tokens are shown in every usage mode, because they come from the CLI's own
+    /// report rather than from AgentBridge's run count.
+    func tokenUsageSummary(_ activity: UsageStatisticsSnapshot) -> some View {
+        let locale = model.appLanguage.locale
+        let count: (Int) -> String = { $0.formatted(.number.locale(locale)) }
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                usageMetric("Tokens, Last 5 Hours", value: count(activity.fiveHourTokens.totalTokens), detail: "reported by the CLI")
+                usageMetric("Tokens, Last 7 Days", value: count(activity.sevenDayTokens.totalTokens), detail: "reported by the CLI")
+            }
+            Text(String(format: model.localized("Last 24 hours: %@ input, %@ cached input, %@ cache write and %@ output tokens. Current AgentBridge session: %@ tokens. Only AgentBridge runs whose CLI reported tokens are counted, not interactive terminals or other apps."),
+                        count(activity.dailyTokens.inputTokens),
+                        count(activity.dailyTokens.cachedInputTokens),
+                        count(activity.dailyTokens.cacheWriteTokens),
+                        count(activity.dailyTokens.outputTokens),
+                        count(activity.sessionTokens.totalTokens)))
                 .font(.caption2).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
