@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: the in-app terminal did not take the keyboard when it opened, so arrow keys and Enter went to the rest of the window until you clicked it, and clicking did not always help: once a TUI such as Claude Code turns on mouse reporting, SwiftTerm hands the click to the TUI and leaves the keyboard where it was. The terminal now takes the keyboard when it opens and whenever it is clicked. Found by testing the signed 0.12.0 App: the Claude usage terminal's folder-trust prompt ignored the arrow keys.
+
 ## 0.12.0 — 2026-11-08
 
 - Release record: build 14 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `8bcedabd-8ee8-4ffe-920f-8222bf805f5d`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.0`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `b9b7f52748217a7f3db2fb2711a0d866aaaaab2f788da220236a9c55e3133b63`. The signed App itself has not been launched or clicked through.
