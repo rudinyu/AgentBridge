@@ -68,6 +68,21 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
             currentDirectory: launch.workingDirectory
         )
         updatePseudoTerminalSize()
+        window?.makeFirstResponder(self)
+    }
+
+    // The terminal is what the user types into once it opens, so it takes the
+    // keyboard; otherwise arrow keys and Enter went to the rest of the window.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.makeFirstResponder(self)
+    }
+
+    // A TUI that turns on mouse reporting, as Claude Code does, gets the click and
+    // SwiftTerm then leaves the keyboard where it was, so take it here first.
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
     }
 
     /// Called when a view is removed without the helper having exited normally.
