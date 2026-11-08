@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.12.2 — 2026-11-08
 
-- Fixed: in Traditional Chinese, the terminal panel's **Close terminal**, **End the CLI, then close** and **Cancel and close** buttons, and the "yes" and "pending" values of an autonomous workflow's memory-summary line, showed in English. Each label is chosen by a condition inside `localized(...)`, which no check covered; a new test now reads every such label and requires a translation.
+### Fixed
+
+- In Traditional Chinese, the terminal panel's **Close terminal**, **End the CLI, then close** and **Cancel and close** buttons, and the "yes" and "pending" values of an autonomous workflow's memory-summary line, showed in English. Each label is chosen by a condition inside `localized(...)`, which no check covered; a new test now reads every such label and requires a translation.
+
+### Tests
+
+- `AppLocalizationTests` now reads every label chosen inside `localized(...)` in the App and requires a Traditional Chinese translation for it. 339 tests pass under the native build system; under `swiftbuild`, 309 Core, 24 App and 6 terminal-capture tests pass.
 
 ## 0.12.1 — 2026-11-08
 
