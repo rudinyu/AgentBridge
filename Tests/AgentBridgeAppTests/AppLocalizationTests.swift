@@ -59,16 +59,10 @@ final class AppLocalizationTests: XCTestCase {
     /// A label chosen by `cond ? "A" : "B"` is never a literal the other checks
     /// see, so these went untranslated unnoticed.
     func testEveryLabelChosenByAConditionIsTranslated() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let sourcesURL = root.appendingPathComponent("Sources/AgentBridgeApp", isDirectory: true)
         let keys = Set(AppLocalization.chineseTable.keys)
         XCTAssertFalse(keys.isEmpty)
-        let files = try XCTUnwrap(FileManager.default.enumerator(at: sourcesURL, includingPropertiesForKeys: nil))
-            .compactMap { $0 as? URL }
-            .filter { $0.pathExtension == "swift" }
-        XCTAssertFalse(files.isEmpty, "No Swift files found under \(sourcesURL.path).")
         var problems: [String] = []
-        for file in files {
+        for file in try appSourceFiles() {
             let source = try String(contentsOf: file, encoding: .utf8)
             problems += SwiftLabelScanner.problems(in: source, keys: keys).map { "\(file.lastPathComponent): \($0)" }
         }
@@ -76,16 +70,52 @@ final class AppLocalizationTests: XCTestCase {
     }
 
     func testEverySheetSetsTheAppLanguage() throws {
+        for file in try appSourceFiles() {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            XCTAssertEqual(SwiftLabelScanner.sheetsWithoutLocale(in: source), 0, "\(file.lastPathComponent) has a sheet without .environment(\\.locale, ...).")
+        }
+    }
+
+    func testEveryLabelHasATranslation() throws {
+        let keys = Set(AppLocalization.chineseTable.keys)
+        var problems: [String] = []
+        for file in try appSourceFiles() {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            problems += SwiftLabelScanner.untranslatedLabels(in: source, keys: keys).map { "\(file.lastPathComponent): \($0)" }
+        }
+        XCTAssertTrue(problems.isEmpty, "Add these to zh-Hant.lproj and en.lproj:\n" + problems.sorted().joined(separator: "\n"))
+    }
+
+    func testEveryDialogGoesThroughTheAppLanguage() throws {
+        var problems: [String] = []
+        for file in try appSourceFiles() {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            problems += SwiftLabelScanner.dialogTextNotLocalized(in: source).map { "\(file.lastPathComponent): \($0)" }
+        }
+        XCTAssertTrue(problems.isEmpty, "Use model.localized for:\n" + problems.sorted().joined(separator: "\n"))
+    }
+
+    private func appSourceFiles() throws -> [URL] {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let sourcesURL = root.appendingPathComponent("Sources/AgentBridgeApp", isDirectory: true)
         let files = try XCTUnwrap(FileManager.default.enumerator(at: sourcesURL, includingPropertiesForKeys: nil))
             .compactMap { $0 as? URL }
             .filter { $0.pathExtension == "swift" }
         XCTAssertFalse(files.isEmpty, "No Swift files found under \(sourcesURL.path).")
-        for file in files {
-            let source = try String(contentsOf: file, encoding: .utf8)
-            XCTAssertEqual(SwiftLabelScanner.sheetsWithoutLocale(in: source), 0, "\(file.lastPathComponent) has a sheet without .environment(\\.locale, ...).")
-        }
+        return files
+    }
+
+    func testLabelScannerFindsDialogTextThatIsNotLocalized() {
+        let plain = #".alert("Title", isPresented: $a) { Button("OK") { } } message: { Text("Body") }"#
+        XCTAssertEqual(SwiftLabelScanner.dialogTextNotLocalized(in: plain), ["Body", "OK", "title of Title"])
+        let localized = #".alert(model.localized("Title"), isPresented: $a) { Button(model.localized("OK")) { } } message: { Text(model.localized("Body")) }"#
+        XCTAssertEqual(SwiftLabelScanner.dialogTextNotLocalized(in: localized), [])
+    }
+
+    func testLabelScannerFindsLabelsWithoutATranslation() {
+        XCTAssertEqual(SwiftLabelScanner.untranslatedLabels(in: #"Text("Missing"); Text("Known")"#, keys: ["Known"]), ["Missing"])
+        XCTAssertEqual(SwiftLabelScanner.untranslatedLabels(in: #"Text("Known \(n)")"#, keys: ["Known %@"]), [])
+        XCTAssertEqual(SwiftLabelScanner.untranslatedLabels(in: #"Text(verbatim: "Missing"); Text(value)"#, keys: []), [])
     }
 
     func testLabelScannerFindsSheetsWithoutTheLocale() {

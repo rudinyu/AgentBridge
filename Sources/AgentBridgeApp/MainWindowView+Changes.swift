@@ -34,7 +34,7 @@ extension MainWindowView {
                                     Label("Unsaved plan edits. Save changes before review or approval.", systemImage: "pencil.line")
                                         .font(.caption).foregroundStyle(.orange)
                                 } else if model.changes.selectedChangePlanIsApproved {
-                                    Label("Approved", systemImage: "checkmark.seal.fill").font(.caption).foregroundStyle(.green)
+                                    Label(model.localized("value.approved"), systemImage: "checkmark.seal.fill").font(.caption).foregroundStyle(.green)
                                 } else {
                                     Button("Approve this displayed plan") { model.changes.approveChangePlan() }
                                         .buttonStyle(.borderedProminent)

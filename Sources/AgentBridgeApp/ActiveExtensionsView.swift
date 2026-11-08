@@ -77,32 +77,32 @@ struct ActiveExtensionsView: View {
             onCompletion: importMCP
         )
         .confirmationDialog(
-            "Start the selected MCP process?",
+            model.localized("Start the selected MCP process?"),
             isPresented: $showTestConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Test Connection", role: .destructive) { testSelectedMCP() }
-            Button("Cancel", role: .cancel) { }
+            Button(model.localized("Test Connection"), role: .destructive) { testSelectedMCP() }
+            Button(model.localized("Cancel"), role: .cancel) { }
         } message: {
-            Text("The configured executable will run as your macOS user. It may access files, network resources, and credentials available to that account. Test Connection performs initialize and tools/list only; it does not call an MCP tool or a model. The tool allowlist is not an operating-system sandbox.")
+            Text(model.localized("The configured executable will run as your macOS user. It may access files, network resources, and credentials available to that account. Test Connection performs initialize and tools/list only; it does not call an MCP tool or a model. The tool allowlist is not an operating-system sandbox."))
         }
         .confirmationDialog(
-            "Enable this exact extension configuration?",
+            model.localized("Enable this exact extension configuration?"),
             isPresented: $showEnableConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Enable for this scope", role: .destructive) { enableSelectedExtension() }
-            Button("Cancel", role: .cancel) { }
+            Button(model.localized("Enable for this scope"), role: .destructive) { enableSelectedExtension() }
+            Button(model.localized("Cancel"), role: .cancel) { }
         } message: {
-            Text("Enable only after reviewing the content, command, tool allowlist, digest, and selected project/provider/profile. Existing sessions keep their pinned extension snapshot.")
+            Text(model.localized("Enable only after reviewing the content, command, tool allowlist, digest, and selected project/provider/profile. Existing sessions keep their pinned extension snapshot."))
         }
         .confirmationDialog(
-            "Disable this extension for the selected scope?",
+            model.localized("Disable this extension for the selected scope?"),
             isPresented: $showDisableConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Disable", role: .destructive) { disableSelectedExtension() }
-            Button("Cancel", role: .cancel) { }
+            Button(model.localized("Disable"), role: .destructive) { disableSelectedExtension() }
+            Button(model.localized("Cancel"), role: .cancel) { }
         }
         .onAppear {
             synchronizeTargetProfile()

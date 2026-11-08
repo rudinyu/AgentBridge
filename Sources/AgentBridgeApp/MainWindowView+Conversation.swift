@@ -221,7 +221,7 @@ extension MainWindowView {
                                 }
                             }
                             Text(task.progressSummary).font(.caption2).textSelection(.enabled)
-                            Text("Session \(task.sessionID.uuidString.lowercased())")
+                            Text(model.localizedFormat("value.session %@", task.sessionID.uuidString.lowercased()))
                                 .font(.system(size: 8, design: .monospaced)).foregroundStyle(.tertiary)
                             ForEach(task.references, id: \.self) { reference in
                                 Text("\(reference.kind.rawValue): \(reference.value)")
@@ -246,14 +246,14 @@ extension MainWindowView {
                 if model.extensions.extensionDescriptors.isEmpty {
                     Text("No descriptors imported.").font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Picker("Descriptor", selection: Bindable(model.extensions).selectedExtensionID) {
+                    Picker(model.localized("value.descriptor"), selection: Bindable(model.extensions).selectedExtensionID) {
                         Text("Select descriptor").tag("")
                         ForEach(model.extensions.extensionDescriptors) { descriptor in
                             Text("\(descriptor.kind.rawValue.uppercased()) · \(descriptor.name)").tag(descriptor.id)
                         }
                     }
                     if let descriptor = model.extensions.selectedExtensionDescriptor {
-                        Text("\(descriptor.id) · v\(descriptor.version)\n\(descriptor.summary)")
+                        Text(verbatim: "\(descriptor.id) · v\(descriptor.version)\n\(descriptor.summary)")
                             .font(.caption2).textSelection(.enabled)
                         Text("Requested: \(descriptor.requestedPermissions.map(\.rawValue).joined(separator: ", "))")
                             .font(.system(size: 8, design: .monospaced)).foregroundStyle(.secondary)

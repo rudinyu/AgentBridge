@@ -53,16 +53,16 @@ struct MainWindowView: View {
                 .environment(\.locale, model.appLanguage.locale)
                 .interactiveDismissDisabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminal.terminalLaunch != nil)
         }
-        .alert("AgentBridge", isPresented: Binding(get: { model.errorMessage != nil && !model.setupWizard.isPresented }, set: { if !$0 { model.errorMessage = nil } })) {
-            Button("OK", role: .cancel) { model.errorMessage = nil }
+        .alert(model.localized("AgentBridge"), isPresented: Binding(get: { model.errorMessage != nil && !model.setupWizard.isPresented }, set: { if !$0 { model.errorMessage = nil } })) {
+            Button(model.localized("OK"), role: .cancel) { model.errorMessage = nil }
         } message: {
             Text(model.localized(model.errorMessage ?? ""))
         }
-        .alert("Clear shared memory for this project?", isPresented: $model.confirmClearMemory) {
-            Button("Clear Memory", role: .destructive) { model.clearSharedMemory() }
-            Button("Cancel", role: .cancel) { model.confirmClearMemory = false }
+        .alert(model.localized("Clear shared memory for this project?"), isPresented: $model.confirmClearMemory) {
+            Button(model.localized("Clear Memory"), role: .destructive) { model.clearSharedMemory() }
+            Button(model.localized("Cancel"), role: .cancel) { model.confirmClearMemory = false }
         } message: {
-            Text("This deletes chat memory and notes for this source repository and pinned commit. Native provider sessions will not be changed.")
+            Text(model.localized("This deletes chat memory and notes for this source repository and pinned commit. Native provider sessions will not be changed."))
         }
         .fileImporter(
             isPresented: Bindable(model.extensions).isImportingExtensionDescriptor,

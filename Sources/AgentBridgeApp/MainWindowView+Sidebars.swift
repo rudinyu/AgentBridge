@@ -379,7 +379,7 @@ extension MainWindowView {
                             Text(session.provider.rawValue.capitalized)
                                 .font(.headline)
                             if session.policy.accessMode == .interactiveManualApproval {
-                                Text("Terminal").font(.caption2).padding(.horizontal, 5).padding(.vertical, 2).background(.quaternary, in: Capsule())
+                                Text(model.localized("value.terminal")).font(.caption2).padding(.horizontal, 5).padding(.vertical, 2).background(.quaternary, in: Capsule())
                             } else if session.policy.accessMode == .isolatedChanges {
                                 Text("Isolated changes").font(.caption2).padding(.horizontal, 5).padding(.vertical, 2).background(.orange.opacity(0.14), in: Capsule())
                             }
