@@ -89,7 +89,8 @@ final class TerminalModel {
             arguments: [
                 "usage-tui",
                 "--provider", provider.rawValue,
-                "--profile", profile.id.uuidString.lowercased()
+                "--profile", profile.id.uuidString.lowercased(),
+                "--in-app"
             ],
             workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
         ) else {
@@ -133,7 +134,24 @@ final class TerminalModel {
             capturedAt: capturedAt
         )
         providerUsageReport = report
-        return report.usageWindows.contains { $0.percentageUsed != nil || $0.resetText != nil }
+        let recognized = report.usageWindows.contains { $0.percentageUsed != nil || $0.resetText != nil }
+        if recognized { try? app.service?.saveProviderUsageReport(report) }
+        return recognized
+    }
+
+    /// Shows a saved report for the selected account when it is newer than the one
+    /// on the card, such as one `agentbridge usage-tui` read in the user's own terminal.
+    func adoptSavedUsageReports(_ reports: [ProviderUsageReport]) {
+        let provider = app.settings.defaultProvider
+        guard let profileID = app.selectedProfileIDs[provider],
+              let saved = reports.first(where: { $0.provider == provider && $0.accountProfileID == profileID }) else { return }
+        if let current = providerUsageReport,
+           current.provider == provider,
+           current.accountProfileID == profileID,
+           current.capturedAt >= saved.capturedAt {
+            return
+        }
+        providerUsageReport = saved
     }
 
     func openProfileLoginTerminal() {

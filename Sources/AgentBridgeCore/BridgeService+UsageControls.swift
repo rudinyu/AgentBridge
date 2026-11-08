@@ -14,6 +14,20 @@ extension BridgeService {
         )
     }
 
+    /// Saves a recognized `/usage` report for its account, replacing the previous one.
+    public func saveProviderUsageReport(_ report: ProviderUsageReport) throws {
+        let profile = try accountProfile(id: report.accountProfileID)
+        guard profile.provider == report.provider else {
+            throw AccountProfileError.providerMismatch(report.accountProfileID, report.provider)
+        }
+        try providerUsageReportStore.save(report)
+    }
+
+    /// The last recognized `/usage` report saved for this account, if any.
+    public func latestProviderUsageReport(provider: AgentProvider, profileID: UUID) -> ProviderUsageReport? {
+        providerUsageReportStore.latest(provider: provider, accountProfileID: profileID)
+    }
+
     public func usageControlSettings(provider: AgentProvider, profileID: UUID) throws -> UsageControlSettings {
         let profile = try accountProfile(id: profileID)
         guard profile.provider == provider else { throw AccountProfileError.providerMismatch(profileID, provider) }

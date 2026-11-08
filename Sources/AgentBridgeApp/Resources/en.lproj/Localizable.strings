@@ -91,6 +91,15 @@
 "Current week" = "Current week";
 "Codex CLI /usage screen" = "Codex CLI /usage screen";
 "Claude Code /usage screen" = "Claude Code /usage screen";
+"Codex CLI /usage screen in your terminal" = "Codex CLI /usage screen in your terminal";
+"Claude Code /usage screen in your terminal" = "Claude Code /usage screen in your terminal";
+"You can also run `agentbridge usage-tui` in your own terminal. The limits you open there with /usage appear on this card." = "You can also run `agentbridge usage-tui` in your own terminal. The limits you open there with /usage appear on this card.";
+"The usage report has no recognized provider fields to save." = "The usage report has no recognized provider fields to save.";
+"Could not encode the usage report." = "Could not encode the usage report.";
+"Could not create a temporary usage report file." = "Could not create a temporary usage report file.";
+"Could not write the usage report." = "Could not write the usage report.";
+"The usage report file cannot be a symlink or a non-regular file." = "The usage report file cannot be a symlink or a non-regular file.";
+"Could not save the usage report." = "Could not save the usage report.";
 "0 = unlimited" = "0 = unlimited";
 "A local shell runs with your macOS account permissions." = "A local shell runs with your macOS account permissions.";
 "A missing cap means unlimited. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available." = "A missing cap means unlimited. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available.";

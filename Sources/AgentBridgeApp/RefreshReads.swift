@@ -24,6 +24,8 @@ struct RefreshReads: Sendable {
     var extensionDescriptors: Result<[ExtensionDescriptor], Error>
     var autonomousRuns: Result<[AutonomousRunRecord], Error>
     var activeExtensions: Result<[ActiveExtensionConfigurationSummary], Error>
+    /// The last saved `/usage` report for each provider's selected account.
+    var savedUsageReports: [ProviderUsageReport]
     var selected: Result<SelectedSession, Error>?
 
     static func load(service: BridgeService, selectedSessionID: UUID?) -> RefreshReads {
@@ -38,6 +40,11 @@ struct RefreshReads: Sendable {
                 )
             }
         }
+        let selectedProfileIDs = Result {
+            var ids: [AgentProvider: UUID] = [:]
+            for provider in AgentProvider.allCases { ids[provider] = try service.selectedAccountProfile(provider: provider).id }
+            return ids
+        }
         return RefreshReads(
             sessionID: sessionID,
             settings: Result { try service.settings() },
@@ -46,17 +53,16 @@ struct RefreshReads: Sendable {
                 for provider in AgentProvider.allCases { profiles[provider] = try service.accountProfiles(provider: provider) }
                 return profiles
             },
-            selectedProfileIDs: Result {
-                var ids: [AgentProvider: UUID] = [:]
-                for provider in AgentProvider.allCases { ids[provider] = try service.selectedAccountProfile(provider: provider).id }
-                return ids
-            },
+            selectedProfileIDs: selectedProfileIDs,
             sessions: sessions,
             discussions: Result { try service.discussions() },
             taskRecords: Result { try service.taskRecords() },
             extensionDescriptors: Result { try service.extensionDescriptors() },
             autonomousRuns: Result { try service.autonomousRuns() },
             activeExtensions: Result { try service.activeExtensionConfigurations() },
+            savedUsageReports: ((try? selectedProfileIDs.get()) ?? [:]).compactMap { provider, profileID in
+                service.latestProviderUsageReport(provider: provider, profileID: profileID)
+            },
             selected: selected
         )
     }

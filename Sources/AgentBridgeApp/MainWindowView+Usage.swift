@@ -154,6 +154,9 @@ extension MainWindowView {
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Text("You can also run `agentbridge usage-tui` in your own terminal. The limits you open there with /usage appear on this card.")
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if let report = model.terminal.providerUsageReport,
                report.provider == model.settings.defaultProvider,
                report.accountProfileID == model.selectedProfileIDs[model.settings.defaultProvider] {

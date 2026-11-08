@@ -1,7 +1,7 @@
 import AgentBridgeCore
 import SwiftTerm
 import XCTest
-@testable import AgentBridgeApp
+import AgentBridgeTerminalCapture
 
 final class UsageScreenCaptureTests: XCTestCase {
     private final class Sink: TerminalDelegate {
@@ -70,5 +70,42 @@ final class UsageScreenCaptureTests: XCTestCase {
         XCTAssertLessThanOrEqual(text.split(separator: "\n").count, UsageScreenCapture.maximumRows)
         XCTAssertTrue(text.contains("row 299 "))
         XCTAssertFalse(text.contains("row 0 "))
+    }
+
+    func testTheRecorderReadsFromTheScreenAtTheLastEnterInASmallTerminal() throws {
+        let recorder = UsageTerminalRecorder(columns: 80, rows: 10)
+        let profileID = UUID()
+        func send(_ lines: [String]) {
+            let text = lines.map { $0.replacingOccurrences(of: " ", with: "\u{1b}[C") }.joined(separator: "\r\n")
+            recorder.recordOutput(ArraySlice(Array(text.utf8)))
+        }
+        // An older reading that had scrolled off before Enter was pressed.
+        send(["  Current session", "  ███   99% used"] + (0..<30).map { "earlier \($0)" } + ["> /usage"])
+        recorder.recordInput(ArraySlice(Array("\r".utf8)))
+        send([""] + usageScreen)
+
+        let report = try XCTUnwrap(recorder.usageReport(provider: .claude, accountProfileID: profileID, accountName: "Work"))
+        XCTAssertEqual(report.accountProfileID, profileID)
+        XCTAssertEqual(report.accountName, "Work")
+        XCTAssertEqual(
+            Dictionary(uniqueKeysWithValues: report.usageWindows.compactMap { window in window.percentageUsed.map { (window.id, $0) } }),
+            ["current-session": 69, "current-week-all-models": 31],
+            "What scrolled off before the last Enter is not read, so the older 99% does not count."
+        )
+    }
+
+    func testTheRecorderHasNoReportUntilTheScreenShowsALimit() {
+        let recorder = UsageTerminalRecorder(columns: 80, rows: 24)
+        recorder.recordOutput(ArraySlice(Array("Claude Code\r\n> ".utf8)))
+        XCTAssertNil(recorder.usageReport(provider: .claude, accountProfileID: UUID(), accountName: "Work"))
+    }
+
+    func testAResizedRecorderStillReadsTheLimits() throws {
+        let recorder = UsageTerminalRecorder(columns: 80, rows: 40)
+        recorder.recordInput(ArraySlice(Array("\r".utf8)))
+        recorder.resize(columns: 100, rows: 12)
+        recorder.recordOutput(ArraySlice(Array(usageScreen.joined(separator: "\r\n").utf8)))
+        let report = try XCTUnwrap(recorder.usageReport(provider: .claude, accountProfileID: UUID(), accountName: "Work"))
+        XCTAssertEqual(report.usageWindows.first?.id, "current-session")
     }
 }

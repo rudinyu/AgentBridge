@@ -313,6 +313,7 @@ final class AppModel {
                 selectedProfileIDs[provider] = selectedIDs[provider]
             }
             chats.reconcileNewDiscussionTarget()
+            terminal.adoptSavedUsageReports(reads.savedUsageReports)
             sessions = try reads.sessions.get()
             chats.applyDiscussions(reads.discussions)
             taskRecords = try reads.taskRecords.get()

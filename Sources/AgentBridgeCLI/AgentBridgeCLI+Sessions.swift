@@ -180,14 +180,29 @@ extension AgentBridgeCLI {
         _ = try await service.runInteractive(sessionID: sessionID, profileID: profileID, cancellation: cancellation)
     }
 
+    /// In the user's own terminal, `usage-tui` runs behind `UsageTerminalProxy` so the
+    /// limits it shows still reach the App's usage card. The App reads its embedded
+    /// terminal itself and passes `--in-app`; the proxy's inner run passes
+    /// `--attached-terminal`. Either runs the TUI directly.
     static func usageTUICommand(_ arguments: [String], service: BridgeService) async throws {
-        guard arguments.count == 4,
+        let mode = arguments.count == 5 ? arguments[4] : nil
+        guard arguments.count == 4 || mode == "--in-app" || mode == UsageTerminalProxy.attachedTerminalFlag,
               arguments[0] == "--provider",
               let provider = AgentProvider(rawValue: arguments[1]),
               provider != .local,
               arguments[2] == "--profile",
               let profileID = UUID(uuidString: arguments[3]) else {
             throw AgentBridgeError.invalidInput("Usage: agentbridge usage-tui --provider codex|claude --profile PROFILE-ID")
+        }
+        if mode == nil {
+            let profile = try service.accountProfile(id: profileID)
+            guard profile.provider == provider else { throw AccountProfileError.providerMismatch(profileID, provider) }
+            let status = try UsageTerminalProxy.run(provider: provider, profile: profile, service: service)
+            if status != 0 { exit(status) }
+            return
+        }
+        if mode == UsageTerminalProxy.attachedTerminalFlag {
+            try UsageTerminalProxy.attachToTerminal()
         }
         let cancellation = CancellationFlag()
         let signalSources = makeCancellationSignalSources(cancellation)
