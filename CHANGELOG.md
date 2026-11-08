@@ -1,8 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- In Traditional Chinese, more labels chosen by a condition showed in English: the Mac Control import buttons and hints, **Create Git Project** and **Link Existing Project**, the extension preview hint, the verification result, and the yes, no, confirmed and unknown values inside status lines.
+- A task summary, name or ID that was exactly "yes", "no" or "pending" was shown translated, as if it were one of the App's own words. These values now use their own `value.` keys.
+
+### Tests
+
+- The conditional-label check in `AppLocalizationTests` covered only `localized(...)`. It now reads the Swift source properly and also covers `localizedFormat(...)`, SwiftUI labels, interpolated values and subfolders. 342 tests pass under the native build system: 309 Core, 27 App and 6 terminal-capture.
+
 ## 0.12.2 — 2026-11-08
 
-- Release record: build 16 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `faf39042-1de0-4864-868d-e4cce07cf419`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.2`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `c4f2177fdc8087f54f1574db6ee2508ec6d1144caa425083dfc0d813f1d529f5`.
+- Release record: build 16 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `faf39042-1de0-4864-868d-e4cce07cf419`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.2`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `c4f2177fdc8087f54f1574db6ee2508ec6d1144caa425083dfc0d813f1d529f5`. This record does not cover launching or clicking through the signed App.
 
 ### Fixed
 

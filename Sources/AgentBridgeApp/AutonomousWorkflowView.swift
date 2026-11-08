@@ -354,7 +354,7 @@ struct AutonomousWorkflowView: View {
                         Text(model.localizedFormat("Plan SHA-256 · %@", run.planDigest))
                             .font(.caption.monospaced())
                             .textSelection(.enabled)
-                        Text(model.localizedFormat("Base commit %@ · source dirty: %@", run.plan.baseCommit, run.plan.sourceWasDirty ? model.localized("yes; uncommitted changes excluded") : model.localized("no")))
+                        Text(model.localizedFormat("Base commit %@ · source dirty: %@", run.plan.baseCommit, run.plan.sourceWasDirty ? model.localized("yes; uncommitted changes excluded") : model.localizedYesNo(false)))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -590,7 +590,7 @@ struct AutonomousWorkflowView: View {
                 Text(scope)
                     .font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Separate from Git/source repository access: \(plan.desktopControlSeparateFromGit ? "confirmed" : "not confirmed")")
+                Text("Separate from Git/source repository access: \(model.localized(plan.desktopControlSeparateFromGit ? "value.confirmed" : "value.notConfirmed"))")
                     .font(.caption2)
                     .foregroundStyle(plan.desktopControlSeparateFromGit ? Color.secondary : Color.orange)
             } else {
@@ -613,13 +613,13 @@ struct AutonomousWorkflowView: View {
                 Text("Source: \(snapshot.repositoryPath) @ \(snapshot.snapshotCommit) · revision \(snapshot.revision)")
                     .font(.system(size: 9, design: .monospaced))
                     .textSelection(.enabled)
-                Text("Frozen memory SHA-256: \(snapshot.digest) · truncated: \(snapshot.wasTruncated ? "yes" : "no")")
+                Text("Frozen memory SHA-256: \(snapshot.digest) · truncated: \(model.localizedYesNo(snapshot.wasTruncated))")
                     .font(.system(size: 9, design: .monospaced))
                     .textSelection(.enabled)
                 let receivingProfiles = plan.roleProfiles.filter { $0.profile.allowsSharedMemory }
                 Text(receivingProfiles.isEmpty
-                    ? "No execution role profile will receive this memory context."
-                    : "Profiles receiving this frozen context: " + receivingProfiles.map { "\($0.binding.role.rawValue) · \($0.binding.provider.rawValue)/\($0.profile.name)" }.joined(separator: ", "))
+                    ? model.localized("No execution role profile will receive this memory context.")
+                    : model.localizedFormat("Profiles receiving this frozen context: %@", receivingProfiles.map { "\($0.binding.role.rawValue) · \($0.binding.provider.rawValue)/\($0.profile.name)" }.joined(separator: ", ")))
                     .font(.caption2)
                     .fixedSize(horizontal: false, vertical: true)
                 DisclosureGroup("Inspect exact frozen project memory", isExpanded: $memorySnapshotExpanded) {
@@ -660,7 +660,8 @@ struct AutonomousWorkflowView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            Text("Save final summary: \(plan.saveRunSummaryToMemory ? "yes · profile \(plan.memoryDestinationProfileID?.uuidString.lowercased() ?? "unknown")" : "no")")
+            let memoryDestination = plan.memoryDestinationProfileID?.uuidString.lowercased() ?? model.localized("value.unknown")
+            Text("Save final summary: \(plan.saveRunSummaryToMemory ? model.localizedFormat("value.yesWithProfile %@", memoryDestination) : model.localizedYesNo(false))")
                 .font(.system(size: 9, design: .monospaced))
                 .textSelection(.enabled)
         }
@@ -786,7 +787,7 @@ struct AutonomousWorkflowView: View {
                     .textSelection(.enabled)
             }
             if run.plan.saveRunSummaryToMemory {
-                Text("Project memory summary saved: \(model.localized(run.memorySummarySaved.map { $0 ? "yes" : "no" } ?? "pending"))")
+                Text("Project memory summary saved: \(model.localized(run.memorySummarySaved.map { $0 ? "value.yes" : "value.no" } ?? "value.pending"))")
                     .font(.caption2)
             }
             if let writerSessionID = run.writerSessionID {

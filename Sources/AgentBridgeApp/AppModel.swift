@@ -105,6 +105,13 @@ final class AppModel {
         AppLocalization.display(source, language: appLanguage)
     }
 
+    /// A "yes" or "no" to place inside a sentence. Words like these use `value.`
+    /// keys because display looks up whole strings and template captures, so a
+    /// bare "yes" key would also rewrite agent text or an ID that is exactly "yes".
+    func localizedYesNo(_ value: Bool) -> String {
+        localized(value ? "value.yes" : "value.no")
+    }
+
     func localizedFormat(_ source: String, _ arguments: CVarArg...) -> String {
         String(format: localized(source), locale: appLanguage.locale, arguments: arguments)
     }

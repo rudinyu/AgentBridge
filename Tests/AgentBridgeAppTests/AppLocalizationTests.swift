@@ -56,44 +56,66 @@ final class AppLocalizationTests: XCTestCase {
         XCTAssertEqual(AppLocalization.display("Cancel and close", language: .traditionalChinese), "取消並關閉")
     }
 
-    /// A label chosen by `cond ? "A" : "B"` inside `localized(...)` is never a
-    /// literal the other checks see, so these went untranslated unnoticed.
-    func testEveryLabelChosenInsideLocalizedHasATranslation() throws {
+    /// A label chosen by `cond ? "A" : "B"` is never a literal the other checks
+    /// see, so these went untranslated unnoticed.
+    func testEveryLabelChosenByAConditionIsTranslated() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let table = try String(
-            contentsOf: root.appendingPathComponent("Sources/AgentBridgeApp/Resources/zh-Hant.lproj/Localizable.strings"),
-            encoding: .utf8
-        )
-        let key = try NSRegularExpression(pattern: #"^"((?:[^"\\]|\\.)*)" ="#, options: .anchorsMatchLines)
-        let keys = Set(key.matches(in: table, range: NSRange(table.startIndex..., in: table)).compactMap { match in
-            Range(match.range(at: 1), in: table).map { String(table[$0]) }
-        })
-        let literal = try NSRegularExpression(pattern: #""((?:[^"\\]|\\.)*)""#)
         let sourcesURL = root.appendingPathComponent("Sources/AgentBridgeApp", isDirectory: true)
-        var missing: [String] = []
-        for file in try FileManager.default.contentsOfDirectory(atPath: sourcesURL.path) where file.hasSuffix(".swift") {
-            let source = try String(contentsOf: sourcesURL.appendingPathComponent(file), encoding: .utf8)
-            var searchStart = source.startIndex
-            while let call = source.range(of: "localized(", range: searchStart..<source.endIndex) {
-                searchStart = call.upperBound
-                // The call's whole argument, up to its closing parenthesis.
-                var depth = 1
-                var end = call.upperBound
-                while end < source.endIndex, depth > 0 {
-                    if source[end] == "(" { depth += 1 } else if source[end] == ")" { depth -= 1 }
-                    end = source.index(after: end)
-                }
-                let argument = String(source[call.upperBound..<end])
-                guard argument.contains("?") else { continue }
-                for match in literal.matches(in: argument, range: NSRange(argument.startIndex..., in: argument)) {
-                    guard let range = Range(match.range(at: 1), in: argument) else { continue }
-                    let text = String(argument[range])
-                    guard text.rangeOfCharacter(from: .letters) != nil, !text.contains("\\("), !keys.contains(text) else { continue }
-                    missing.append("\(file): \(text)")
-                }
-            }
+        let keys = Set(AppLocalization.chineseTable.keys)
+        XCTAssertFalse(keys.isEmpty)
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sourcesURL, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }
+        XCTAssertFalse(files.isEmpty, "No Swift files found under \(sourcesURL.path).")
+        var problems: [String] = []
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            problems += SwiftLabelScanner.problems(in: source, keys: keys).map { "\(file.lastPathComponent): \($0)" }
         }
-        XCTAssertTrue(missing.isEmpty, "Add these to zh-Hant.lproj and en.lproj:\n" + missing.joined(separator: "\n"))
+        XCTAssertTrue(problems.isEmpty, "Fix these, adding any new key to zh-Hant.lproj and en.lproj:\n" + problems.sorted().joined(separator: "\n"))
+    }
+
+    func testLabelScannerReportsConditionalLabels() {
+        func problems(_ source: String) -> [String] {
+            SwiftLabelScanner.problems(in: source, keys: ["Known", "Known %@"])
+        }
+        // Forms the first version of the check could not see.
+        XCTAssertEqual(problems(#"model.localizedFormat(c ? "Missing %@" : "Known %@", x)"#), ["no translation: Missing %@"])
+        XCTAssertEqual(problems(#"Button(c ? "Missing" : "Known") { }"#), ["no translation: Missing"])
+        XCTAssertEqual(problems(#"Text(c ? "Known" : "Missing")"#), ["no translation: Missing"])
+        // A parenthesis inside a string does not end the argument early.
+        XCTAssertEqual(problems(#"model.localized(c ? "Retry :)" : "Other")"#), ["no translation: Other", "no translation: Retry :)"])
+        // An interpolated label needs a matching template.
+        XCTAssertEqual(problems(#"model.localized(c ? "Known \(n)" : "Failed \(n) times")"#), ["no translation: Failed %@ times"])
+        // SwiftUI looks up a key only when the condition's branches are all literals.
+        XCTAssertEqual(problems(#"Text(c ? "Known" : value)"#), ["SwiftUI shows this String as is, use model.localized: Known"])
+        XCTAssertEqual(problems(#"Text(value ?? "Known")"#), ["SwiftUI shows this String as is, use model.localized: Known"])
+        XCTAssertEqual(
+            problems(#"Text("x \(c ? "Known" : "Known") y")"#),
+            ["interpolated without model.localized: Known"]
+        )
+    }
+
+    func testLabelScannerIgnoresTextThatIsNotAConditionalLabel() {
+        func problems(_ source: String) -> [String] {
+            SwiftLabelScanner.problems(in: source, keys: ["Known", "Known %@"])
+        }
+        XCTAssertEqual(problems(#"Label("Anything", systemImage: c ? "star" : "circle")"#), [])
+        XCTAssertEqual(problems(#"// Text(c ? "Missing" : "Known")"#), [])
+        XCTAssertEqual(problems(#"Text(verbatim: c ? "Missing" : "Known")"#), [])
+        XCTAssertEqual(problems(#"Text(c ? model.localized("Known") : value)"#), [])
+        XCTAssertEqual(problems(#"Text(a?.b == true ? "Known" : "Known")"#), [])
+        XCTAssertEqual(problems(#"Text("x \(model.localized(c ? "Known" : "Known")) y")"#), [])
+    }
+
+    func testValueWordsDoNotRewriteTextThatIsExactlyThatWord() {
+        // Agent text or an ID can be exactly one of these words.
+        for word in ["yes", "no", "pending"] {
+            XCTAssertEqual(AppLocalization.display(word, language: .traditionalChinese), word)
+        }
+        XCTAssertEqual(AppLocalization.display("pending · task-1", language: .traditionalChinese), "pending · task-1")
+        XCTAssertEqual(AppLocalization.display("value.yes", language: .traditionalChinese), "有")
+        XCTAssertEqual(AppLocalization.display("value.yes", language: .english), "yes")
     }
 
     func testEnglishStillReadsOlderChineseHistory() {

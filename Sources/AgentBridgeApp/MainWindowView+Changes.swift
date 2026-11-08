@@ -106,9 +106,9 @@ extension MainWindowView {
                 }
                 if let result = model.changes.verificationResult {
                     HStack(spacing: 10) {
-                        Text("Exit: \(result.exitCode.map(String.init) ?? "not reported")")
+                        Text("Exit: \(result.exitCode.map(String.init) ?? model.localized("value.notReported"))")
                         Text("Duration: \(String(format: "%.3f", result.durationSeconds))s")
-                        Text(result.succeeded ? "CLI reported success" : (result.skippedReason ?? (result.wasCancelled ? "Cancelled" : "Not successful")))
+                        Text(model.localized(result.succeeded ? "CLI reported success" : (result.skippedReason ?? (result.wasCancelled ? "Cancelled" : "Not successful"))))
                     }
                     .font(.caption.monospacedDigit())
                     if !result.standardOutput.isEmpty {

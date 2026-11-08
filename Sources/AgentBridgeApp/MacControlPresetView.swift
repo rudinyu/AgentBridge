@@ -111,9 +111,9 @@ struct MacControlPresetView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Permission readiness · \(readiness.checkedAt.formatted(date: .abbreviated, time: .standard))")
                             .font(.caption.weight(.semibold))
-                        Text("Helper available: \(readiness.helperAvailable ? "yes" : "no") · status tool available: \(readiness.statusToolAvailable ? "yes" : "no")")
+                        Text("Helper available: \(model.localizedYesNo(readiness.helperAvailable)) · status tool available: \(model.localizedYesNo(readiness.statusToolAvailable))")
                             .font(.caption2)
-                        Text(readiness.statusText.isEmpty ? "No permission status was returned." : readiness.statusText)
+                        Text(model.localized(readiness.statusText.isEmpty ? "No permission status was returned." : readiness.statusText))
                             .font(.caption2)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
@@ -419,7 +419,7 @@ struct MacControlPresetView: View {
             Divider()
             Text("Selected typed preset")
                 .font(.caption.weight(.semibold))
-            Text("Target: \(configuration.macControlTargetBundleID ?? "unknown") · mode: \(configuration.macControlAccessMode?.rawValue.capitalized ?? "unknown")")
+            Text("Target: \(configuration.macControlTargetBundleID ?? model.localized("value.unknown")) · mode: \(configuration.macControlAccessMode?.rawValue.capitalized ?? model.localized("value.unknown"))")
                 .font(.system(size: 9, design: .monospaced))
                 .textSelection(.enabled)
             Text("Configuration SHA-256: \(configuration.configurationDigest)")
@@ -572,7 +572,7 @@ struct MacControlPresetView: View {
                 .font(.system(size: 9, design: .monospaced))
                 .textSelection(.enabled)
             if let target = review.macControlTargetBundleID {
-                Text("Target app bundle ID: \(target) · mode: \(review.macControlAccessMode?.rawValue ?? "unknown")")
+                Text("Target app bundle ID: \(target) · mode: \(review.macControlAccessMode?.rawValue ?? model.localized("value.unknown"))")
                     .font(.system(size: 9, design: .monospaced))
                     .textSelection(.enabled)
             }

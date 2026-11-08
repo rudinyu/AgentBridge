@@ -258,7 +258,7 @@ struct ActiveExtensionsView: View {
                 Text("Target app bundle ID: \(targetBundleID)")
                     .font(.system(size: 9, design: .monospaced))
                     .textSelection(.enabled)
-                Text("Mac Control mode: \(configuration.macControlAccessMode?.rawValue.capitalized ?? "unknown") · actions: \(configuration.macControlActionNames.joined(separator: ", "))")
+                Text("Mac Control mode: \(configuration.macControlAccessMode?.rawValue.capitalized ?? model.localized("value.unknown")) · actions: \(configuration.macControlActionNames.joined(separator: ", "))")
                     .font(.caption2)
                     .textSelection(.enabled)
                 if let disclosure = configuration.screenCaptureDisclosure {
