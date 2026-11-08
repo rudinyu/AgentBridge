@@ -2,6 +2,8 @@
 
 ## 0.12.4 — 2026-11-08
 
+- Release record: build 18 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `03db6719-3f60-4264-a291-0ded78fa33d8`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.4`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `fe8d3c413b0144a25831c903f6b62ce2f2c5bee912289a1302d00aff05e9bffe`. The signed App itself has not been launched or clicked through. The translation fixes were checked in an unsigned development build; the Skills and MCP confirmation dialogs and the error alert were not checked in the running App.
+
 ### Fixed
 
 - In Traditional Chinese, dates and times, the autonomous workflow's limits and role names, task records, activity messages and the built-in account name showed in English. So did labels with a number in them, because their translations were keyed for text rather than integers.
