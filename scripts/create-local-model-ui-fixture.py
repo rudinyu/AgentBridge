@@ -291,7 +291,7 @@ def bootstrap_script(
         f"""\
         #!/bin/bash
         set -euo pipefail
-        if [[ $# -ne 1 ]]; then printf 'Usage: %s /path/to/AgentBridge-0.12.3-dev.app/Contents/Helpers/agentbridge\\n' "$0" >&2; exit 2; fi
+        if [[ $# -ne 1 ]]; then printf 'Usage: %s /path/to/AgentBridge-0.12.4-dev.app/Contents/Helpers/agentbridge\\n' "$0" >&2; exit 2; fi
         CLI="$1"
         if [[ "$CLI" != /* || ! -x "$CLI" ]]; then printf 'AgentBridge CLI must be executable and absolute.\\n' >&2; exit 2; fi
         case "$CLI" in */Contents/Helpers/agentbridge|*/build/swiftpm/release/agentbridge) ;; *) printf 'Use the CLI helper from the dev app bundle or checkout build.\\n' >&2; exit 2 ;; esac
@@ -320,7 +320,7 @@ def launch_script(*, home: Path, temp: Path, fixture_app: Path, bundle_id: str) 
         f"""\
         #!/bin/bash
         set -euo pipefail
-        if [[ $# -ne 1 ]]; then printf 'Usage: %s /path/to/AgentBridge-0.12.3-dev.app\\n' "$0" >&2; exit 2; fi
+        if [[ $# -ne 1 ]]; then printf 'Usage: %s /path/to/AgentBridge-0.12.4-dev.app\\n' "$0" >&2; exit 2; fi
         SOURCE="$1"; FIXTURE={shlex.quote(str(fixture_app))}
         if [[ "$SOURCE" != /* || "$SOURCE" == *'/../'* || "$SOURCE" == */.. ]]; then printf 'Source app path must be absolute without dot-dot traversal.\\n' >&2; exit 2; fi
         if [[ ! -x "$SOURCE/Contents/MacOS/AgentBridgeApp" || ! -f "$SOURCE/Contents/Info.plist" ]]; then printf 'Source app bundle is incomplete.\\n' >&2; exit 2; fi
@@ -406,8 +406,8 @@ def main() -> int:
             },
             "commands": {
                 "startServer": ["bash", str(root / "start-fixture-server.sh")],
-                "bootstrapCLI": ["bash", str(root / "bootstrap-fixture.sh"), "/path/to/AgentBridge-0.12.3-dev.app/Contents/Helpers/agentbridge"],
-                "launchApp": ["bash", str(root / "launch-fixture-app.sh"), "/path/to/AgentBridge-0.12.3-dev.app"],
+                "bootstrapCLI": ["bash", str(root / "bootstrap-fixture.sh"), "/path/to/AgentBridge-0.12.4-dev.app/Contents/Helpers/agentbridge"],
+                "launchApp": ["bash", str(root / "launch-fixture-app.sh"), "/path/to/AgentBridge-0.12.4-dev.app"],
                 "stopServer": ["bash", str(root / "stop-fixture-server.sh")],
             },
         }
@@ -431,7 +431,7 @@ def main() -> int:
             1. Start the server:
                bash {shlex.quote(str(root / 'start-fixture-server.sh'))}
             2. Bootstrap the isolated CLI profile and create a local chat:
-               bash {shlex.quote(str(root / 'bootstrap-fixture.sh'))} /path/to/AgentBridge-0.12.3-dev.app/Contents/Helpers/agentbridge
+               bash {shlex.quote(str(root / 'bootstrap-fixture.sh'))} /path/to/AgentBridge-0.12.4-dev.app/Contents/Helpers/agentbridge
             3. Use the chat ID printed by bootstrap:
                printf '%s\\n' 'Preserve this marker: LOCAL_FIXTURE_CONTEXT_42' | agentbridge chat send CHAT-ID
                printf '%s\\n' 'What marker should remain in the context?' | agentbridge local preview discussion CHAT-ID
@@ -439,7 +439,7 @@ def main() -> int:
             4. Stop the server:
                bash {shlex.quote(str(root / 'stop-fixture-server.sh'))}
             5. Optional GUI review, only when explicitly run:
-               bash {shlex.quote(str(root / 'launch-fixture-app.sh'))} /path/to/AgentBridge-0.12.3-dev.app
+               bash {shlex.quote(str(root / 'launch-fixture-app.sh'))} /path/to/AgentBridge-0.12.4-dev.app
 
             No app is launched and no service is started by this generator.
             """

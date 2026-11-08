@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.4 — 2026-11-08
 
 ### Fixed
 
@@ -9,7 +9,7 @@
 
 ### Tests
 
-- The translation checks now cover `Stepper` labels and require dates to use the app language.
+- The translation checks now cover `Stepper` labels and require dates to use the app language. 352 tests pass under the native build system; under `swiftbuild`, 309 Core, 37 App and 6 terminal-capture tests pass.
 
 ## 0.12.3 — 2026-11-08
 

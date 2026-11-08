@@ -4,7 +4,7 @@
 
 ![AgentBridge macOS app icon](Assets/AppIcon-1024.png)
 
-AgentBridge 0.12.3 is a Swift project for macOS 14 and later. It includes a shared core, the `agentbridge` command-line tool, and a native SwiftUI app. It works through the official Codex CLI and Claude Code CLI installed on the Mac. Read-only conversations from the app and CLI can share memory by source repository and pinned commit; users can explicitly carry selected memory to a different commit. A first-use setup wizard guides language, provider, workspace folder, CLI path, subscription login, shared memory, and local usage settings; open it again from **Setup Wizard** in the app header. The CLI uses the same saved workspace root. The app defaults to English and supports Traditional Chinese.
+AgentBridge 0.12.4 is a Swift project for macOS 14 and later. It includes a shared core, the `agentbridge` command-line tool, and a native SwiftUI app. It works through the official Codex CLI and Claude Code CLI installed on the Mac. Read-only conversations from the app and CLI can share memory by source repository and pinned commit; users can explicitly carry selected memory to a different commit. A first-use setup wizard guides language, provider, workspace folder, CLI path, subscription login, shared memory, and local usage settings; open it again from **Setup Wizard** in the app header. The CLI uses the same saved workspace root. The app defaults to English and supports Traditional Chinese.
 
 AgentBridge uses each official CLI's subscription login by default. Codex is subscription-only. Claude API is an optional paid mode that requires an API key, a per-run USD budget, and explicit confirmation every time. The local US$140 monthly ledger is not a hard limit on Anthropic's billing.
 
@@ -29,11 +29,11 @@ Requirements: macOS 14 or later, Swift 6, and an Xcode toolchain. Install and si
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh --app-name AgentBridge-0.12.3-dev.app
-open build/AgentBridge-0.12.3-dev.app
+./scripts/package-app.sh --app-name AgentBridge-0.12.4-dev.app
+open build/AgentBridge-0.12.4-dev.app
 ```
 
-`.codex/ci.sh` builds the CLI and app and runs the core tests. `scripts/package-app.sh --app-name AgentBridge-0.12.3-dev.app` bundles the icon into a separate unsigned development app and keeps the signed 0.9.0 release separate. The script default still creates `build/AgentBridge.app`. For distribution, sign with Developer ID, submit it to Apple for notarization, staple the ticket, and verify the app; see the [How to Use guide](docs/HOW_TO_USE.md). Building and checking do not require provider login, call a model, or incur Claude API charges. The CLI is at `build/swiftpm/debug/agentbridge`.
+`.codex/ci.sh` builds the CLI and app and runs the core tests. `scripts/package-app.sh --app-name AgentBridge-0.12.4-dev.app` bundles the icon into a separate unsigned development app and keeps the signed 0.9.0 release separate. The script default still creates `build/AgentBridge.app`. For distribution, sign with Developer ID, submit it to Apple for notarization, staple the ticket, and verify the app; see the [How to Use guide](docs/HOW_TO_USE.md). Building and checking do not require provider login, call a model, or incur Claude API charges. The CLI is at `build/swiftpm/debug/agentbridge`.
 
 ### Default boundaries
 
