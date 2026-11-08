@@ -2,6 +2,8 @@
 
 ## 0.12.2 — 2026-11-08
 
+- Release record: build 16 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `faf39042-1de0-4864-868d-e4cce07cf419`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.2`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `c4f2177fdc8087f54f1574db6ee2508ec6d1144caa425083dfc0d813f1d529f5`.
+
 ### Fixed
 
 - In Traditional Chinese, the terminal panel's **Close terminal**, **End the CLI, then close** and **Cancel and close** buttons, and the "yes" and "pending" values of an autonomous workflow's memory-summary line, showed in English. Each label is chosen by a condition inside `localized(...)`, which no check covered; a new test now reads every such label and requires a translation.
