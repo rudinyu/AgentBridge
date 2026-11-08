@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: in Traditional Chinese, the terminal panel's **Close terminal**, **End the CLI, then close** and **Cancel and close** buttons, and the "yes" and "pending" values of an autonomous workflow's memory-summary line, showed in English. Each label is chosen by a condition inside `localized(...)`, which no check covered; a new test now reads every such label and requires a translation.
+
 ## 0.12.1 — 2026-11-08
 
 - Release record: build 15 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `8d2f093d-7833-487a-9595-e0bfaa6e6d8f`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.1`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `34243fa707395e77119f9c0b93edb1e3a384eebe1f852e2be2e621276c044d47`. The signed App itself has not been launched or clicked through.
