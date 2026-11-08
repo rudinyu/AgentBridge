@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: the usage card read nothing from Claude Code 2.1.311's `/usage` screen and showed "No recognized fields". The screen is taller than the in-app terminal, so the session and weekly limits scrolled off before they were read, and Claude draws many spaces by moving the cursor, which SwiftTerm renders as NUL, so even a visible "Current session" did not match its label. The capture now starts at the row that was on top when `/usage` was sent, keeps the newest rows within the same row and byte bounds, and reads skipped cells as spaces. Checked in the App against the live screen: Current session 86% and Current week (all models) 33%, with their reset times.
 - Fixed: the in-app terminal did not take the keyboard when it opened, so arrow keys and Enter went to the rest of the window until you clicked it, and clicking did not always help: once a TUI such as Claude Code turns on mouse reporting, SwiftTerm hands the click to the TUI and leaves the keyboard where it was. The terminal now takes the keyboard when it opens and whenever it is clicked. Found by testing the signed 0.12.0 App: the Claude usage terminal's folder-trust prompt ignored the arrow keys.
 
 ## 0.12.0 — 2026-11-08

@@ -39,6 +39,7 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
     private var usageCaptureGeneration: UInt64 = 0
     private var usageSnapshotSequence: UInt64 = 0
     private var pendingUsageScreenSnapshot: DispatchWorkItem?
+    private var usageCaptureFirstRow: Int?
     var onTermination: (@MainActor (Int32?) -> Void)?
     var onUsageScreenSnapshot: (@MainActor (String, Date) -> Bool)?
     var allowsUsageScreenCapture = false
@@ -114,6 +115,7 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
         pendingUsageScreenSnapshot = nil
         usageSnapshotSequence &+= 1
         let bytes = Array("/usage\r".utf8)
+        usageCaptureFirstRow = UsageScreenCapture.topRow(of: getTerminal())
         usageCaptureLock.lock()
         usageCaptureEnabled = true
         usageCaptureGeneration &+= 1
@@ -159,39 +161,6 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
         }
     }
 
-    /// Copies only the currently visible SwiftTerm rows, with strict row,
-    /// column, and byte bounds. The returned string is kept only for the
-    /// short in-memory debounce before parsing.
-    private func visibleScreenText() -> String {
-        let terminal = self.terminal!
-        let rowCount = min(max(terminal.rows, 0), 120)
-        let columnCount = min(max(terminal.cols, 0), 240)
-        let maximumBytes = ProviderUsageReportParser.maximumScreenBytes
-        var lines: [String] = []
-        var totalBytes = 0
-
-        for row in 0..<rowCount {
-            guard let line = terminal.getLine(row: row) else { continue }
-            let rendered = line.translateToString(
-                trimRight: true,
-                startCol: 0,
-                endCol: columnCount,
-                skipNullCellsFollowingWide: true,
-                characterProvider: { terminal.getCharacter(for: $0) }
-            )
-            var boundedLine = ""
-            for character in rendered {
-                let characterBytes = String(character).utf8.count
-                guard totalBytes + characterBytes <= maximumBytes else { break }
-                boundedLine.append(character)
-                totalBytes += characterBytes
-            }
-            lines.append(boundedLine)
-            guard totalBytes < maximumBytes else { break }
-            totalBytes += 1 // newline separator
-        }
-        return lines.joined(separator: "\n")
-    }
 
     private func scheduleUsageScreenSnapshot() {
         guard allowsUsageScreenCapture, shouldCaptureUsageScreen() else { return }
@@ -205,7 +174,7 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
                       self.usageSnapshotSequence == sequence,
                       self.shouldCaptureUsageScreen() else { return }
                 self.pendingUsageScreenSnapshot = nil
-                let screenText = self.visibleScreenText()
+                let screenText = UsageScreenCapture.text(of: self.getTerminal(), firstRow: self.usageCaptureFirstRow)
                 let capturedAt = Date()
                 let usageValuesRecognized = self.onUsageScreenSnapshot?(screenText, capturedAt) ?? false
                 if usageValuesRecognized { self.disableUsageScreenCapture() }
@@ -376,5 +345,58 @@ struct EmbeddedTerminalView: NSViewRepresentable {
         func processTerminated(_ exitCode: Int32?) {
             onTermination(exitCode)
         }
+    }
+}
+
+/// What the usage report reads from the terminal. The usage screen can be taller
+/// than the terminal: Claude Code 2.1.311 prints the session and weekly limits first,
+/// and a small terminal scrolls them off before they can be read. So the capture
+/// starts at the row that was on top when /usage was sent, and keeps the newest rows
+/// within the row and byte bounds. The text is kept only for the short in-memory
+/// debounce before parsing.
+enum UsageScreenCapture {
+    static let maximumRows = 120
+
+    /// The top visible row counted from the start of the scrollback, or nil once
+    /// the terminal has dropped old lines and rows can no longer be counted that way.
+    static func topRow(of terminal: Terminal) -> Int? {
+        // Row 0 exists only while no line has been dropped; then a scroll-invariant
+        // row is simply the display offset plus the visible row.
+        terminal.getScrollInvariantLine(row: 0) != nil ? terminal.getTopVisibleRow() : nil
+    }
+
+    static func text(of terminal: Terminal, firstRow: Int?) -> String {
+        let columnCount = min(max(terminal.cols, 0), 240)
+        let visibleRows = max(terminal.rows, 0)
+        let maximumBytes = ProviderUsageReportParser.maximumScreenBytes
+        let rows: [BufferLine]
+        if let top = topRow(of: terminal) {
+            let end = top + visibleRows
+            let start = max(min(firstRow ?? top, top), end - maximumRows, 0)
+            rows = (start..<end).compactMap { terminal.getScrollInvariantLine(row: $0) }
+        } else {
+            rows = (0..<min(visibleRows, maximumRows)).compactMap { terminal.getLine(row: $0) }
+        }
+
+        // Newest rows first, so the byte bound drops the oldest ones.
+        var lines: [String] = []
+        var totalBytes = 0
+        for line in rows.reversed() {
+            // A TUI often moves the cursor instead of printing spaces, and SwiftTerm
+            // renders the cells it skipped as NUL. They are blank on screen, so they
+            // become spaces here, or "Current session" would not match its label.
+            let rendered = line.translateToString(
+                trimRight: true,
+                startCol: 0,
+                endCol: columnCount,
+                skipNullCellsFollowingWide: true,
+                characterProvider: { terminal.getCharacter(for: $0) }
+            ).replacingOccurrences(of: "\u{0}", with: " ")
+            let lineBytes = rendered.utf8.count + 1
+            guard totalBytes + lineBytes <= maximumBytes else { break }
+            lines.append(rendered)
+            totalBytes += lineBytes
+        }
+        return lines.reversed().joined(separator: "\n")
     }
 }
