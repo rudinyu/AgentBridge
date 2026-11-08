@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.3 — 2026-11-08
 
 ### Fixed
 
@@ -12,7 +12,7 @@
 
 ### Tests
 
-- The conditional-label check in `AppLocalizationTests` covered only `localized(...)`. It now reads the Swift source properly and also covers `localizedFormat(...)`, SwiftUI labels, interpolated values and subfolders. New tests require every sheet and dialog to use the app language and every single-literal label to have a translation. 348 tests pass under the native build system: 309 Core, 33 App and 6 terminal-capture.
+- The conditional-label check in `AppLocalizationTests` covered only `localized(...)`. It now reads the Swift source properly and also covers `localizedFormat(...)`, SwiftUI labels, interpolated values and subfolders. New tests require every sheet and dialog to use the app language and every single-literal label to have a translation. 348 tests pass under the native build system; under `swiftbuild`, 309 Core, 33 App and 6 terminal-capture tests pass.
 
 ## 0.12.2 — 2026-11-08
 

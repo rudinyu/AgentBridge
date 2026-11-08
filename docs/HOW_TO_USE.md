@@ -18,11 +18,11 @@ Run these commands from the AgentBridge repository:
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh --app-name AgentBridge-0.12.2-dev.app
-open build/AgentBridge-0.12.2-dev.app
+./scripts/package-app.sh --app-name AgentBridge-0.12.3-dev.app
+open build/AgentBridge-0.12.3-dev.app
 ```
 
-The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built this development version, open `build/AgentBridge-0.12.2-dev.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
+The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built this development version, open `build/AgentBridge-0.12.3-dev.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
 
 The first time the app opens, choose or create a folder for workspace data. AgentBridge requires this selection before it can create sessions; it does not silently choose a folder under Application Support. The app and CLI use the same saved location. The selected folder contains isolated session workspaces and shared memory:
 
