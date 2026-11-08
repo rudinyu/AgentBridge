@@ -2,6 +2,8 @@
 
 ## 0.12.0 — 2026-11-08
 
+- Release record: build 14 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `8bcedabd-8ee8-4ffe-920f-8222bf805f5d`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.0`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `b9b7f52748217a7f3db2fb2711a0d866aaaaab2f788da220236a9c55e3133b63`. The signed App itself has not been launched or clicked through.
+
 ### Upgrade notes
 
 - A change run no longer sees shared memory or project handoffs unless its plan includes them. Select **Include shared memory in the change run** in the App, or pass `--with-memory` to `changes plan`. Plans saved earlier load without memory and keep their digest.
