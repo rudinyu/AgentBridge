@@ -142,7 +142,7 @@ extension MainWindowView {
                                             else { model.selectedMemoryTurnIDs.remove(turn.id) }
                                         }
                                     )) {
-                                        Text("\(turn.provider.rawValue.capitalized) · \(turn.timestamp.formatted(date: .abbreviated, time: .shortened)) · \(turn.userText.prefix(72))")
+                                        Text("\(turn.provider.rawValue.capitalized) · \(model.formattedDate(turn.timestamp, date: .abbreviated, time: .shortened)) · \(turn.userText.prefix(72))")
                                             .font(.caption2).lineLimit(2)
                                     }
                                 }
@@ -157,7 +157,7 @@ extension MainWindowView {
                             Text("Handoffs for this repository")
                                 .font(.caption.weight(.semibold))
                             ForEach(model.projectMemoryHandoffs.prefix(5)) { handoff in
-                                Text("\(handoff.sourceCommit.prefix(12)) → \(handoff.targetCommit.prefix(12)) · \(handoff.turns.count) turns · \(handoff.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                                Text("\(handoff.sourceCommit.prefix(12)) → \(handoff.targetCommit.prefix(12)) · \(handoff.turns.count) turns · \(model.formattedDate(handoff.createdAt, date: .abbreviated, time: .shortened))")
                                     .font(.caption2).foregroundStyle(.secondary)
                                     .textSelection(.enabled)
                             }
@@ -185,10 +185,10 @@ extension MainWindowView {
                                     HStack {
                                         Text(event.kind).font(.caption.weight(.semibold).monospaced())
                                         Spacer()
-                                        Text(event.timestamp.formatted(date: .abbreviated, time: .standard))
+                                        Text(model.formattedDate(event.timestamp, date: .abbreviated, time: .standard))
                                             .font(.caption2).foregroundStyle(.tertiary)
                                     }
-                                    Text(event.message).font(.caption2).textSelection(.enabled)
+                                    Text(model.localized(event.message)).font(.caption2).textSelection(.enabled)
                                 }
                                 .padding(7)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -213,14 +213,14 @@ extension MainWindowView {
                     ForEach(model.taskRecords.prefix(12)) { task in
                         VStack(alignment: .leading, spacing: 3) {
                             HStack {
-                                Text(task.status.rawValue).font(.caption.weight(.semibold))
-                                Text(task.approvalState.rawValue).font(.caption2).foregroundStyle(.secondary)
+                                Text(model.localized(task.status.rawValue)).font(.caption.weight(.semibold))
+                                Text(model.localized("value.approval." + task.approvalState.rawValue)).font(.caption2).foregroundStyle(.secondary)
                                 Spacer()
                                 if task.status == .inProgress {
                                     Button("Cancel") { model.cancelSession(task.sessionID) }
                                 }
                             }
-                            Text(task.progressSummary).font(.caption2).textSelection(.enabled)
+                            Text(model.localized(task.progressSummary)).font(.caption2).textSelection(.enabled)
                             Text(model.localizedFormat("value.session %@", task.sessionID.uuidString.lowercased()))
                                 .font(.system(size: 8, design: .monospaced)).foregroundStyle(.tertiary)
                             ForEach(task.references, id: \.self) { reference in

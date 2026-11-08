@@ -104,6 +104,10 @@ struct ActiveExtensionsView: View {
             Button(model.localized("Disable"), role: .destructive) { disableSelectedExtension() }
             Button(model.localized("Cancel"), role: .cancel) { }
         }
+        .onChange(of: model.appLanguage) { _, _ in
+            localStatus = ""
+            localError = nil
+        }
         .onAppear {
             synchronizeTargetProfile()
             model.extensions.refreshActiveExtensionConfigurations()
@@ -176,7 +180,7 @@ struct ActiveExtensionsView: View {
                 }
                 if !model.extensions.activeExtensionConfigurations.isEmpty {
                     HStack(spacing: 12) {
-                        Text("\(model.extensions.activeExtensionConfigurations.count) runtime configuration(s) imported")
+                        Text(model.localizedFormat("%@ runtime configuration(s) imported", String(model.extensions.activeExtensionConfigurations.count)))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -270,7 +274,7 @@ struct ActiveExtensionsView: View {
                 if let calls = configuration.maximumToolCallsPerRun,
                    let responseBytes = configuration.maximumToolResponseBytes,
                    let totalBytes = configuration.maximumTotalToolResponseBytes {
-                    Text("Tool limits: \(calls) calls · \(responseBytes) bytes per response · \(totalBytes) bytes total")
+                    Text(model.localizedFormat("Tool limits: %@ calls · %@ bytes per response · %@ bytes total", String(calls), String(responseBytes), String(totalBytes)))
                         .font(.caption2)
                 }
             }
@@ -300,7 +304,7 @@ struct ActiveExtensionsView: View {
                         set: { targetProfileID = $0 }
                     )) {
                         ForEach(model.accountProfiles[targetProvider] ?? []) { profile in
-                            Text(profile.name).tag(profile.id)
+                            Text(model.displayName(of: profile)).tag(profile.id)
                         }
                     }
                     .disabled((model.accountProfiles[targetProvider] ?? []).isEmpty || model.hasActiveAutonomousWorkflow)

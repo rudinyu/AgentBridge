@@ -193,3 +193,53 @@ final class CLICompatibilityWarningTests: XCTestCase {
         XCTAssertTrue(model.cliCompatibilityWarnings(for: .claude).isEmpty)
     }
 }
+
+@MainActor
+final class AppLanguageTests: XCTestCase {
+    private func makeModel() throws -> (URL, AppModel) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AppLanguage-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("data"), withIntermediateDirectories: true)
+        let store = try AuditStore(rootURL: root.appendingPathComponent("state"), workspaceRootURL: root.appendingPathComponent("data"), managedWorkspaceRoots: [])
+        return (root, AppModel(store: store, service: try BridgeService(store: store)))
+    }
+
+    private func cleanUp(_ root: URL) {
+        try? FileManager.default.removeItem(at: root)
+        UserDefaults.standard.removeObject(forKey: AppLanguage.preferenceKey)
+    }
+
+    func testChangingTheLanguageDropsStatusAlreadyTranslated() throws {
+        let (root, model) = try makeModel()
+        defer { cleanUp(root) }
+        model.status = "已匯入"
+        model.autonomousStatus = "已匯入"
+        model.extensions.activeExtensionStatus = "已匯入"
+        model.setupWizard.status = "已匯入"
+        model.appLanguage = .traditionalChinese
+        XCTAssertEqual(model.status, "Ready.")
+        XCTAssertEqual(model.autonomousStatus, "")
+        XCTAssertEqual(model.extensions.activeExtensionStatus, "")
+        XCTAssertEqual(model.setupWizard.status, "")
+    }
+
+    func testOnlyBuiltInAccountNamesAreTranslated() throws {
+        let (root, model) = try makeModel()
+        defer { cleanUp(root) }
+        model.appLanguage = .traditionalChinese
+        let date = Date(timeIntervalSince1970: 0)
+        let builtIn = AccountProfile(id: AccountProfile.defaultID(for: .codex), name: "Current local login", provider: .codex, usesExistingLogin: true, allowsSharedMemory: true, createdAt: date)
+        let named = AccountProfile(id: UUID(), name: "Current local login", provider: .codex, usesExistingLogin: false, allowsSharedMemory: true, createdAt: date)
+        XCTAssertEqual(model.displayName(of: builtIn), "目前本機登入")
+        XCTAssertEqual(model.displayName(of: named), "Current local login")
+    }
+
+    func testDatesFollowTheAppLanguage() throws {
+        let (root, model) = try makeModel()
+        defer { cleanUp(root) }
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+        model.appLanguage = .traditionalChinese
+        XCTAssertTrue(model.formattedDate(date, date: .abbreviated, time: .omitted).contains("年"))
+        model.appLanguage = .english
+        XCTAssertFalse(model.formattedDate(date, date: .abbreviated, time: .omitted).contains("年"))
+    }
+}

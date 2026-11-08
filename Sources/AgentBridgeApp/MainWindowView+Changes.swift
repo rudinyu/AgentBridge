@@ -130,7 +130,7 @@ extension MainWindowView {
         GroupBox("Full file diff") {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("\(model.changes.changeDiff?.files.count ?? 0) changed files")
+                    Text(model.localizedFormat("%@ changed files", String(model.changes.changeDiff?.files.count ?? 0)))
                         .font(.caption.weight(.semibold))
                     Spacer()
                     Button("Refresh diff") { model.refreshSelectedEvents() }

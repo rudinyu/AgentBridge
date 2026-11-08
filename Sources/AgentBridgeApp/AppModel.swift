@@ -8,7 +8,10 @@ import UserNotifications
 @Observable
 final class AppModel {
     var appLanguage: AppLanguage {
-        didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: AppLanguage.preferenceKey) }
+        didSet {
+            UserDefaults.standard.set(appLanguage.rawValue, forKey: AppLanguage.preferenceKey)
+            if appLanguage != oldValue { resetTranslatedStatus() }
+        }
     }
     let setupWizard = SetupWizardModel()
     let usage = UsageModel()
@@ -112,6 +115,28 @@ final class AppModel {
         localized(value ? "value.yes" : "value.no")
     }
 
+    /// Status lines are stored already translated, so they would stay in the
+    /// previous language. Put them back to their starting text instead.
+    private func resetTranslatedStatus() {
+        status = "Ready."
+        localModelStatus = "Connection not checked."
+        autonomousStatus = ""
+        extensions.activeExtensionStatus = ""
+        setupWizard.status = ""
+        setupWizard.usageStatus = ""
+        setupWizard.cliStatus = ""
+    }
+
+    func formattedDate(_ value: Date, date: Date.FormatStyle.DateStyle, time: Date.FormatStyle.TimeStyle) -> String {
+        value.formatted(Date.FormatStyle(date: date, time: time).locale(appLanguage.locale))
+    }
+
+    /// Built-in accounts are stored under a fixed English name. Names the user
+    /// chose are shown as written.
+    func displayName(of profile: AccountProfile) -> String {
+        profile.id == AccountProfile.defaultID(for: profile.provider) ? localized(profile.name) : profile.name
+    }
+
     func localizedFormat(_ source: String, _ arguments: CVarArg...) -> String {
         String(format: localized(source), locale: appLanguage.locale, arguments: arguments)
     }
@@ -192,7 +217,7 @@ final class AppModel {
     }
 
     func profileName(for provider: AgentProvider, profileID: UUID) -> String {
-        accountProfiles[provider]?.first(where: { $0.id == profileID })?.name
+        accountProfiles[provider]?.first(where: { $0.id == profileID }).map(displayName(of:))
             ?? localized("Current local login")
     }
 
@@ -249,7 +274,7 @@ final class AppModel {
 
     func profileName(for session: SessionRecord) -> String {
         let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
-        return accountProfiles[session.provider]?.first(where: { $0.id == profileID })?.name
+        return accountProfiles[session.provider]?.first(where: { $0.id == profileID }).map(displayName(of:))
             ?? (session.provider == .local ? localized("Local account") : localized("Current local login"))
     }
 

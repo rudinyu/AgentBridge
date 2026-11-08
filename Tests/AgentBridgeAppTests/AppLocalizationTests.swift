@@ -86,6 +86,14 @@ final class AppLocalizationTests: XCTestCase {
         XCTAssertTrue(problems.isEmpty, "Add these to zh-Hant.lproj and en.lproj:\n" + problems.sorted().joined(separator: "\n"))
     }
 
+    func testDatesAreFormattedInTheAppLanguage() throws {
+        // `Date.formatted(date:time:)` uses the system locale, not the app's.
+        for file in try appSourceFiles() {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            XCTAssertFalse(source.contains(".formatted(date:"), "\(file.lastPathComponent) formats a date without the app language.")
+        }
+    }
+
     func testEveryDialogGoesThroughTheAppLanguage() throws {
         var problems: [String] = []
         for file in try appSourceFiles() {

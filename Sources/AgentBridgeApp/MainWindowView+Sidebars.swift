@@ -24,7 +24,7 @@ extension MainWindowView {
                                 set: { model.chats.selectNewDiscussionProfile($0) }
                             )) {
                                 ForEach(model.accountProfiles[model.chats.newDiscussionProvider] ?? []) { account in
-                                    Text(account.name).tag(account.id)
+                                    Text(model.displayName(of: account)).tag(account.id)
                                 }
                             }
                         } else {
@@ -140,7 +140,7 @@ extension MainWindowView {
                 "%@ · %@ · %@",
                 discussion.provider.rawValue.capitalized,
                 model.profileName(for: discussion.provider, profileID: discussion.accountProfileID),
-                discussion.updatedAt.formatted(date: .abbreviated, time: .shortened)
+                model.formattedDate(discussion.updatedAt, date: .abbreviated, time: .shortened)
             ))
                 .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
@@ -266,7 +266,7 @@ extension MainWindowView {
                         set: { model.selectAccountProfile($0) }
                     )) {
                         ForEach(model.accountProfiles[model.settings.defaultProvider] ?? []) { account in
-                            Text(account.name).tag(account.id)
+                            Text(model.displayName(of: account)).tag(account.id)
                         }
                     }
                     if model.settings.defaultProvider == .local {

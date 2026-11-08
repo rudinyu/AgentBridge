@@ -346,7 +346,7 @@ extension MainWindowView {
         GroupBox("Official /usage Summary · Best Effort") {
             VStack(alignment: .leading, spacing: 5) {
                 usageReportField("Provider", report.provider.rawValue.capitalized)
-                usageReportField("Selected Account", report.accountName)
+                usageReportField("Selected Account", model.localized(report.accountName))
                 usageReportField("Plan", report.plan ?? "Not provided", localizeValue: report.plan == nil)
                 if report.usageWindows.isEmpty {
                     usageReportField("Usage Windows", "Not provided", localizeValue: true)

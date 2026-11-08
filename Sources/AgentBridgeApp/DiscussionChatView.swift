@@ -96,7 +96,7 @@ struct DiscussionChatView: View {
                         .font(.headline)
                     Text(model.localizedFormat(
                         "%@ · %@ turns",
-                        discussion.updatedAt.formatted(date: .abbreviated, time: .shortened),
+                        model.formattedDate(discussion.updatedAt, date: .abbreviated, time: .shortened),
                         String(discussion.turns.count)
                     ))
                         .font(.caption).foregroundStyle(.secondary)
@@ -138,7 +138,7 @@ struct DiscussionChatView: View {
                     }
                 )) {
                     ForEach(model.accountProfiles[discussion.provider] ?? []) { profile in
-                        Text(profile.name).tag(profile.id)
+                        Text(model.displayName(of: profile)).tag(profile.id)
                     }
                 }
                 .pickerStyle(.menu)
@@ -271,7 +271,7 @@ struct DiscussionChatView: View {
                     HStack {
                         Text("You").font(.caption.weight(.semibold))
                         Spacer()
-                        Text(turn.timestamp.formatted(date: .omitted, time: .shortened))
+                        Text(model.formattedDate(turn.timestamp, date: .omitted, time: .shortened))
                             .font(.caption2).foregroundStyle(.tertiary)
                     }
                     Text(turn.userText)

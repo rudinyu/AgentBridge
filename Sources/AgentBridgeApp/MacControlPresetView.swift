@@ -109,7 +109,7 @@ struct MacControlPresetView: View {
                 if let readiness = model.extensions.macControlPermissionReadiness,
                    readiness.targetBundleID == trimmedTargetBundleID {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Permission readiness · \(readiness.checkedAt.formatted(date: .abbreviated, time: .standard))")
+                        Text("Permission readiness · \(model.formattedDate(readiness.checkedAt, date: .abbreviated, time: .standard))")
                             .font(.caption.weight(.semibold))
                         Text("Helper available: \(model.localizedYesNo(readiness.helperAvailable)) · status tool available: \(model.localizedYesNo(readiness.statusToolAvailable))")
                             .font(.caption2)
@@ -151,6 +151,10 @@ struct MacControlPresetView: View {
             .padding(.vertical, 4)
         }
         .onAppear(perform: synchronizeSelectedConfiguration)
+        .onChange(of: model.appLanguage) { _, _ in
+            localStatus = ""
+            localError = nil
+        }
         .onChange(of: selectedConfigurationID) { _, _ in
             inspection = nil
             localStatus = ""
@@ -597,7 +601,7 @@ struct MacControlPresetView: View {
             if let calls = review.maximumToolCallsPerRun,
                let responseBytes = review.maximumToolResponseBytes,
                let totalBytes = review.maximumTotalToolResponseBytes {
-                Text("Budgets: \(calls) tool calls · \(responseBytes) bytes per response · \(totalBytes) bytes total")
+                Text(model.localizedFormat("Budgets: %@ tool calls · %@ bytes per response · %@ bytes total", String(calls), String(responseBytes), String(totalBytes)))
                     .font(.caption2)
             }
         }

@@ -13,7 +13,7 @@ enum SwiftLabelScanner {
 
     private static let translatingCalls: Set<String> = ["localized", "localizedFormat"]
     private static let swiftUILabelCalls: Set<String> = [
-        "Text", "Button", "Label", "Picker", "Toggle", "TextField", "SecureField", "Section", "Menu",
+        "Text", "Button", "Label", "Picker", "Toggle", "Stepper", "TextField", "SecureField", "Section", "Menu",
         "DisclosureGroup", "GroupBox", "LabeledContent", "help", "navigationTitle", "accessibilityLabel"
     ]
     private static let specifier = try! NSRegularExpression(

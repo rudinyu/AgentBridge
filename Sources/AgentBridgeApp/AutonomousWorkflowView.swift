@@ -174,12 +174,12 @@ struct AutonomousWorkflowView: View {
                 Text("Limits and verification")
                     .font(.subheadline.weight(.semibold))
                 HStack(spacing: 12) {
-                    Stepper("Concurrent agents: \(maxConcurrentAgents)", value: $maxConcurrentAgents, in: 1...3)
-                    Stepper("Review rounds: \(maxReviewRounds)", value: $maxReviewRounds, in: 1...3)
+                    Stepper(model.localizedFormat("Concurrent agents: %@", String(maxConcurrentAgents)), value: $maxConcurrentAgents, in: 1...3)
+                    Stepper(model.localizedFormat("Review rounds: %@", String(maxReviewRounds)), value: $maxReviewRounds, in: 1...3)
                 }
                 HStack(spacing: 12) {
-                    Stepper("Duration: \(maxDurationMinutes) min", value: $maxDurationMinutes, in: 1...60)
-                    Stepper("Provider calls: \(maxProviderInvocations)", value: $maxProviderInvocations, in: 1...24)
+                    Stepper(model.localizedFormat("Duration: %@ min", String(maxDurationMinutes)), value: $maxDurationMinutes, in: 1...60)
+                    Stepper(model.localizedFormat("Provider calls: %@", String(maxProviderInvocations)), value: $maxProviderInvocations, in: 1...24)
                 }
                 Picker("Verification", selection: $verificationMode) {
                     Text("Project .codex/ci.sh").tag(AutonomousVerificationSelection.Mode.projectCI)
@@ -223,7 +223,7 @@ struct AutonomousWorkflowView: View {
                         set: { memoryDestinationProfileID = $0 }
                     )) {
                         ForEach(memoryDestinationProfiles) { profile in
-                            Text("\(profile.provider.rawValue) · \(profile.name)").tag(profile.id)
+                            Text("\(profile.provider.rawValue) · \(model.displayName(of: profile))").tag(profile.id)
                         }
                     }
                     .disabled(memoryDestinationProfiles.isEmpty)
@@ -254,7 +254,7 @@ struct AutonomousWorkflowView: View {
         let selectedProfile = profiles.first(where: { $0.id == selectedProfileID })
         let authentication = selectedProfile.flatMap { model.authStatus[$0.id] }
         return VStack(alignment: .leading, spacing: 7) {
-            Text(role.title)
+            Text(model.localized(role.title))
                 .font(.subheadline.weight(.semibold))
             Picker("Provider", selection: Binding(
                 get: { providers[role] ?? .codex },
@@ -273,7 +273,7 @@ struct AutonomousWorkflowView: View {
                 set: { newID in profileIDs[role] = newID; reviewAcknowledged = false }
             )) {
                 ForEach(profiles) { profile in
-                    Text(profile.name).tag(profile.id)
+                    Text(model.displayName(of: profile)).tag(profile.id)
                 }
             }
             .disabled(profiles.isEmpty)
@@ -455,7 +455,7 @@ struct AutonomousWorkflowView: View {
                 Text(model.localizedFormat("Planner · %@ · %@ · extensions disabled during planning", plan.plannerBinding.provider.rawValue, profileName(provider: plan.plannerBinding.provider, id: plan.plannerBinding.accountProfileID)))
                 .font(.caption2)
             ForEach(plan.roleProfiles, id: \.binding.role) { snapshot in
-                Text(model.localizedFormat("Role %@ · %@ · %@ · shared memory %@ · extension fingerprint %@", model.localized(snapshot.binding.role.rawValue.capitalized), snapshot.binding.provider.rawValue, snapshot.profile.name, model.localized(snapshot.profile.allowsSharedMemory ? "allowed" : "off"), snapshot.extensionFingerprint))
+                Text(model.localizedFormat("Role %@ · %@ · %@ · shared memory %@ · extension fingerprint %@", model.localized(snapshot.binding.role.rawValue.capitalized), snapshot.binding.provider.rawValue, model.displayName(of: snapshot.profile), model.localized(snapshot.profile.allowsSharedMemory ? "allowed" : "off"), snapshot.extensionFingerprint))
                     .font(.system(size: 9, design: .monospaced))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -471,7 +471,7 @@ struct AutonomousWorkflowView: View {
                     .font(.caption.weight(.semibold))
                 ForEach(plan.extensionActivations) { activation in
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("\(activation.role.rawValue.capitalized) · \(activation.kind.uppercased()) · \(activation.name) · \(activation.extensionID)")
+                        Text("\(model.localized(activation.role.rawValue.capitalized)) · \(activation.kind.uppercased()) · \(activation.name) · \(activation.extensionID)")
                             .font(.caption.weight(.medium))
                         Text(model.localizedFormat("Task %@ · configuration digest %@", activation.taskID, activation.configurationDigest))
                             .font(.system(size: 9, design: .monospaced))
@@ -610,7 +610,7 @@ struct AutonomousWorkflowView: View {
             Text("Project memory consent and snapshot")
                 .font(.caption.weight(.semibold))
             if let snapshot = plan.projectMemorySnapshot {
-                Text("Source: \(snapshot.repositoryPath) @ \(snapshot.snapshotCommit) · revision \(snapshot.revision)")
+                Text(model.localizedFormat("Source: %@ @ %@ · revision %@", snapshot.repositoryPath, snapshot.snapshotCommit, String(snapshot.revision)))
                     .font(.system(size: 9, design: .monospaced))
                     .textSelection(.enabled)
                 Text("Frozen memory SHA-256: \(snapshot.digest) · truncated: \(model.localizedYesNo(snapshot.wasTruncated))")
@@ -619,7 +619,7 @@ struct AutonomousWorkflowView: View {
                 let receivingProfiles = plan.roleProfiles.filter { $0.profile.allowsSharedMemory }
                 Text(receivingProfiles.isEmpty
                     ? model.localized("No execution role profile will receive this memory context.")
-                    : model.localizedFormat("Profiles receiving this frozen context: %@", receivingProfiles.map { "\($0.binding.role.rawValue) · \($0.binding.provider.rawValue)/\($0.profile.name)" }.joined(separator: ", ")))
+                    : model.localizedFormat("Profiles receiving this frozen context: %@", receivingProfiles.map { "\(model.localized($0.binding.role.rawValue.capitalized)) · \($0.binding.provider.rawValue)/\(model.displayName(of: $0.profile))" }.joined(separator: ", ")))
                     .font(.caption2)
                     .fixedSize(horizontal: false, vertical: true)
                 DisclosureGroup("Inspect exact frozen project memory", isExpanded: $memorySnapshotExpanded) {
@@ -632,7 +632,7 @@ struct AutonomousWorkflowView: View {
                             }
                             ForEach(snapshot.turns, id: \.id) { turn in
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("\(turn.provider.rawValue) · \(turn.timestamp.formatted(date: .abbreviated, time: .shortened))")
+                                    Text("\(turn.provider.rawValue) · \(model.formattedDate(turn.timestamp, date: .abbreviated, time: .shortened))")
                                         .font(.caption2.weight(.semibold))
                                     Text("User: \(turn.userText)\nAssistant: \(turn.assistantText)")
                                         .font(.system(size: 10, design: .monospaced))
@@ -735,7 +735,7 @@ struct AutonomousWorkflowView: View {
                 }
             }
         case .approved:
-            Label("Approved for \(run.plan.limits.maxReviewRounds) bounded review rounds and the verification choice shown above.", systemImage: "checkmark.seal")
+            Label(model.localizedFormat("Approved for %@ bounded review rounds and the verification choice shown above.", String(run.plan.limits.maxReviewRounds)), systemImage: "checkmark.seal")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
@@ -811,7 +811,7 @@ struct AutonomousWorkflowView: View {
                             HStack {
                                 Text(event.kind).font(.caption2.monospaced().weight(.semibold))
                                 Spacer()
-                                Text(event.occurredAt.formatted(date: .abbreviated, time: .standard))
+                                Text(model.formattedDate(event.occurredAt, date: .abbreviated, time: .standard))
                                     .font(.system(size: 9)).foregroundStyle(.tertiary)
                             }
                             Text(model.localized(event.message))
@@ -1039,6 +1039,6 @@ struct AutonomousWorkflowView: View {
     }
 
     private func profileName(provider: AgentProvider, id: UUID) -> String {
-        model.accountProfiles[provider]?.first(where: { $0.id == id })?.name ?? id.uuidString.lowercased()
+        model.accountProfiles[provider]?.first(where: { $0.id == id }).map { model.displayName(of: $0) } ?? id.uuidString.lowercased()
     }
 }

@@ -53,8 +53,6 @@ Approved MCP server %@ initialized; the provider reported no tool calls.
 Approved MCP server %@ returned a receipt for another runtime configuration.
 Approved MCP server %@ returned an invalid private receipt.
 Approved MCP server %@ was not initialized by the provider; no MCP call was reported.
-Approved change plan %@ is running.
-Approved scope implemented; diff sha256:%@ is ready for manual acceptance.
 Assign one explicit provider and profile to researcher, implementer, and reviewer roles.
 At most 16 MCP servers can be enabled in one session.
 Autonomous limits must allow 1 to 3 concurrent agents, 1 to 3 review rounds, 30 to 3,600 seconds, 1 to 24 provider invocations, and 1 to 128 MCP tool calls per server invocation.
@@ -192,7 +190,6 @@ Extension selections must be unique valid IDs, with at most 16 per role.
 File and network permissions require matching, explicit path or host scopes.
 File scopes must be normalized relative paths without traversal components.
 Full context retained: all %@ turn(s) remain verbatim.
-Implementer is running approved round %@ of %@.
 Import the extension descriptor before granting permissions.
 Included %@ explicit project-memory handoff(s) for target commit %@; legacy workflow kept its existing bounded envelope.
 Included %@ explicitly selected project-memory handoff(s) for target commit %@; context was prepared by readable byte-bounded compression (UTF-8 byte estimates are not exact model token counts).
@@ -301,22 +298,13 @@ Project-memory search text cannot be empty.
 Project-memory storage directory failed integrity checks.
 Project-memory storage is full; the existing handoffs were preserved unchanged.
 Project-memory storage is unavailable or is a symbolic link.
-Provider CLI reported a completed response.
-Provider CLI reported completion; isolated diff is ready for review.
-Queued; provider process has not started.
-Queued; verifier was not launched.
-Read-only provider run started.
 Request parameters must be an object.
 Research DAG contains duplicate tasks or a non-research dependency.
-Research agent started.
 Research and review agents can only receive observe-only MacControl grants.
 Research tasks cannot depend on write or review tasks.
 Reserved invocation %@/%@ for %@%@.
 Review and approve the exact autonomous plan digest before starting it.
-Review passed for unchanged diff sha256:%@.
-Review requested changes for diff sha256:%@.
 Review tasks cannot depend on other review tasks.
-Reviewer is inspecting the exact diff digest %@.
 SKILL.md changed while it was being imported.
 SKILL.md must be 64 KiB or smaller.
 SKILL.md must be a bounded regular file with no symlink in its path.
@@ -358,7 +346,6 @@ Starting bounded autonomous execution for plan %@.
 Starting the approved %@ verification stage.
 Status-only readiness probe.
 Take a fresh screenshot before sending mouse input.
-Task progress record not found: %@.
 Task references must be unique and within the supported limit.
 Temporary discussion file is not private.
 Text input was refused because the focused field could not be confirmed safe.
@@ -397,7 +384,6 @@ The approved memory destination is not a consenting role profile.
 The approved project-memory profile is no longer eligible; no memory was changed.
 The approved project-memory snapshot does not match the role-profile consent manifest.
 The approved review/fix loop ended without a passing review.
-The approved review/fix round limit was reached with unresolved in-scope findings.
 The approved verification command has an invalid path or oversized arguments.
 The approved verification command passed for unchanged diff sha256:%@.
 The approved verification did not pass.
@@ -507,7 +493,5 @@ Up to %@ tasks can run at once; wait for one to finish.
 Usage TUI working directory is invalid.
 User approved exact plan digest %@.
 User created an explicit project-memory handoff from commit %@ to %@; %@ selected turns and notes %@.
-User started isolated verification.
 User-pinned note %@ (background only)
 Verification changed the reviewed diff; it remains unaccepted.
-Verification exit code %@; duration %@ seconds; succeeded=%@.

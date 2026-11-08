@@ -258,7 +258,7 @@ struct SetupWizardView: View {
                             set: { if let id = $0 { wizard.selectProfile(id) } }
                         )) {
                             ForEach(profiles) { profile in
-                                Text(profile.name).tag(Optional(profile.id))
+                                Text(model.displayName(of: profile)).tag(Optional(profile.id))
                             }
                         }
 

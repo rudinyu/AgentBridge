@@ -201,7 +201,7 @@ struct DiscussionHandoffReviewView: View {
                     }
                 )) {
                     ForEach(targetProfiles) { profile in
-                        Text(profile.name).tag(Optional(profile.id))
+                        Text(model.displayName(of: profile)).tag(Optional(profile.id))
                     }
                 }
                 .disabled(targetProfiles.isEmpty)
@@ -320,7 +320,7 @@ struct DiscussionHandoffReviewView: View {
             }
         )) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("\(turn.provider.rawValue.capitalized) · \(turn.timestamp.formatted(date: .abbreviated, time: .shortened))")
+                Text("\(turn.provider.rawValue.capitalized) · \(model.formattedDate(turn.timestamp, date: .abbreviated, time: .shortened))")
                     .font(.caption.weight(.medium))
                 Text(String(turn.userText.prefix(150)))
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
@@ -417,7 +417,7 @@ struct DiscussionHandoffReviewView: View {
         guard !handoff.selectedTurns.isEmpty else { return model.localized("No discussion turns selected.") }
         return handoff.selectedTurns.enumerated().map { index, turn in
             let profileName = model.profileName(for: turn.provider, profileID: turn.sourceAccountProfileID)
-            return "\(model.localizedFormat("Turn %@ · %@", String(index + 1), turn.timestamp.formatted(date: .abbreviated, time: .shortened)))\n\(model.localizedFormat("Provider: %@ · source profile: %@", turn.provider.rawValue.capitalized, profileName))\n\(model.localized("User:"))\n\(turn.userText)\n\(model.localized("Assistant:"))\n\(turn.assistantText)"
+            return "\(model.localizedFormat("Turn %@ · %@", String(index + 1), model.formattedDate(turn.timestamp, date: .abbreviated, time: .shortened)))\n\(model.localizedFormat("Provider: %@ · source profile: %@", turn.provider.rawValue.capitalized, profileName))\n\(model.localized("User:"))\n\(turn.userText)\n\(model.localized("Assistant:"))\n\(turn.assistantText)"
         }
         .joined(separator: "\n\n────────────────────────\n\n")
     }

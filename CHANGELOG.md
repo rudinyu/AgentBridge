@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- In Traditional Chinese, dates and times, the autonomous workflow's limits and role names, task records, activity messages and the built-in account name showed in English. So did labels with a number in them, because their translations were keyed for text rather than integers.
+- After changing the language, status lines stayed in the previous language. They now reset.
+
+### Tests
+
+- The translation checks now cover `Stepper` labels and require dates to use the app language.
+
 ## 0.12.3 — 2026-11-08
 
 - Release record: build 17 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `82df45bc-61ba-427d-9939-e7b83cdee41b`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.3`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `0e20ef4c71a2efdc4029efc40ef70086e6d7dc02fe5ae80e7f9452d50fe628fb`. The signed App itself has not been launched or clicked through. The sheet and window fixes were checked in an unsigned development build; alerts, confirmation dialogs and the added status messages were not checked in the running App.
