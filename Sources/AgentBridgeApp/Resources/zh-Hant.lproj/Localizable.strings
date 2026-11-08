@@ -187,6 +187,9 @@
 "Select the installed codex or claude executable. AgentBridge will only save this path." = "選擇已安裝的 codex 或 claude 執行檔。AgentBridge 只會儲存此路徑。";
 "Selected account" = "選取的帳戶";
 "Send /usage" = "送出 /usage";
+"Close terminal" = "關閉終端機";
+"End the CLI, then close" = "先結束 CLI 再關閉";
+"Cancel and close" = "取消並關閉";
 "Set up AgentBridge" = "設定 AgentBridge";
 "Set up the %@ CLI" = "設定 %@ CLI";
 "Setup Wizard" = "設定精靈";
@@ -273,6 +276,8 @@
 "Base commit %@ · source dirty: %@" = "基準提交 %@ · 來源有未提交變更：%@";
 "yes; uncommitted changes excluded" = "有；未提交變更已排除";
 "no" = "沒有";
+"yes" = "有";
+"pending" = "尚未完成";
 "Goal" = "目標";
 "Task graph" = "任務圖";
 "%@ · %@" = "%@ · %@";

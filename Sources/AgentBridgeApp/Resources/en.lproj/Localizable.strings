@@ -187,6 +187,9 @@
 "Select the installed codex or claude executable. AgentBridge will only save this path." = "Select the installed codex or claude executable. AgentBridge will only save this path.";
 "Selected account" = "Selected account";
 "Send /usage" = "Send /usage";
+"Close terminal" = "Close terminal";
+"End the CLI, then close" = "End the CLI, then close";
+"Cancel and close" = "Cancel and close";
 "Set up AgentBridge" = "Set up AgentBridge";
 "Set up the %@ CLI" = "Set up the %@ CLI";
 "Setup Wizard" = "Setup Wizard";
@@ -273,6 +276,8 @@
 "Base commit %@ · source dirty: %@" = "Base commit %@ · source dirty: %@";
 "yes; uncommitted changes excluded" = "yes; uncommitted changes excluded";
 "no" = "no";
+"yes" = "yes";
+"pending" = "pending";
 "Goal" = "Goal";
 "Task graph" = "Task graph";
 "%@ · %@" = "%@ · %@";
