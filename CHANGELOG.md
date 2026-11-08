@@ -2,6 +2,8 @@
 
 ## 0.12.3 — 2026-11-08
 
+- Release record: build 17 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `82df45bc-61ba-427d-9939-e7b83cdee41b`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.3`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `0e20ef4c71a2efdc4029efc40ef70086e6d7dc02fe5ae80e7f9452d50fe628fb`. The signed App itself has not been launched or clicked through. The sheet and window fixes were checked in an unsigned development build; alerts, confirmation dialogs and the added status messages were not checked in the running App.
+
 ### Fixed
 
 - In Traditional Chinese, more labels chosen by a condition showed in English: the Mac Control import buttons and hints, **Create Git Project** and **Link Existing Project**, the extension preview hint, the verification result, and the yes, no, confirmed and unknown values inside status lines.
