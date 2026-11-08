@@ -2,7 +2,7 @@
 
 ## 0.12.1 — 2026-11-08
 
-- Release record: build 15 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `8d2f093d-7833-487a-9595-e0bfaa6e6d8f`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.1`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `34243fa707395e77119f9c0b93edb1e3a384eebe1f852e2be2e621276c044d47`. The signed App itself has not been launched or clicked through.
+- Release record: build 15 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `8d2f093d-7833-487a-9595-e0bfaa6e6d8f`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.1`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `34243fa707395e77119f9c0b93edb1e3a384eebe1f852e2be2e621276c044d47`. The signed App itself has not been launched or clicked through.
 
 ### Upgrade notes
 
@@ -24,7 +24,7 @@
 
 ## 0.12.0 — 2026-11-08
 
-- Release record: build 14 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `8bcedabd-8ee8-4ffe-920f-8222bf805f5d`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.0`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `b9b7f52748217a7f3db2fb2711a0d866aaaaab2f788da220236a9c55e3133b63`. The signed App itself has not been launched or clicked through.
+- Release record: build 14 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `8bcedabd-8ee8-4ffe-920f-8222bf805f5d`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.0`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `b9b7f52748217a7f3db2fb2711a0d866aaaaab2f788da220236a9c55e3133b63`. The signed App itself has not been launched or clicked through.
 
 ### Upgrade notes
 
@@ -66,7 +66,7 @@
 
 ## 0.11.2 — 2026-11-05
 
-- Release record: build 13 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `9b0fdbf7-8647-43e2-a646-b81539621a8c`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `34ed645c1573803ca75b2dd80dec000f50dfb4e226097d384ee4095cccf7aa70`. The signed build itself has not been launched or clicked through.
+- Release record: build 13 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `9b0fdbf7-8647-43e2-a646-b81539621a8c`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `34ed645c1573803ca75b2dd80dec000f50dfb4e226097d384ee4095cccf7aa70`. The signed build itself has not been launched or clicked through.
 
 - Fixed: AgentBridge stopped working once its data files filled up. The session index only ever grew (each save appended a whole record) and had a 10 MiB limit, so after about 21,400 saves no session could be saved, including new ones, and nothing said how to recover. The index is now compacted to one line per session (atomically) once it passes 2 MiB, so it cannot reach its limit. A session's audit file, which could fill with long run outputs and then fail a run after the provider had already answered, now trims the text of older `run.output` events instead; every event is kept because the local usage counters read their kinds and times, and the newest output stays complete.
 - Faster: looking up one session no longer parses the whole index each time (about 170 ms with 20,000 records, and a run looked sessions up eight times), and the App's two-second refresh no longer re-decodes the selected session's audit file when it has not changed. Both reuse their decoded data until the file changes, including when another process changes it.
@@ -76,7 +76,7 @@
 
 ## 0.11.1 — 2026-11-05
 
-- Release record: build 12 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `4fa3a5d3-d4b2-4511-8697-7621642ab588`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `68c5e5f1540457576e60d435b66260455a6e92e61a0548eb59f91ec92473e889`. The signed build itself has not been launched or clicked through.
+- Release record: build 12 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `4fa3a5d3-d4b2-4511-8697-7621642ab588`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `68c5e5f1540457576e60d435b66260455a6e92e61a0548eb59f91ec92473e889`. The signed build itself has not been launched or clicked through.
 
 - Code structure (no behaviour change): the largest types in `ActiveExtensionRuntime`, `AutonomousOrchestration`, `ProviderAdapters`, `ActiveExtensionsView` and `DiscussionChatView` moved into files of their own; `runReadOnly` lost four self-contained steps to helper functions (269 to 218 lines); and the long `switch` functions in the CLI now call one function per subcommand (the longest went from 244 to 135 lines). 137 CLI invocations across every command group were compared against the previous build with identical output and exit codes.
 - A new test fails when a Core message is added without a Traditional Chinese translation. 513 existing English messages without one (mostly store integrity checks) are frozen in `Tests/AgentBridgeCoreTests/Fixtures/untranslated-core-messages.txt`, so the list can only shrink; regenerate it with `UPDATE_L10N_BASELINE=1`.
@@ -91,7 +91,7 @@
 
 - Fixed the main window header overlapping the window buttons and showing the title twice: the system title bar is hidden and the header now leaves room under the window buttons. Build 10 had this problem; build 11 supersedes it.
 
-- Release record: build 11 was signed with Developer ID Application (team LYK4LV2859, hardened runtime), accepted by Apple notarization (submission `1c727b40-f4a9-44fa-bb09-7bed5f6cf584`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `31dd57c26129a8d7387eeb649dc3c34732e61efe4ba70db5247935fabc0aca70`. Build 10 (submission `dc69a199-e249-4d9c-b7e3-d0664ffdef7e`) was also notarized but is superseded because of the header overlap fixed below. The unsigned development build of the same code was confirmed to fix the overlap; the signed build itself has not been launched.
+- Release record: build 11 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `1c727b40-f4a9-44fa-bb09-7bed5f6cf584`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `31dd57c26129a8d7387eeb649dc3c34732e61efe4ba70db5247935fabc0aca70`. Build 10 (submission `dc69a199-e249-4d9c-b7e3-d0664ffdef7e`) was also notarized but is superseded because of the header overlap fixed below. The unsigned development build of the same code was confirmed to fix the overlap; the signed build itself has not been launched.
 
 - Core, CLI and App messages are now written in English instead of Traditional Chinese. The App shows Traditional Chinese through `zh-Hant.lproj`, matching whole sentences or whole-sentence templates (captured values are translated in turn) instead of replacing fragments inside a sentence. Audit events saved before this change stay readable in English through `en.lproj/Legacy.strings`. **The CLI now prints English only**; it previously printed Chinese. A test fails if Chinese text reappears in Core sources.
 - `agentbridge doctor` now prints each provider CLI's version against the one AgentBridge was last verified with (Claude Code 2.1.311, Codex 0.166.0) and warns when a flag AgentBridge passes no longer appears in the CLI's help. The check is advisory and never blocks a run.
