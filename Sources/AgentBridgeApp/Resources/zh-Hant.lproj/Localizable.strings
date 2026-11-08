@@ -91,6 +91,15 @@
 "Current week" = "本週";
 "Codex CLI /usage screen" = "Codex CLI /usage 畫面";
 "Claude Code /usage screen" = "Claude Code /usage 畫面";
+"Codex CLI /usage screen in your terminal" = "你的終端機裡的 Codex CLI /usage 畫面";
+"Claude Code /usage screen in your terminal" = "你的終端機裡的 Claude Code /usage 畫面";
+"You can also run `agentbridge usage-tui` in your own terminal. The limits you open there with /usage appear on this card." = "你也可以在自己的終端機執行 `agentbridge usage-tui`，在那裡用 /usage 打開的用量會顯示在這張卡上。";
+"The usage report has no recognized provider fields to save." = "這份用量報告沒有可儲存的已辨識欄位。";
+"Could not encode the usage report." = "無法編碼用量報告。";
+"Could not create a temporary usage report file." = "無法建立暫存的用量報告檔。";
+"Could not write the usage report." = "無法寫入用量報告。";
+"The usage report file cannot be a symlink or a non-regular file." = "用量報告檔不可以是符號連結或非一般檔案。";
+"Could not save the usage report." = "無法儲存用量報告。";
 "0 = unlimited" = "0 = 不限";
 "A local shell runs with your macOS account permissions." = "本機 shell 會以你的 macOS 帳號權限執行。";
 "A missing cap means unlimited. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available." = "未設定上限代表不限。只有你開啟此選項時，App 才會要求 macOS 通知權限；App 內提醒仍可使用。";

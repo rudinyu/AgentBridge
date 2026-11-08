@@ -18,15 +18,28 @@ let package = Package(
     ],
     targets: [
         .target(name: "AgentBridgeCore", swiftSettings: strictConcurrency),
-        .executableTarget(name: "AgentBridgeCLI", dependencies: ["AgentBridgeCore"], swiftSettings: strictConcurrency),
+        .target(
+            name: "AgentBridgeTerminalCapture",
+            dependencies: ["AgentBridgeCore", .product(name: "SwiftTerm", package: "SwiftTerm")],
+            swiftSettings: strictConcurrency
+        ),
+        .executableTarget(
+            name: "AgentBridgeCLI",
+            dependencies: ["AgentBridgeCore", "AgentBridgeTerminalCapture"],
+            swiftSettings: strictConcurrency
+        ),
         .executableTarget(
             name: "AgentBridgeApp",
-            dependencies: ["AgentBridgeCore", .product(name: "SwiftTerm", package: "SwiftTerm")],
+            dependencies: ["AgentBridgeCore", "AgentBridgeTerminalCapture", .product(name: "SwiftTerm", package: "SwiftTerm")],
             resources: [.process("Resources")],
             swiftSettings: strictConcurrency
         ),
         .testTarget(name: "AgentBridgeCoreTests", dependencies: ["AgentBridgeCore"], resources: [.process("Fixtures")]),
-        .testTarget(name: "AgentBridgeAppTests", dependencies: ["AgentBridgeApp", "AgentBridgeCore"])
+        .testTarget(name: "AgentBridgeAppTests", dependencies: ["AgentBridgeApp", "AgentBridgeCore"]),
+        .testTarget(
+            name: "AgentBridgeTerminalCaptureTests",
+            dependencies: ["AgentBridgeTerminalCapture", "AgentBridgeCore", .product(name: "SwiftTerm", package: "SwiftTerm")]
+        )
     ],
     swiftLanguageModes: [.v5]
 )

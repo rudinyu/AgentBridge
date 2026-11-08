@@ -1,14 +1,15 @@
 import Foundation
 
 /// Best-effort values recognized from the visible provider `/usage` TUI.
-/// This report is an in-memory presentation model, not a stable provider API.
-public struct ProviderUsageReport: Equatable, Sendable {
-    public enum Status: String, Equatable, Sendable {
+/// This report is a presentation model, not a stable provider API. Only these
+/// parsed fields are ever saved (see `ProviderUsageReportStore`), never screen text.
+public struct ProviderUsageReport: Codable, Equatable, Sendable {
+    public enum Status: String, Codable, Equatable, Sendable {
         case recognizedFields
         case noRecognizedFields
     }
 
-    public struct Window: Equatable, Sendable, Identifiable {
+    public struct Window: Codable, Equatable, Sendable, Identifiable {
         public let id: String
         public let label: String
         public let percentageUsed: Double?
@@ -136,6 +137,11 @@ public enum ProviderUsageReportParser {
             return value
         }
         return nil
+    }
+
+    /// The source of a report read from `agentbridge usage-tui` in the user's own terminal.
+    public static func externalTerminalSource(for provider: AgentProvider) -> String {
+        provider == .codex ? "Codex CLI /usage screen in your terminal" : "Claude Code /usage screen in your terminal"
     }
 
     private static func recognizedWindows(in lines: [String], provider: AgentProvider) -> [ProviderUsageReport.Window] {

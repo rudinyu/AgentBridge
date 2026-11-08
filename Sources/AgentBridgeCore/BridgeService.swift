@@ -18,6 +18,7 @@ public final class BridgeService: @unchecked Sendable {
     let extensionPolicyStore: ExtensionPolicyStore
     let activeExtensionRuntimeStore: ActiveExtensionRuntimeStore
     let usageControlStore: UsageControlStore
+    let providerUsageReportStore: ProviderUsageReportStore
     let runtimeProxyExecutableURL: URL?
 
     public init(
@@ -64,6 +65,9 @@ public final class BridgeService: @unchecked Sendable {
             from: userDataRoot.appendingPathComponent("extension-runtime", isDirectory: true)
         )
         self.usageControlStore = try UsageControlStore(rootURL: store.rootURL)
+        self.providerUsageReportStore = try ProviderUsageReportStore(
+            rootURL: store.rootURL.appendingPathComponent("usage-reports", isDirectory: true)
+        )
     }
 
     public func settings() throws -> BridgeSettings { try store.loadSettings() }
