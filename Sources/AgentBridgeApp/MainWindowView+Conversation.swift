@@ -396,6 +396,7 @@ extension MainWindowView {
             if let contextPreview {
                 ContextPreviewSheet(model: model, preview: contextPreview, settings: contextPreviewSettings)
                     .frame(minWidth: 760, minHeight: 620)
+                    .environment(\.locale, model.appLanguage.locale)
             }
         }
     }

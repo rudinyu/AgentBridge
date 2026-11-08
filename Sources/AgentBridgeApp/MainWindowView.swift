@@ -50,6 +50,7 @@ struct MainWindowView: View {
         .environment(\.locale, model.appLanguage.locale)
         .sheet(isPresented: Bindable(model.setupWizard).isPresented) {
             SetupWizardView(model: model, wizard: model.setupWizard)
+                .environment(\.locale, model.appLanguage.locale)
                 .interactiveDismissDisabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminal.terminalLaunch != nil)
         }
         .alert("AgentBridge", isPresented: Binding(get: { model.errorMessage != nil && !model.setupWizard.isPresented }, set: { if !$0 { model.errorMessage = nil } })) {

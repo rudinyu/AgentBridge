@@ -29,6 +29,41 @@ enum SwiftLabelScanner {
         return found.sorted()
     }
 
+    /// A sheet does not pick up the locale set on the main window, so each one
+    /// sets it on its own content. Returns how many do not.
+    static func sheetsWithoutLocale(in source: String) -> Int {
+        let characters = Array(source)
+        var position = 0
+        let all = tokens(characters, &position, untilClosingParenthesis: false)
+        var missing = 0
+        for index in all.indices where all[index] == .word("sheet") && index + 1 < all.count && all[index + 1] == .symbol("(") {
+            guard let arguments = closing(all, openingAt: index + 1),
+                  arguments + 1 < all.count, all[arguments + 1] == .symbol("{"),
+                  let content = closing(all, openingAt: arguments + 1),
+                  all[(arguments + 2)..<content].contains(.word("locale")) else {
+                missing += 1
+                continue
+            }
+        }
+        return missing
+    }
+
+    private static func closing(_ tokens: [Token], openingAt opening: Int) -> Int? {
+        var depth = 0
+        for index in opening..<tokens.count {
+            switch tokens[index] {
+            case .symbol("("), .symbol("["), .symbol("{"):
+                depth += 1
+            case .symbol(")"), .symbol("]"), .symbol("}"):
+                depth -= 1
+                if depth == 0 { return index }
+            default:
+                break
+            }
+        }
+        return nil
+    }
+
     private static func visit(_ tokens: [Token], keys: Set<String>, found: inout Set<String>) {
         for (index, token) in tokens.enumerated() {
             if case .literal(_, let interpolations) = token {

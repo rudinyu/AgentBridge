@@ -30,6 +30,7 @@ struct SetupWizardView: View {
                 .padding(14)
                 .frame(minWidth: 720, minHeight: 390)
                 .interactiveDismissDisabled(model.terminal.terminalRunning)
+                .environment(\.locale, model.appLanguage.locale)
         }
         .onAppear {
             if wizard.currentStep == .commandLine && wizard.provider != .local { wizard.checkCLIAvailability() }

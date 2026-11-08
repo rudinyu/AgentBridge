@@ -69,11 +69,13 @@ struct DiscussionChatView: View {
                 onOpenProject: onOpenProject
             )
             .frame(minWidth: 760, minHeight: 640)
+            .environment(\.locale, model.appLanguage.locale)
         }
         .sheet(isPresented: $isShowingContextPreview) {
             if let contextPreview {
                 ContextPreviewSheet(model: model, preview: contextPreview, settings: contextPreviewSettings)
                     .frame(minWidth: 760, minHeight: 620)
+                    .environment(\.locale, model.appLanguage.locale)
             }
         }
         .onChange(of: discussion?.accountProfileID) { _, _ in

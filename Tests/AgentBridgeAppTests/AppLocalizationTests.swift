@@ -75,6 +75,25 @@ final class AppLocalizationTests: XCTestCase {
         XCTAssertTrue(problems.isEmpty, "Fix these, adding any new key to zh-Hant.lproj and en.lproj:\n" + problems.sorted().joined(separator: "\n"))
     }
 
+    func testEverySheetSetsTheAppLanguage() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let sourcesURL = root.appendingPathComponent("Sources/AgentBridgeApp", isDirectory: true)
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sourcesURL, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }
+        XCTAssertFalse(files.isEmpty, "No Swift files found under \(sourcesURL.path).")
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            XCTAssertEqual(SwiftLabelScanner.sheetsWithoutLocale(in: source), 0, "\(file.lastPathComponent) has a sheet without .environment(\\.locale, ...).")
+        }
+    }
+
+    func testLabelScannerFindsSheetsWithoutTheLocale() {
+        XCTAssertEqual(SwiftLabelScanner.sheetsWithoutLocale(in: #".sheet(isPresented: $a) { Text("x") }"#), 1)
+        XCTAssertEqual(SwiftLabelScanner.sheetsWithoutLocale(in: #".sheet(isPresented: $a) { Text("x").environment(\.locale, l) }"#), 0)
+        XCTAssertEqual(SwiftLabelScanner.sheetsWithoutLocale(in: #"// .sheet(isPresented: $a) { Text("x") }"#), 0)
+    }
+
     func testLabelScannerReportsConditionalLabels() {
         func problems(_ source: String) -> [String] {
             SwiftLabelScanner.problems(in: source, keys: ["Known", "Known %@"])

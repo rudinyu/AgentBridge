@@ -14,7 +14,7 @@ struct AgentBridgeApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(minWidth: 980, minHeight: 700)
+                .frame(minWidth: 1160, minHeight: 780)
         }
         // The header draws its own title, so hide the system one and leave room
         // under the window buttons instead of relying on the OS default, which

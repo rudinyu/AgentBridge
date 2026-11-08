@@ -6,10 +6,12 @@
 
 - In Traditional Chinese, more labels chosen by a condition showed in English: the Mac Control import buttons and hints, **Create Git Project** and **Link Existing Project**, the extension preview hint, the verification result, and the yes, no, confirmed and unknown values inside status lines.
 - A task summary, name or ID that was exactly "yes", "no" or "pending" was shown translated, as if it were one of the App's own words. These values now use their own `value.` keys.
+- In Traditional Chinese, sheets such as the Git handoff review showed most of their labels in English, because SwiftUI's language setting did not reach them. Each sheet now sets it.
+- A new window could open at 980 by 732 points, smaller than the 1160 by 780 the main view needs, so both sides of the window were cut off. The window can no longer be smaller than the main view.
 
 ### Tests
 
-- The conditional-label check in `AppLocalizationTests` covered only `localized(...)`. It now reads the Swift source properly and also covers `localizedFormat(...)`, SwiftUI labels, interpolated values and subfolders. 342 tests pass under the native build system: 309 Core, 27 App and 6 terminal-capture.
+- The conditional-label check in `AppLocalizationTests` covered only `localized(...)`. It now reads the Swift source properly and also covers `localizedFormat(...)`, SwiftUI labels, interpolated values and subfolders. A new test requires every sheet to set the language. 344 tests pass under the native build system: 309 Core, 29 App and 6 terminal-capture.
 
 ## 0.12.2 — 2026-11-08
 
