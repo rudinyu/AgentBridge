@@ -1,10 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.12.1 — 2026-11-08
 
-- Added: `agentbridge usage-tui` run in your own terminal now feeds the App's usage card. Claude reads that terminal directly, so nothing in between saw its screen. The command now starts the usage TUI on a pseudo-terminal it owns and passes every key and byte through unchanged, while replaying the output into a headless copy of the terminal. Whenever the copy shows recognized limits, it saves only the parsed report (percentages, reset times, capture time, source), never screen text, to a private file per account under `usage-reports/`. The App shows the newest report for the selected account, labelled as read in your terminal, and reports read in the App are saved the same way, so the card keeps the last reading after a restart. The App's own usage terminal passes `--in-app` and runs the TUI directly as before. Checked with Claude Code 2.1.311 in a 16-row terminal: the report was saved and shown on the card, Control-C still exits the TUI, a stopped command ends it, and the folder-trust entry is still purged.
-- Fixed: the usage card read nothing from Claude Code 2.1.311's `/usage` screen and showed "No recognized fields". The screen is taller than the in-app terminal, so the session and weekly limits scrolled off before they were read, and Claude draws many spaces by moving the cursor, which SwiftTerm renders as NUL, so even a visible "Current session" did not match its label. The capture now starts at the row that was on top when `/usage` was sent, keeps the newest rows within the same row and byte bounds, and reads skipped cells as spaces. Checked in the App against the live screen: Current session 86% and Current week (all models) 33%, with their reset times.
-- Fixed: the in-app terminal did not take the keyboard when it opened, so arrow keys and Enter went to the rest of the window until you clicked it, and clicking did not always help: once a TUI such as Claude Code turns on mouse reporting, SwiftTerm hands the click to the TUI and leaves the keyboard where it was. The terminal now takes the keyboard when it opens and whenever it is clicked. Found by testing the signed 0.12.0 App: the Claude usage terminal's folder-trust prompt ignored the arrow keys.
+### Upgrade notes
+
+- The usage card now remembers the last `/usage` reading for each account. Recognized readings are saved as parsed fields only (percentages, reset times, capture time, source), never screen text, in private files under `usage-reports/` in the App's data folder. Delete that folder to forget them.
+- `agentbridge usage-tui` in your own terminal now runs the provider's TUI behind a pass-through pseudo-terminal, so that its readings reach the App. Keys, Control-C, resizing and exit status behave as before. The App's own usage terminal passes `--in-app` and is unchanged.
+
+### Added
+
+- `agentbridge usage-tui` run in your own terminal now feeds the App's usage card. Claude reads that terminal directly, so nothing in between saw its screen. The command now starts the usage TUI on a pseudo-terminal it owns and passes every key and byte through unchanged, while replaying the output into a headless copy of the terminal. Whenever the copy shows recognized limits, it saves only the parsed report (percentages, reset times, capture time, source), never screen text, to a private file per account under `usage-reports/`. The App shows the newest report for the selected account, labelled as read in your terminal, and reports read in the App are saved the same way, so the card keeps the last reading after a restart. The App's own usage terminal passes `--in-app` and runs the TUI directly as before. Checked with Claude Code 2.1.311 in a 16-row terminal: the report was saved and shown on the card, Control-C still exits the TUI, a stopped command ends it, and the folder-trust entry is still purged.
+
+### Fixed
+
+- The usage card read nothing from Claude Code 2.1.311's `/usage` screen and showed "No recognized fields". The screen is taller than the in-app terminal, so the session and weekly limits scrolled off before they were read, and Claude draws many spaces by moving the cursor, which SwiftTerm renders as NUL, so even a visible "Current session" did not match its label. The capture now starts at the row that was on top when `/usage` was sent, keeps the newest rows within the same row and byte bounds, and reads skipped cells as spaces. Checked in the App against the live screen: Current session 86% and Current week (all models) 33%, with their reset times.
+- The in-app terminal did not take the keyboard when it opened, so arrow keys and Enter went to the rest of the window until you clicked it, and clicking did not always help: once a TUI such as Claude Code turns on mouse reporting, SwiftTerm hands the click to the TUI and leaves the keyboard where it was. The terminal now takes the keyboard when it opens and whenever it is clicked. Found by testing the signed 0.12.0 App: the Claude usage terminal's folder-trust prompt ignored the arrow keys.
+
+### Tests
+
+- New `AgentBridgeTerminalCaptureTests` for reading the usage screen and the terminal recorder, and `ProviderUsageReportStoreTests` for the saved reports. 337 tests pass under the native build system; under `swiftbuild`, 309 Core, 22 App and 6 terminal-capture tests pass.
 
 ## 0.12.0 — 2026-11-08
 
