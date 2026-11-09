@@ -2,6 +2,8 @@
 
 ## 0.12.6 — 2026-11-09
 
+- Release record: build 20 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `053f88da-e5da-41a3-bddd-c2dcfe3b3f65`), stapled, and passed signature, Gatekeeper and ticket checks on the freshly extracted app. The app launched on arm64 and under Rosetta on x86_64 with build output moved aside. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `2b960e19f4edb6855faa973da0f0499901e5d8f026b95ed34271358091b2db25`. The app was not manually clicked through and has not been run on an Intel Mac.
+
 ### Fixed
 
 - Claude's project-interactive CLI launch no longer disables native slash commands, so commands such as `/status` are handled by Claude Code. Codex continues to handle its own native interactive commands.
@@ -9,7 +11,7 @@
 
 ### Tests
 
-- `.codex/ci.sh` and the Codex `/status`, terminal resize, detach, and return UI checks passed.
+- `.codex/ci.sh` passed: 357 tests with the native build system; 310 Core, 41 App, and 6 terminal-capture tests with `swiftbuild`. The Codex `/status`, terminal resize, detach, and return UI checks passed.
 
 ## 0.12.5 — 2026-11-09
 
