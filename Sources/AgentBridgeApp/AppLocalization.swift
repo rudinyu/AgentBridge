@@ -46,16 +46,19 @@ enum AppLocalization {
 
     private static let resourceBundle = findResourceBundle(main: .main)
 
-    /// The bundle holding the string tables. `Bundle.module` only checks the top
-    /// of the app and the absolute path of the build folder, and stops the
-    /// process when neither has the bundle. A packaged app keeps it in
-    /// `Contents/Resources`, so it must never reach `Bundle.module`.
-    static func findResourceBundle(main: Bundle) -> Bundle? {
-        if let packaged = main.resourceURL?.appendingPathComponent("AgentBridge_AgentBridgeApp.bundle"),
-           let bundle = Bundle(url: packaged) {
-            return bundle
+    /// The bundle holding the string tables: `Contents/Resources` in a packaged
+    /// app, and beside the executable or test bundle during development. Do not
+    /// use `Bundle.module`. It only checks the top of the app and the absolute
+    /// path of the build folder, stops the process when neither has the bundle,
+    /// and compiles that path into the app.
+    static func findResourceBundle(main: Bundle, others: [Bundle] = Bundle.allBundles) -> Bundle? {
+        var directories = [main.resourceURL].compactMap { $0 }
+        if main.bundleURL.pathExtension != "app" {
+            directories += [main.bundleURL] + others.map { $0.bundleURL.deletingLastPathComponent() }
         }
-        return main.bundleURL.pathExtension == "app" ? nil : Bundle.module
+        return directories.lazy
+            .compactMap { Bundle(url: $0.appendingPathComponent("AgentBridge_AgentBridgeApp.bundle")) }
+            .first
     }
 
     /// The `.lproj` folder for a localization, matched without regard to case.

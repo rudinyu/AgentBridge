@@ -31,11 +31,23 @@ final class AppLocalizationTests: XCTestCase {
         XCTAssertTrue(found.bundleURL.path.contains("/Contents/Resources/"))
     }
 
-    func testPackagedAppWithoutResourcesDoesNotReachSwiftPMAccessor() throws {
+    func testPackagedAppWithoutResourcesFindsNothing() throws {
         XCTAssertNil(AppLocalization.findResourceBundle(main: try makeAppBundle(withResources: false)))
     }
 
-    func testAppSourcesLeaveBundleModuleToTheFallback() throws {
+    func testDevelopmentFindsResourcesBesideTheTestBundle() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let tests = root.appendingPathComponent("Fixture.xctest")
+        let resources = root.appendingPathComponent("AgentBridge_AgentBridgeApp.bundle")
+        try FileManager.default.createDirectory(at: tests, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        let main = try XCTUnwrap(Bundle(url: tests))
+        let found = try XCTUnwrap(AppLocalization.findResourceBundle(main: Bundle(for: Self.self), others: [main]))
+        XCTAssertEqual(found.bundleURL.lastPathComponent, resources.lastPathComponent)
+    }
+
+    func testAppSourcesDoNotUseBundleModule() throws {
         let source = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/AgentBridgeApp")
@@ -44,8 +56,7 @@ final class AppLocalizationTests: XCTestCase {
             .filter { $0.pathExtension == "swift" }
             .flatMap { try String(contentsOf: $0, encoding: .utf8).components(separatedBy: .newlines) }
             .filter { $0.contains("Bundle.module") && !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
-        XCTAssertEqual(uses.count, 1, "\(uses)")
-        XCTAssertTrue(uses[0].contains("\"app\" ? nil : Bundle.module"), uses[0])
+        XCTAssertEqual(uses, [])
     }
 
     func testEnglishShowsMessagesAsWritten() {
