@@ -2,6 +2,8 @@
 
 ## 0.12.5 — 2026-11-09
 
+- Release record: build 19 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `7518b9af-dcd3-4555-aaf1-989ba99c8ccd`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.5`. That copy also started on arm64 and, under Rosetta, x86_64 with the build output moved aside. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `aebb88ee7781744a4e679e6cbc33ed246fc131fd0de93025be2a56d40a033542`. The App was not clicked through, and it has not been run on an Intel Mac.
+
 ### Added
 
 - The App and its `agentbridge` helper are now Universal, so they run on Intel Macs as well as Apple silicon. The Intel build was started under Rosetta on Apple silicon; it has not been run on an Intel Mac.
