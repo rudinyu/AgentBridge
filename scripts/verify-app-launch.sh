@@ -25,6 +25,25 @@ if [[ ! -x "$EXECUTABLE" ]]; then
   exit 1
 fi
 
+HELPER="$APP/Contents/Helpers/agentbridge"
+for binary in "$EXECUTABLE" "$HELPER"; do
+  architectures=" $(lipo -archs "$binary") "
+  if [[ "$architectures" != *" arm64 "* || "$architectures" != *" x86_64 "* ]]; then
+    printf 'Error: %s is not universal (has:%s).\n' "$binary" "$architectures" >&2
+    exit 1
+  fi
+done
+if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+  printf 'Error: Rosetta is needed to start the Intel slice. Install it with: softwareupdate --install-rosetta\n' >&2
+  exit 1
+fi
+
+# SwiftPM's generated accessor is what compiles this path in and stops the app.
+if strings -a "$EXECUTABLE" | grep -q '^/.*/AgentBridge_AgentBridgeApp\.bundle$'; then
+  printf 'Error: %s still has the build folder path compiled in.\n' "$EXECUTABLE" >&2
+  exit 1
+fi
+
 # A missing bundle only falls back to untranslated text, so launching cannot catch it.
 RESOURCE_BUNDLE="$APP/Contents/Resources/AgentBridge_AgentBridgeApp.bundle"
 for localization in en zh-hant; do
@@ -66,26 +85,23 @@ for output in "${BUILD_OUTPUTS[@]}"; do
   fi
 done
 
-# SwiftPM compiles the absolute build path into the app. If the app was built
-# somewhere else, that path is still there and this check would prove nothing.
-BUILD_PATH_BUNDLE="$(strings -a "$EXECUTABLE" | grep '^/.*/AgentBridge_AgentBridgeApp\.bundle$' | sed -n '1p' || true)"
-if [[ -n "$BUILD_PATH_BUNDLE" && -e "$BUILD_PATH_BUNDLE" ]]; then
-  printf 'Error: the build output this app was built from still exists at %s.\n' "$BUILD_PATH_BUNDLE" >&2
-  exit 1
-fi
-
-"$EXECUTABLE" >"$LOG" 2>&1 &
-APP_PID=$!
-for ((tick = 0; tick < 40; tick++)); do
-  if ! kill -0 "$APP_PID" 2>/dev/null; then
-    status=0
-    wait "$APP_PID" || status=$?
-    APP_PID=""
-    printf 'Error: the app exited with status %d during the launch check.\n' "$status" >&2
-    tail -n 5 "$LOG" >&2
-    exit 1
-  fi
-  sleep 0.2
+for architecture in arm64 x86_64; do
+  arch "-$architecture" "$EXECUTABLE" >"$LOG" 2>&1 &
+  APP_PID=$!
+  for ((tick = 0; tick < 40; tick++)); do
+    if ! kill -0 "$APP_PID" 2>/dev/null; then
+      status=0
+      wait "$APP_PID" || status=$?
+      APP_PID=""
+      printf 'Error: the %s app exited with status %d during the launch check.\n' "$architecture" "$status" >&2
+      tail -n 5 "$LOG" >&2
+      exit 1
+    fi
+    sleep 0.2
+  done
+  kill "$APP_PID"
+  { wait "$APP_PID" || true; } 2>/dev/null
+  APP_PID=""
+  printf 'Launch check passed on %s without the build output.\n' "$architecture"
 done
-
-printf 'Launch check passed: %s stayed running without the build output.\n' "$APP"
+arch -x86_64 "$HELPER" --version >/dev/null

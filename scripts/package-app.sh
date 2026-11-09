@@ -87,8 +87,19 @@ SWIFTPM_OPTIONS=(
   --security-path "$ROOT/build/package-security"
   --disable-automatic-resolution
 )
-swift build "${SWIFTPM_OPTIONS[@]}" --product agentbridge
-swift build "${SWIFTPM_OPTIONS[@]}" --product AgentBridgeApp
+# Each architecture builds on its own and lipo joins them, so the app runs on Apple silicon and Intel.
+ARCHITECTURES=(arm64 x86_64)
+for architecture in "${ARCHITECTURES[@]}"; do
+  swift build "${SWIFTPM_OPTIONS[@]}" --triple "$architecture-apple-macosx14.0" --product agentbridge
+  swift build "${SWIFTPM_OPTIONS[@]}" --triple "$architecture-apple-macosx14.0" --product AgentBridgeApp
+done
+universal_binary() {
+  local product="$1"
+  local output="$2"
+  lipo -create -output "$output" \
+    "$ROOT/build/swiftpm/arm64-apple-macosx/release/$product" \
+    "$ROOT/build/swiftpm/x86_64-apple-macosx/release/$product"
+}
 
 if [[ -L "$APP" ]]; then
   rm "$APP"
@@ -96,8 +107,8 @@ elif [[ -e "$APP" ]]; then
   rm -rf "$APP"
 fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
-cp "$ROOT/build/swiftpm/release/AgentBridgeApp" "$APP/Contents/MacOS/AgentBridgeApp"
-cp "$ROOT/build/swiftpm/release/agentbridge" "$APP/Contents/Helpers/agentbridge"
+universal_binary AgentBridgeApp "$APP/Contents/MacOS/AgentBridgeApp"
+universal_binary agentbridge "$APP/Contents/Helpers/agentbridge"
 RESOURCE_BUNDLE="$(find "$ROOT/build/swiftpm" -type d -path '*/release/SwiftTerm_SwiftTerm.bundle' -print | LC_ALL=C sort | sed -n '1p')"
 if [[ -z "$RESOURCE_BUNDLE" ]]; then
   printf 'Missing SwiftTerm_SwiftTerm.bundle in the SwiftPM build output.\n' >&2

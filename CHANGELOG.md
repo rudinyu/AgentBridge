@@ -2,14 +2,18 @@
 
 ## 0.12.5 — 2026-11-09
 
+### Added
+
+- The App and its `agentbridge` helper are now Universal, so they run on Intel Macs as well as Apple silicon. The Intel build was started under Rosetta on Apple silicon; it has not been run on an Intel Mac.
+
 ### Fixed
 
-- The App stopped with a fatal error at launch on any Mac without this repository's build folder, including other users' Macs. The App looked for its string tables through SwiftPM's `Bundle.module`, which only checks the top of the App and the build folder's absolute path, while packaging puts them in `Contents/Resources`. A packaged App now reads `Contents/Resources` and no longer calls `Bundle.module`. Released 0.12.3 and 0.12.4 builds both have this fault.
+- The App stopped with a fatal error at launch on any Mac without this repository's build folder, including other users' Macs. The App looked for its string tables through SwiftPM's `Bundle.module`, which only checks the top of the App and the build folder's absolute path, while packaging puts them in `Contents/Resources`. The App no longer uses `Bundle.module`, so a packaged App reads `Contents/Resources` and has no build folder path compiled in. Released 0.12.3 and 0.12.4 builds both have this fault.
 
 ### Tests
 
-- New tests cover the packaged resource lookup, a packaged App with no resource bundle, and a source check that keeps `Bundle.module` as the fallback only.
-- `scripts/verify-app-launch.sh` is a new release step. It checks that the string tables are in the App, moves the build output aside, and starts the App before the delivery ZIP is made.
+- New tests cover the packaged resource lookup, a packaged App with no resource bundle, the development lookup, and a source check that keeps `Bundle.module` out of the App. 356 tests pass under the native build system; under `swiftbuild`, 309 Core, 41 App and 6 terminal-capture tests pass.
+- `scripts/verify-app-launch.sh` is a new release step. Before the delivery ZIP is made, it checks that both binaries are Universal, that no build folder path is compiled in and that the string tables are present, then moves the build output aside and starts the App on both architectures.
 
 ## 0.12.4 — 2026-11-08
 

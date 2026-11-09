@@ -246,7 +246,7 @@ CLI 亦支援 `agentbridge cancel SESSION_ID` 取消執行、`agentbridge budget
 
 ### 14. 簽署、公證與驗證 App
 
-`scripts/package-app.sh` 會重建未簽署的開發 App。準備好發行版本並通過 `.codex/ci.sh` 後，使用共用 `macos-notarization-release` helper 進行正式簽署與公證。helper 從使用者層級設定讀取 Apple 公證認證（Keychain profile 或 App Store Connect API key），與 Claude API key 分開；不要把簽署憑證或 Apple `.p8` 私鑰放進 Repository。App 簽署身份必須是 Developer ID Application。App 內的 `agentbridge` helper 要先簽署，再簽外層 App。
+`scripts/package-app.sh` 會重建未簽署的 Universal（Apple Silicon 與 Intel）開發 App。準備好發行版本並通過 `.codex/ci.sh` 後，使用共用 `macos-notarization-release` helper 進行正式簽署與公證。helper 從使用者層級設定讀取 Apple 公證認證（Keychain profile 或 App Store Connect API key），與 Claude API key 分開；不要把簽署憑證或 Apple `.p8` 私鑰放進 Repository。App 簽署身份必須是 Developer ID Application。App 內的 `agentbridge` helper 要先簽署，再簽外層 App。
 
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
@@ -270,6 +270,6 @@ ditto -c -k --sequesterRsrc --keepParent \
   "$APP" "$PWD/build/AgentBridge-notarized.zip"
 ```
 
-上傳用 ZIP 是送交 Apple 的載體；Apple 接受後，ticket 會 staple 到 `.app`，再以已 staple 的 App 建立交付 ZIP。驗證包含簽章、Gatekeeper 與 ticket。接著的啟動檢查會確認 App 內有翻譯字串表、移開本機建置輸出並實際啟動 App，只能在這台 Mac 上執行的版本會在產生交付 ZIP 前失敗。檢查時 App 視窗會以你保存的設定開啟幾秒。若 helper 回報逾時或結果未知，不要自動重送同一 artifact；先依 Apple 回傳的 submission ID 查明該次狀態。`doctor` 只檢查本機設定，不代表 Apple 已接受公證。重跑 `package-app.sh` 會覆寫 App 並移除既有簽章，之後需重新簽署、公證。
+上傳用 ZIP 是送交 Apple 的載體；Apple 接受後，ticket 會 staple 到 `.app`，再以已 staple 的 App 建立交付 ZIP。驗證包含簽章、Gatekeeper 與 ticket。接著的啟動檢查會確認執行檔是 Universal、App 內有翻譯字串表，再移開本機建置輸出，實際以 arm64 和 Rosetta 下的 x86_64 啟動 App，只能在這台 Mac 上執行的版本會在產生交付 ZIP 前失敗。檢查時 App 視窗會以你保存的設定開啟幾秒。若 helper 回報逾時或結果未知，不要自動重送同一 artifact；先依 Apple 回傳的 submission ID 查明該次狀態。`doctor` 只檢查本機設定，不代表 Apple 已接受公證。重跑 `package-app.sh` 會覆寫 App 並移除既有簽章，之後需重新簽署、公證。
 
 ---

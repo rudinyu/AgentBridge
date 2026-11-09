@@ -244,7 +244,7 @@ If you moved or renamed a repository, its shared memory stays under the old path
 
 ### 14. Sign, notarize, and verify the app
 
-`scripts/package-app.sh` rebuilds an unsigned development app. After preparing a release and passing `.codex/ci.sh`, use the shared `macos-notarization-release` helper for signing and notarization. It reads Apple notarization authentication from user-level configuration (a Keychain profile or App Store Connect API key), separate from the Claude API key. Do not place signing credentials or Apple's `.p8` private key in the repository. The app identity must be a Developer ID Application certificate. Sign the embedded `agentbridge` helper before signing the outer app bundle.
+`scripts/package-app.sh` rebuilds an unsigned Universal (Apple silicon and Intel) development app. After preparing a release and passing `.codex/ci.sh`, use the shared `macos-notarization-release` helper for signing and notarization. It reads Apple notarization authentication from user-level configuration (a Keychain profile or App Store Connect API key), separate from the Claude API key. Do not place signing credentials or Apple's `.p8` private key in the repository. The app identity must be a Developer ID Application certificate. Sign the embedded `agentbridge` helper before signing the outer app bundle.
 
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
@@ -268,6 +268,6 @@ ditto -c -k --sequesterRsrc --keepParent \
   "$APP" "$PWD/build/AgentBridge-notarized.zip"
 ```
 
-The upload ZIP is the submission carrier. After Apple accepts it, the ticket is stapled to the `.app`, then a delivery ZIP is made from the stapled app. Verification covers the signature, Gatekeeper, and ticket. The launch check then confirms the string tables are in the app, moves the local build output aside, and starts the app, so a release that only runs on this Mac fails before the delivery ZIP is made. The app window opens for a few seconds with your saved settings. If the helper reports a timeout or unknown result, do not resubmit the same artifact automatically; resolve that submission using Apple's submission ID. `doctor` checks local configuration only and does not mean Apple has accepted the notarization. Running `package-app.sh` again replaces the app and removes its signature, so it must be signed and notarized again.
+The upload ZIP is the submission carrier. After Apple accepts it, the ticket is stapled to the `.app`, then a delivery ZIP is made from the stapled app. Verification covers the signature, Gatekeeper, and ticket. The launch check then confirms the binaries are Universal and the string tables are in the app, moves the local build output aside, and starts the app on arm64 and, under Rosetta, x86_64, so a release that only runs on this Mac fails before the delivery ZIP is made. The app window opens for a few seconds with your saved settings. If the helper reports a timeout or unknown result, do not resubmit the same artifact automatically; resolve that submission using Apple's submission ID. `doctor` checks local configuration only and does not mean Apple has accepted the notarization. Running `package-app.sh` again replaces the app and removes its signature, so it must be signed and notarized again.
 
 For the implementation boundaries and component design, see [Architecture and Design](../ARCHITECTURE.md).
