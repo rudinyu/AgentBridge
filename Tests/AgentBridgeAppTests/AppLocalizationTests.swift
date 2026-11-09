@@ -2,6 +2,52 @@ import XCTest
 @testable import AgentBridgeApp
 
 final class AppLocalizationTests: XCTestCase {
+    private func makeAppBundle(withResources: Bool) throws -> Bundle {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let app = root.appendingPathComponent("Fixture.app")
+        let contents = app.appendingPathComponent("Contents")
+        let resources = contents.appendingPathComponent("Resources")
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        let plist = try PropertyListSerialization.data(
+            fromPropertyList: ["CFBundleIdentifier": "org.agentbridge.fixture-\(UUID().uuidString)"],
+            format: .xml,
+            options: 0
+        )
+        try plist.write(to: contents.appendingPathComponent("Info.plist"))
+        if withResources {
+            try FileManager.default.createDirectory(
+                at: resources.appendingPathComponent("AgentBridge_AgentBridgeApp.bundle/en.lproj"),
+                withIntermediateDirectories: true
+            )
+        }
+        return try XCTUnwrap(Bundle(url: app))
+    }
+
+    func testPackagedAppFindsResourcesInsideContentsResources() throws {
+        let app = try makeAppBundle(withResources: true)
+        let found = try XCTUnwrap(AppLocalization.findResourceBundle(main: app))
+        XCTAssertEqual(found.bundleURL.lastPathComponent, "AgentBridge_AgentBridgeApp.bundle")
+        XCTAssertTrue(found.bundleURL.path.contains("/Contents/Resources/"))
+    }
+
+    func testPackagedAppWithoutResourcesDoesNotReachSwiftPMAccessor() throws {
+        XCTAssertNil(AppLocalization.findResourceBundle(main: try makeAppBundle(withResources: false)))
+    }
+
+    func testAppSourcesLeaveBundleModuleToTheFallback() throws {
+        let source = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/AgentBridgeApp")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: source, includingPropertiesForKeys: nil))
+        let uses = try files.compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }
+            .flatMap { try String(contentsOf: $0, encoding: .utf8).components(separatedBy: .newlines) }
+            .filter { $0.contains("Bundle.module") && !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+        XCTAssertEqual(uses.count, 1, "\(uses)")
+        XCTAssertTrue(uses[0].contains("\"app\" ? nil : Bundle.module"), uses[0])
+    }
+
     func testEnglishShowsMessagesAsWritten() {
         let message = "The selected account settings could not be found."
         XCTAssertEqual(AppLocalization.display(message, language: .english), message)

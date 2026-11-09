@@ -44,12 +44,26 @@ enum AppLocalization {
     private static let englishBundle = localizationDirectory(AppLanguage.english.swiftPackageLocalization).flatMap(Bundle.init(url:))
     private static let chineseBundle = localizationDirectory(AppLanguage.traditionalChinese.swiftPackageLocalization).flatMap(Bundle.init(url:))
 
+    private static let resourceBundle = findResourceBundle(main: .main)
+
+    /// The bundle holding the string tables. `Bundle.module` only checks the top
+    /// of the app and the absolute path of the build folder, and stops the
+    /// process when neither has the bundle. A packaged app keeps it in
+    /// `Contents/Resources`, so it must never reach `Bundle.module`.
+    static func findResourceBundle(main: Bundle) -> Bundle? {
+        if let packaged = main.resourceURL?.appendingPathComponent("AgentBridge_AgentBridgeApp.bundle"),
+           let bundle = Bundle(url: packaged) {
+            return bundle
+        }
+        return main.bundleURL.pathExtension == "app" ? nil : Bundle.module
+    }
+
     /// The `.lproj` folder for a localization, matched without regard to case.
     /// SwiftPM's native build system writes `zh-hant.lproj` while the newer one
     /// keeps the source spelling `zh-Hant.lproj`, and on macOS 27 Bundle lookups
     /// are case-sensitive, so asking for one spelling misses the other.
     private static func localizationDirectory(_ localization: String) -> URL? {
-        guard let resources = Bundle.module.resourceURL else { return nil }
+        guard let resources = resourceBundle?.resourceURL else { return nil }
         let wanted = "\(localization).lproj".lowercased()
         let contents = (try? FileManager.default.contentsOfDirectory(at: resources, includingPropertiesForKeys: nil)) ?? []
         return contents.first { $0.lastPathComponent.lowercased() == wanted }
