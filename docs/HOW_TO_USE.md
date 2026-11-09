@@ -263,10 +263,11 @@ python3 "$TOOL" submit "$PWD/build/AgentBridge-notarization-upload.zip" \
   --authorized --wait --timeout 30m --auth "$AUTH_KIND" --project-root "$PWD"
 python3 "$TOOL" staple "$APP"
 python3 "$TOOL" verify "$APP"
+./scripts/verify-app-launch.sh "$APP"
 ditto -c -k --sequesterRsrc --keepParent \
   "$APP" "$PWD/build/AgentBridge-notarized.zip"
 ```
 
-The upload ZIP is the submission carrier. After Apple accepts it, the ticket is stapled to the `.app`, then a delivery ZIP is made from the stapled app. Verification covers the signature, Gatekeeper, and ticket. If the helper reports a timeout or unknown result, do not resubmit the same artifact automatically; resolve that submission using Apple's submission ID. `doctor` checks local configuration only and does not mean Apple has accepted the notarization. Running `package-app.sh` again replaces the app and removes its signature, so it must be signed and notarized again.
+The upload ZIP is the submission carrier. After Apple accepts it, the ticket is stapled to the `.app`, then a delivery ZIP is made from the stapled app. Verification covers the signature, Gatekeeper, and ticket. The launch check then confirms the string tables are in the app, moves the local build output aside, and starts the app, so a release that only runs on this Mac fails before the delivery ZIP is made. The app window opens for a few seconds with your saved settings. If the helper reports a timeout or unknown result, do not resubmit the same artifact automatically; resolve that submission using Apple's submission ID. `doctor` checks local configuration only and does not mean Apple has accepted the notarization. Running `package-app.sh` again replaces the app and removes its signature, so it must be signed and notarized again.
 
 For the implementation boundaries and component design, see [Architecture and Design](../ARCHITECTURE.md).
