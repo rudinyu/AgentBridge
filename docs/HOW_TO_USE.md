@@ -18,11 +18,11 @@ Run these commands from the AgentBridge repository:
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh --app-name AgentBridge-0.12.5-dev.app
-open build/AgentBridge-0.12.5-dev.app
+./scripts/package-app.sh --app-name AgentBridge-0.12.6-dev.app
+open build/AgentBridge-0.12.6-dev.app
 ```
 
-The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built this development version, open `build/AgentBridge-0.12.5-dev.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
+The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built this development version, open `build/AgentBridge-0.12.6-dev.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
 
 The first time the app opens, choose or create a folder for workspace data. AgentBridge requires this selection before it can create sessions; it does not silently choose a folder under Application Support. The app and CLI use the same saved location. The selected folder contains isolated session workspaces and shared memory:
 
@@ -104,7 +104,7 @@ To use the native interactive Codex or Claude interface:
 
 1. Make sure subscription login is selected. Claude API mode does not support the interactive terminal.
 2. Enable **Interactive Terminal Session** and create the session.
-3. Click **Open Embedded Terminal** and enter prompts and control the next steps in the provider TUI.
+3. Click **Open Embedded Terminal** and enter prompts and control the next steps in the provider TUI. Commands such as `/status` are handled by the official CLI. Use **Open in Window** to resize the live terminal in its own window, or **Return to Conversation** to move that same session back. In **Project Conversations**, hide the sidebar to give the working area more room.
 
 This differs from the read-only chat on the right. Codex interactive sessions keep the read-only sandbox. Claude uses its native Manual permission flow; a user-approved action may change the isolated clone, read files outside the workspace, or access the network. Terminal transcripts stay in the current screen and are not written to AgentBridge memory or audit logs.
 

@@ -83,8 +83,7 @@ extension MainWindowView {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(model.sessions) { session in
                                 Button {
-                                    model.openProjectSession(session.id)
-                                    mainArea = .conversation
+                                    openProjectConversation(session.id)
                                 } label: {
                                     projectSessionRow(session)
                                 }
@@ -177,8 +176,7 @@ extension MainWindowView {
     var chatsPanel: some View {
         if let discussion = model.chats.selectedDiscussion {
             DiscussionChatView(model: model, discussionID: discussion.id) { session in
-                model.openProjectSession(session.id)
-                mainArea = .conversation
+                openProjectConversation(session.id)
             }
         } else {
             VStack(spacing: 14) {
@@ -371,7 +369,7 @@ extension MainWindowView {
             } else {
                 List(model.sessions, selection: Binding(
                     get: { model.selectedSessionID },
-                    set: { if let id = $0 { model.openProjectSession(id) } }
+                    set: { if let id = $0 { openProjectConversation(id) } }
                 )) { session in
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {

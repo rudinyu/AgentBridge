@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.6 — 2026-11-09
+
+### Fixed
+
+- Claude's project-interactive CLI launch no longer disables native slash commands, so commands such as `/status` are handled by Claude Code. Codex continues to handle its own native interactive commands.
+- The live terminal can open in a separate resizable window and return to the conversation without restarting the CLI. Project conversations can hide the settings sidebar to give the working area more room.
+
+### Tests
+
+- `.codex/ci.sh` and the Codex `/status`, terminal resize, detach, and return UI checks passed.
+
 ## 0.12.5 — 2026-11-09
 
 - Release record: build 19 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `7518b9af-dcd3-4555-aaf1-989ba99c8ccd`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.5`. That copy also started on arm64 and, under Rosetta, x86_64 with the build output moved aside. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `aebb88ee7781744a4e679e6cbc33ed246fc131fd0de93025be2a56d40a033542`. The App was not clicked through, and it has not been run on an Intel Mac.

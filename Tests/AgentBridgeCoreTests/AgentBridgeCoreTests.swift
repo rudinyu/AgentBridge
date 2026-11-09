@@ -90,6 +90,50 @@ final class AgentBridgeCoreTests: XCTestCase {
         XCTAssertThrowsError(try ProviderCommandBuilder.claudeAPIArguments(workspacePath: workspace, budgetUSD: 1.001))
     }
 
+    func testNativeInteractiveSlashCommandsMatchEachProviderMode() throws {
+        let workspace = FileManager.default.temporaryDirectory.path
+        let sessionID = UUID()
+
+        let codexInteractive = try ProviderCommandBuilder.codexInteractiveArguments(workspacePath: workspace)
+        let readOnly = try ProviderCommandBuilder.claudeReadOnlyArguments(
+            workspacePath: workspace,
+            sessionID: sessionID
+        )
+        let discussion = ProviderCommandBuilder.claudeDiscussionArguments()
+        let change = try ProviderCommandBuilder.claudeChangeArguments(
+            workspacePath: workspace,
+            sessionID: sessionID
+        )
+        let interactive = try ProviderCommandBuilder.claudeInteractiveArguments(
+            workspacePath: workspace,
+            sessionID: sessionID
+        )
+        let usage = ProviderCommandBuilder.claudeUsageArguments()
+
+        XCTAssertFalse(codexInteractive.contains("--disable-slash-commands"))
+        XCTAssertEqual(codexInteractive[codexInteractive.firstIndex(of: "--sandbox")! + 1], "read-only")
+        XCTAssertEqual(codexInteractive[codexInteractive.firstIndex(of: "--ask-for-approval")! + 1], "on-request")
+        let disabledCodexFeatures = codexInteractive.indices.compactMap { index -> String? in
+            guard codexInteractive[index] == "--disable",
+                  codexInteractive.indices.contains(index + 1) else { return nil }
+            return codexInteractive[index + 1]
+        }
+        XCTAssertEqual(disabledCodexFeatures, [
+            "hooks", "plugins", "apps", "skill_mcp_dependency_install", "in_app_browser"
+        ])
+
+        XCTAssertTrue(readOnly.contains("--disable-slash-commands"))
+        XCTAssertTrue(discussion.contains("--disable-slash-commands"))
+        XCTAssertTrue(change.contains("--disable-slash-commands"))
+        XCTAssertFalse(interactive.contains("--disable-slash-commands"))
+        XCTAssertFalse(usage.contains("--disable-slash-commands"))
+
+        XCTAssertTrue(interactive.contains("--restricted"))
+        XCTAssertTrue(interactive.contains("--safe-mode"))
+        XCTAssertTrue(interactive.contains("--strict-mcp-config"))
+        XCTAssertTrue(interactive.contains("--no-chrome"))
+    }
+
     func testUsageTUIRefusesAPIAndCrossProviderLaunchesBeforeStartingAProcess() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("AgentBridge-UsageTUI-\(UUID().uuidString.lowercased())", isDirectory: true)

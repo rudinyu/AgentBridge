@@ -20,11 +20,11 @@
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh --app-name AgentBridge-0.12.5-dev.app
-open build/AgentBridge-0.12.5-dev.app
+./scripts/package-app.sh --app-name AgentBridge-0.12.6-dev.app
+open build/AgentBridge-0.12.6-dev.app
 ```
 
-CI 腳本會建置 CLI、App 並執行核心測試；封裝腳本會建立未簽署的本機 App。上述步驟不登入 provider、不呼叫模型，也不產生 Claude API 費用。若已建置此開發版，只要重新開啟 `build/AgentBridge-0.12.5-dev.app` 即可。若要交付給其他 Mac，請完成本文最後的 Developer ID 簽署與 Apple 公證流程。
+CI 腳本會建置 CLI、App 並執行核心測試；封裝腳本會建立未簽署的本機 App。上述步驟不登入 provider、不呼叫模型，也不產生 Claude API 費用。若已建置此開發版，只要重新開啟 `build/AgentBridge-0.12.6-dev.app` 即可。若要交付給其他 Mac，請完成本文最後的 Developer ID 簽署與 Apple 公證流程。
 
 第一次開啟 App 時，請選擇或建立存放工作區資料的資料夾。AgentBridge 必須先有這項設定才會建立工作階段，不會暗中把資料夾放在 Application Support。App 和 CLI 共用已保存的位置。自選資料夾會包含隔離的工作階段工作區與共用記憶：
 
@@ -106,7 +106,7 @@ CLI=build/swiftpm/debug/agentbridge
 
 1. 確認目前選的是訂閱登入；Claude API 模式不支援互動終端。
 2. 勾選「互動終端工作階段」並建立工作階段。
-3. 按「開啟內嵌終端機」，在 provider TUI 中自行輸入並控制下一步。
+3. 按「開啟內嵌終端機」，在 provider TUI 中自行輸入並控制下一步。像 `/status` 這類指令會由官方 CLI 原生處理。按「在視窗中開啟」可在獨立視窗調整終端機大小；按「返回對話」會把同一個工作階段移回對話畫面。在「專案對話」中也可隱藏側邊欄，讓工作區更寬敞。
 
 這與 App 右側的唯讀聊天不同。Codex 互動工作階段維持唯讀 sandbox；Claude 使用原生 Manual 權限流程，使用者核准的操作可能修改隔離複本、讀取工作區外的檔案或連接網路。終端逐字稿只留在目前畫面，不寫入 AgentBridge 記憶或稽核記錄。
 

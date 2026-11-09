@@ -332,7 +332,7 @@ public enum ProviderCommandBuilder {
         var arguments = [
             "--restricted", "--safe-mode", "--setting-sources", "",
             "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
-            "--disable-slash-commands", "--no-chrome",
+            "--no-chrome",
             "--settings", "{\"disableAllHooks\":true,\"apiKeyHelper\":\"\",\"forceLoginMethod\":\"claudeai\"}",
             "--permission-mode", "manual", "--tools", "Read,Glob,Grep,Edit,Write,Bash",
             "--add-dir", workspacePath

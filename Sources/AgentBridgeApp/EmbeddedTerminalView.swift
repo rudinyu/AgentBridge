@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import AgentBridgeCore
+import Observation
 @preconcurrency import SwiftTerm
 import AgentBridgeTerminalCapture
 import SwiftUI
@@ -33,6 +34,7 @@ struct TerminalLaunchSpec: Equatable, Sendable, Identifiable {
 /// A local ANSI/VT100 view. OSC 52 clipboard requests and terminal links are denied.
 private final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewDelegate, @preconcurrency LocalProcessDelegate {
     private var process: LocalProcess?
+    var processIsRunning: Bool { process?.running == true }
     private let usageCaptureLock = NSLock()
     private var usageCaptureEnabled = false
     private var usageCaptureStartedAt: Date?
@@ -261,22 +263,213 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
 }
 
 struct EmbeddedTerminalView: NSViewRepresentable {
+    let terminalModel: TerminalModel
     let launch: TerminalLaunchSpec
     let usageCommandRequest: Int
     let allowsUsageScreenCapture: Bool
-    let onUsageScreenText: @MainActor (String, Date) -> Bool
-    let onTermination: @MainActor (Int32?) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(
-            onTermination: onTermination,
-            usageCommandRequest: usageCommandRequest,
-            allowsUsageScreenCapture: allowsUsageScreenCapture,
-            onUsageScreenText: onUsageScreenText
-        )
+        Coordinator(controller: terminalModel.windowController, launchID: launch.id)
     }
 
     func makeNSView(context: Context) -> NSView {
+        let container = NSView(frame: .zero)
+        context.coordinator.controller.mountTerminal(
+            in: container,
+            launch: launch,
+            usageCommandRequest: usageCommandRequest,
+            allowsUsageScreenCapture: allowsUsageScreenCapture
+        )
+        return container
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.controller.mountTerminal(
+            in: nsView,
+            launch: launch,
+            usageCommandRequest: usageCommandRequest,
+            allowsUsageScreenCapture: allowsUsageScreenCapture
+        )
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.controller.embeddedContainerDidDismantle(nsView, launchID: coordinator.launchID)
+    }
+
+    @MainActor
+    final class Coordinator {
+        let controller: TerminalWindowController
+        let launchID: UUID
+
+        init(controller: TerminalWindowController, launchID: UUID) {
+            self.controller = controller
+            self.launchID = launchID
+        }
+    }
+}
+
+/// Retains the one live SwiftTerm view while SwiftUI panels appear and disappear.
+/// Moving that view to the native window keeps its LocalProcess and screen state intact.
+@MainActor
+final class TerminalWindowController: NSObject, NSWindowDelegate {
+    private weak var terminalModel: TerminalModel?
+    private weak var appModel: AppModel?
+    private var terminalView: AgentBridgeTerminalView?
+    private var terminalLaunchID: UUID?
+    private weak var embeddedContainer: NSView?
+    private weak var mainWindow: NSWindow?
+    private var detachedWindow: NSWindow?
+    private var detachedWindowRoot: NSView?
+    private var terminalConstraints: [NSLayoutConstraint] = []
+    private var lastUsageCommandRequest = 0
+
+    var hasRunningProcess: Bool { terminalView?.processIsRunning == true }
+
+    func attach(terminalModel: TerminalModel, appModel: AppModel) {
+        self.terminalModel = terminalModel
+        self.appModel = appModel
+    }
+
+    func mountTerminal(
+        in container: NSView,
+        launch: TerminalLaunchSpec,
+        usageCommandRequest: Int,
+        allowsUsageScreenCapture: Bool
+    ) {
+        embeddedContainer = container
+        if let window = container.window { mainWindow = window }
+        guard let terminal = terminalView(for: launch) else { return }
+        configure(terminal, usageCommandRequest: usageCommandRequest, allowsUsageScreenCapture: allowsUsageScreenCapture)
+        guard terminalModel?.terminalIsDetached != true else { return }
+        guard terminal.superview !== container else { return }
+
+        detachTerminalFromCurrentParent()
+        container.addSubview(terminal)
+        terminal.translatesAutoresizingMaskIntoConstraints = false
+        terminalConstraints = [
+            terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            terminal.topAnchor.constraint(equalTo: container.topAnchor),
+            terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ]
+        NSLayoutConstraint.activate(terminalConstraints)
+    }
+
+    func embeddedContainerDidDismantle(_ container: NSView, launchID: UUID) {
+        guard terminalLaunchID == launchID else { return }
+        if embeddedContainer === container { embeddedContainer = nil }
+        guard terminalModel?.terminalIsDetached != true, terminalView?.superview === container else { return }
+        detachTerminalFromCurrentParent()
+    }
+
+    func openWindow() {
+        guard let terminalModel,
+              let launch = terminalModel.terminalLaunch,
+              let appModel,
+              let terminal = terminalView(for: launch) else { return }
+        if mainWindow == nil { mainWindow = NSApp.keyWindow }
+        if let detachedWindow {
+            detachedWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        terminalModel.terminalIsDetached = true
+        detachTerminalFromCurrentParent()
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = appModel.localized(launch.title)
+        window.minSize = NSSize(width: 640, height: 400)
+        window.isReleasedWhenClosed = false
+
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 960, height: 640))
+        let toolbarModel = DetachedTerminalToolbarModel(terminalModel: terminalModel, appModel: appModel)
+        let toolbar = NSHostingView(rootView: DetachedTerminalToolbar(model: toolbarModel))
+        root.addSubview(toolbar)
+        root.addSubview(terminal)
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
+        terminal.translatesAutoresizingMaskIntoConstraints = false
+        terminalConstraints = [
+            toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            toolbar.topAnchor.constraint(equalTo: root.topAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: 48),
+            terminal.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            terminal.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            terminal.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            terminal.bottomAnchor.constraint(equalTo: root.bottomAnchor)
+        ]
+        NSLayoutConstraint.activate(terminalConstraints)
+
+        detachedWindowRoot = root
+        detachedWindow = window
+        window.contentView = root
+        window.delegate = self
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func returnToConversation() {
+        guard let terminalModel else { return }
+        if let window = detachedWindow {
+            window.delegate = nil
+            detachTerminalFromCurrentParent()
+            window.contentView = nil
+            window.close()
+        }
+        detachedWindow = nil
+        detachedWindowRoot = nil
+        terminalModel.terminalIsDetached = false
+        mountTerminalIntoEmbeddedContainerIfPossible()
+        mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func discardTerminal(launchID: UUID?) {
+        guard let launchID, terminalLaunchID == launchID else { return }
+        guard !hasRunningProcess else { return }
+
+        if let window = detachedWindow {
+            window.delegate = nil
+            detachTerminalFromCurrentParent()
+            window.contentView = nil
+            window.close()
+        } else {
+            detachTerminalFromCurrentParent()
+        }
+        detachedWindow = nil
+        detachedWindowRoot = nil
+        terminalView?.disableUsageScreenCapture()
+        terminalView?.onTermination = nil
+        terminalView?.onUsageScreenSnapshot = nil
+        terminalView = nil
+        terminalLaunchID = nil
+        embeddedContainer = nil
+        terminalModel?.terminalIsDetached = false
+        lastUsageCommandRequest = 0
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closingWindow = notification.object as? NSWindow,
+              closingWindow === detachedWindow else { return }
+        detachedWindow = nil
+        detachedWindowRoot = nil
+        detachTerminalFromCurrentParent()
+        terminalModel?.detachedWindowDidClose()
+        mountTerminalIntoEmbeddedContainerIfPossible()
+        mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private func terminalView(for launch: TerminalLaunchSpec) -> AgentBridgeTerminalView? {
+        if terminalLaunchID == launch.id { return terminalView }
+        guard !hasRunningProcess else { return nil }
+        if let oldLaunchID = terminalLaunchID { discardTerminal(launchID: oldLaunchID) }
+
         let options = TerminalOptions(
             termName: "xterm-256color",
             scrollback: 2_000,
@@ -284,67 +477,126 @@ struct EmbeddedTerminalView: NSViewRepresentable {
             kittyImageCacheLimitBytes: 0
         )
         let terminal = AgentBridgeTerminalView(frame: .zero, options: options)
-        let coordinator = context.coordinator
-        terminal.onTermination = { [weak coordinator] exitCode in
-            coordinator?.processTerminated(exitCode)
+        terminalLaunchID = launch.id
+        terminalView = terminal
+        lastUsageCommandRequest = 0
+        terminal.onTermination = { [weak self] exitCode in
+            guard let self, self.terminalLaunchID == launch.id else { return }
+            self.terminalModel?.terminalDidTerminate(launchID: launch.id, exitCode: exitCode)
         }
-        terminal.allowsUsageScreenCapture = allowsUsageScreenCapture
-        terminal.onUsageScreenSnapshot = { [weak coordinator] screenText, capturedAt in
-            coordinator?.usageScreenDidUpdate(screenText, capturedAt: capturedAt) ?? false
+        terminal.onUsageScreenSnapshot = { [weak self] screenText, capturedAt in
+            guard let self, self.terminalLaunchID == launch.id else { return false }
+            return self.terminalModel?.usageScreenDidUpdate(
+                screenText,
+                capturedAt: capturedAt,
+                launchID: launch.id
+            ) ?? false
         }
-        coordinator.terminal = terminal
-        DispatchQueue.main.async { [weak terminal] in
-            guard let terminal else { return }
+        DispatchQueue.main.async { [weak self, weak terminal] in
+            guard let self, self.terminalLaunchID == launch.id, let terminal else { return }
             terminal.start(launch)
         }
         return terminal
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        let coordinator = context.coordinator
-        coordinator.onTermination = onTermination
-        coordinator.onUsageScreenText = onUsageScreenText
-        coordinator.sendUsageCommandIfRequested(usageCommandRequest)
+    private func configure(
+        _ terminal: AgentBridgeTerminalView,
+        usageCommandRequest: Int,
+        allowsUsageScreenCapture: Bool
+    ) {
+        terminal.allowsUsageScreenCapture = allowsUsageScreenCapture
+        guard usageCommandRequest != lastUsageCommandRequest else { return }
+        lastUsageCommandRequest = usageCommandRequest
+        if allowsUsageScreenCapture { terminal.sendUsageCommand() }
     }
 
-    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
-        coordinator.terminal?.disableUsageScreenCapture()
-        coordinator.terminal?.terminateWithEscalation()
-        coordinator.terminal = nil
+    private func mountTerminalIntoEmbeddedContainerIfPossible() {
+        guard terminalModel?.terminalIsDetached != true,
+              let terminal = terminalView,
+              let container = embeddedContainer else { return }
+        if let window = container.window { mainWindow = window }
+        guard terminal.superview !== container else { return }
+        detachTerminalFromCurrentParent()
+        container.addSubview(terminal)
+        terminal.translatesAutoresizingMaskIntoConstraints = false
+        terminalConstraints = [
+            terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            terminal.topAnchor.constraint(equalTo: container.topAnchor),
+            terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ]
+        NSLayoutConstraint.activate(terminalConstraints)
     }
 
-    @MainActor
-    final class Coordinator: NSObject {
-        fileprivate weak var terminal: AgentBridgeTerminalView?
-        var onTermination: @MainActor (Int32?) -> Void
-        var onUsageScreenText: @MainActor (String, Date) -> Bool
-        private var usageCommandRequest: Int
-        private let allowsUsageScreenCapture: Bool
+    private func detachTerminalFromCurrentParent() {
+        NSLayoutConstraint.deactivate(terminalConstraints)
+        terminalConstraints = []
+        terminalView?.removeFromSuperview()
+    }
+}
 
-        init(
-            onTermination: @escaping @MainActor (Int32?) -> Void,
-            usageCommandRequest: Int,
-            allowsUsageScreenCapture: Bool,
-            onUsageScreenText: @escaping @MainActor (String, Date) -> Bool
-        ) {
-            self.onTermination = onTermination
-            self.usageCommandRequest = usageCommandRequest
-            self.allowsUsageScreenCapture = allowsUsageScreenCapture
-            self.onUsageScreenText = onUsageScreenText
-        }
+@MainActor
+@Observable
+private final class DetachedTerminalToolbarModel {
+    @ObservationIgnored private weak var terminalModel: TerminalModel?
+    @ObservationIgnored private weak var appModel: AppModel?
 
-        func sendUsageCommandIfRequested(_ request: Int) {
-            guard allowsUsageScreenCapture, request != usageCommandRequest else { return }
-            usageCommandRequest = request
-            terminal?.sendUsageCommand()
-        }
+    init(terminalModel: TerminalModel, appModel: AppModel) {
+        self.terminalModel = terminalModel
+        self.appModel = appModel
+    }
 
-        func usageScreenDidUpdate(_ screenText: String, capturedAt: Date) -> Bool {
-            onUsageScreenText(screenText, capturedAt)
-        }
+    var title: String { appModel?.localized(terminalModel?.terminalTitle ?? "") ?? "" }
+    var isRunning: Bool { terminalModel?.terminalRunning == true }
+    var isProfileLogin: Bool { terminalModel?.terminalIsProfileLogin == true }
+    var sessionID: UUID? { terminalModel?.terminalSessionIDForView }
+    var canSendUsageCommand: Bool { terminalModel?.canSendUsageCommand == true }
+    var closeTitle: String {
+        guard let terminalModel else { return "Close terminal" }
+        return terminalModel.terminalRunning
+            ? (terminalModel.terminalNeedsManualStop ? "End the CLI, then close" : "Cancel and close")
+            : "Close terminal"
+    }
+    var closeIsDisabled: Bool {
+        terminalModel?.terminalRunning == true && terminalModel?.terminalNeedsManualStop == true
+    }
 
-        func processTerminated(_ exitCode: Int32?) {
-            onTermination(exitCode)
+    func localized(_ key: String) -> String { appModel?.localized(key) ?? key }
+    func cancelSession() {
+        guard let sessionID else { return }
+        appModel?.cancelSession(sessionID)
+    }
+    func requestUsageCommand() { terminalModel?.requestUsageCommand() }
+    func closeTerminal() { terminalModel?.closeEmbeddedTerminal() }
+    func returnToConversation() { terminalModel?.returnTerminalToConversation() }
+}
+
+private struct DetachedTerminalToolbar: View {
+    @Bindable var model: DetachedTerminalToolbarModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "terminal")
+            Text(model.title).font(.subheadline.weight(.semibold))
+            if model.isRunning { ProgressView().controlSize(.small) }
+            Spacer()
+            if model.isRunning && !model.isProfileLogin, model.sessionID != nil {
+                Button(model.localized("Cancel session")) { model.cancelSession() }
+            }
+            if model.canSendUsageCommand {
+                Button(model.localized("Send /usage")) { model.requestUsageCommand() }
+                    .help(model.localized("Only the fixed /usage command and Enter are sent after the CLI is ready."))
+            }
+            Button(model.localized(model.closeTitle)) {
+                model.closeTerminal()
+            }
+            .disabled(model.closeIsDisabled)
+            Button(model.localized("Return to Conversation")) {
+                model.returnToConversation()
+            }
         }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }

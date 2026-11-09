@@ -25,10 +25,7 @@ extension MainWindowView {
                 }
             } else {
                 ContentUnavailableView("Select or Create a Session", systemImage: "bubble.left.and.bubble.right", description: Text("Choose a Git repository first, then start a project conversation pinned to a commit."))
-                    .frame(maxWidth: .infinity, maxHeight: model.terminal.terminalLaunch == nil ? .infinity : 110)
-            }
-            if !model.setupWizard.isPresented, let launch = model.terminal.terminalLaunch {
-                EmbeddedTerminalPanel(model: model, launch: launch)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

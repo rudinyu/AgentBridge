@@ -8,18 +8,23 @@ import Observation
 @MainActor
 @Observable
 final class TerminalModel {
+    static let didReturnToConversationNotification = Notification.Name("AgentBridgeTerminalDidReturnToConversation")
+
     var providerUsageReport: ProviderUsageReport?
     var terminalLaunch: TerminalLaunchSpec?
     var terminalTitle = ""
     var terminalRunning = false
+    var terminalIsDetached = false
     var terminalIsProfileLogin = false
     var terminalIsUsageTUI = false
     var terminalNeedsManualStop = false
     var usageCommandRequest = 0
     var closeTerminalAfterCancellation = false
+    @ObservationIgnored let windowController = TerminalWindowController()
     private var activeTerminalProfileID: UUID?
     private var activeTerminalSessionID: UUID?
     private var activeUsageProvider: AgentProvider?
+    private var conversationReturnSessionID: UUID?
 
     var terminalSessionIDForView: UUID? { activeTerminalSessionID }
 
@@ -54,6 +59,7 @@ final class TerminalModel {
         terminalTitle = spec.title
         activeTerminalProfileID = profileID
         activeTerminalSessionID = session.id
+        conversationReturnSessionID = session.id
         terminalNeedsManualStop = false
         closeTerminalAfterCancellation = false
         terminalLaunch = spec
@@ -104,6 +110,7 @@ final class TerminalModel {
         terminalTitle = spec.title
         activeTerminalProfileID = profile.id
         activeTerminalSessionID = nil
+        conversationReturnSessionID = app.selectedSessionID
         terminalNeedsManualStop = true
         closeTerminalAfterCancellation = false
         usageCommandRequest = 0
@@ -118,8 +125,9 @@ final class TerminalModel {
         app.status = "The fixed /usage command was sent to the current official CLI terminal."
     }
 
-    func usageScreenDidUpdate(_ screenText: String, capturedAt: Date) -> Bool {
-        guard terminalIsUsageTUI,
+    func usageScreenDidUpdate(_ screenText: String, capturedAt: Date, launchID: UUID) -> Bool {
+        guard terminalLaunch?.id == launchID,
+              terminalIsUsageTUI,
               let provider = activeUsageProvider,
               app.settings.defaultProvider == provider,
               app.settings.usageMode == .subscription,
@@ -190,6 +198,7 @@ final class TerminalModel {
         terminalTitle = spec.title
         activeTerminalProfileID = profile.id
         activeTerminalSessionID = nil
+        conversationReturnSessionID = app.selectedSessionID
         terminalNeedsManualStop = true
         closeTerminalAfterCancellation = false
         terminalLaunch = spec
@@ -214,6 +223,7 @@ final class TerminalModel {
         terminalNeedsManualStop = true
         activeTerminalProfileID = nil
         activeTerminalSessionID = nil
+        conversationReturnSessionID = session.id
         closeTerminalAfterCancellation = false
         terminalTitle = spec.title
         terminalLaunch = spec
@@ -235,7 +245,15 @@ final class TerminalModel {
             app.cancelSession(sessionID)
             return
         }
+        let closingLaunchID = terminalLaunch?.id
+        if windowController.hasRunningProcess {
+            app.status = "Wait for the terminal process to stop before closing the terminal."
+            return
+        }
+        windowController.discardTerminal(launchID: closingLaunchID)
+        terminalIsDetached = false
         terminalLaunch = nil
+        conversationReturnSessionID = nil
         terminalRunning = false
         terminalIsUsageTUI = false
         activeUsageProvider = nil
@@ -245,7 +263,36 @@ final class TerminalModel {
         app.status = "The in-app terminal closed."
     }
 
-    func terminalDidTerminate(exitCode: Int32?) {
+    func openTerminalInWindow() {
+        guard terminalLaunch != nil else { return }
+        windowController.openWindow()
+    }
+
+    func returnTerminalToConversation() {
+        guard terminalIsDetached else { return }
+        windowController.returnToConversation()
+        finishReturningToConversation()
+    }
+
+    func detachedWindowDidClose() {
+        finishReturningToConversation()
+    }
+
+    private func finishReturningToConversation() {
+        terminalIsDetached = false
+        if let sessionID = conversationReturnSessionID,
+           app.sessions.contains(where: { $0.id == sessionID }) {
+            app.openProjectSession(sessionID)
+        } else {
+            app.chats.selectedDiscussionID = nil
+            app.isProjectConversationActive = app.selectedSession != nil
+        }
+        app.status = "The terminal returned to the conversation window."
+        NotificationCenter.default.post(name: Self.didReturnToConversationNotification, object: self)
+    }
+
+    func terminalDidTerminate(launchID: UUID, exitCode: Int32?) {
+        guard terminalLaunch?.id == launchID else { return }
         terminalRunning = false
         terminalIsUsageTUI = false
         activeUsageProvider = nil
@@ -260,10 +307,13 @@ final class TerminalModel {
         }
         app.refresh(forceUsageStatistics: true)
         if closeTerminalAfterCancellation {
+            windowController.discardTerminal(launchID: launchID)
+            terminalIsDetached = false
             terminalLaunch = nil
             closeTerminalAfterCancellation = false
             activeTerminalProfileID = nil
             activeTerminalSessionID = nil
+            conversationReturnSessionID = nil
         }
     }
 
@@ -309,5 +359,6 @@ final class TerminalModel {
     /// Connects this model to the `AppModel` that owns it; called once from `AppModel.init`.
     func attach(to app: AppModel) {
         owner = app
+        windowController.attach(terminalModel: self, appModel: app)
     }
 }

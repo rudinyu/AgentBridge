@@ -576,6 +576,7 @@ struct SetupWizardView: View {
 struct EmbeddedTerminalPanel: View {
     @Bindable var model: AppModel
     let launch: TerminalLaunchSpec
+    private var isCompact: Bool { model.terminal.terminalIsDetached }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -583,6 +584,12 @@ struct EmbeddedTerminalPanel: View {
                 Image(systemName: "terminal")
                 Text(model.localized(launch.title)).font(.subheadline.weight(.semibold))
                 if model.terminal.terminalRunning { ProgressView().controlSize(.small) }
+                if isCompact {
+                    Text(model.localized("This terminal is open in a separate window."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer()
                 if model.terminal.terminalRunning && !model.terminal.terminalIsProfileLogin,
                    let sessionID = model.terminal.terminalSessionIDForView {
@@ -592,6 +599,11 @@ struct EmbeddedTerminalPanel: View {
                     Button(model.localized("Send /usage")) { model.terminal.requestUsageCommand() }
                         .help(model.localized("Only the fixed /usage command and Enter are sent after the CLI is ready."))
                 }
+                if model.terminal.terminalIsDetached {
+                    Button(model.localized("Return to Conversation")) { model.terminal.returnTerminalToConversation() }
+                } else {
+                    Button(model.localized("Open in Window")) { model.terminal.openTerminalInWindow() }
+                }
                 Button(model.localized(model.terminal.terminalRunning ? (model.terminal.terminalNeedsManualStop ? "End the CLI, then close" : "Cancel and close") : "Close terminal")) {
                     model.terminal.closeEmbeddedTerminal()
                 }
@@ -600,17 +612,14 @@ struct EmbeddedTerminalPanel: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             EmbeddedTerminalView(
+                terminalModel: model.terminal,
                 launch: launch,
                 usageCommandRequest: model.terminal.usageCommandRequest,
-                allowsUsageScreenCapture: model.terminal.terminalIsUsageTUI,
-                onUsageScreenText: { screenText, capturedAt in
-                    model.terminal.usageScreenDidUpdate(screenText, capturedAt: capturedAt)
-                },
-                onTermination: { exitCode in model.terminal.terminalDidTerminate(exitCode: exitCode) }
+                allowsUsageScreenCapture: model.terminal.terminalIsUsageTUI
             )
             .id(launch.id)
-            .frame(minHeight: 210, maxHeight: 340)
-            if model.terminal.terminalIsUsageTUI && model.terminal.terminalRunning {
+            .frame(minHeight: isCompact ? 1 : 210, maxHeight: isCompact ? 1 : 340)
+            if !isCompact && model.terminal.terminalIsUsageTUI && model.terminal.terminalRunning {
                 Text(model.localized("Wait for the official CLI prompt and sign-in before sending /usage."))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -618,13 +627,15 @@ struct EmbeddedTerminalPanel: View {
                     .padding(.horizontal, 10)
                     .padding(.bottom, 6)
             }
-            Text(model.localized("Terminal output stays in this screen's memory; AgentBridge does not add TUI transcripts to chat memory or audit records."))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.bottom, 6)
-            if model.terminal.terminalSessionIDForView == nil && !model.terminal.terminalIsProfileLogin {
+            if !isCompact {
+                Text(model.localized("Terminal output stays in this screen's memory; AgentBridge does not add TUI transcripts to chat memory or audit records."))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 6)
+            }
+            if !isCompact && model.terminal.terminalSessionIDForView == nil && !model.terminal.terminalIsProfileLogin {
                 Text(model.localized("A local shell runs with your macOS account permissions."))
                     .font(.caption2)
                     .foregroundStyle(.orange)

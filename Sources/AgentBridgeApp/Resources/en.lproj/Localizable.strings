@@ -190,6 +190,11 @@
 "Close terminal" = "Close terminal";
 "End the CLI, then close" = "End the CLI, then close";
 "Cancel and close" = "Cancel and close";
+"Open in Window" = "Open in Window";
+"Return to Conversation" = "Return to Conversation";
+"This terminal is open in a separate window." = "This terminal is open in a separate window.";
+"Wait for the terminal process to stop before closing the terminal." = "Wait for the terminal process to stop before closing the terminal.";
+"The terminal returned to the conversation window." = "The terminal returned to the conversation window.";
 "Set up AgentBridge" = "Set up AgentBridge";
 "Set up the %@ CLI" = "Set up the %@ CLI";
 "Setup Wizard" = "Setup Wizard";
@@ -225,6 +230,11 @@
 "Choose or create a folder…" = "Choose or create a folder…";
 "Change folder…" = "Change folder…";
 "Project Conversations" = "Project Conversations";
+"Hide Sidebar" = "Hide Sidebar";
+"Show Sidebar" = "Show Sidebar";
+"Hide Project Sidebar" = "Hide Project Sidebar";
+"Show Project Sidebar" = "Show Project Sidebar";
+"Show or hide the project settings and navigation sidebar." = "Show or hide the project settings and navigation sidebar.";
 "Autonomous Workflow" = "Autonomous Workflow";
 "Skills & MCP" = "Skills & MCP";
 "Parallel session task records" = "Parallel session task records";

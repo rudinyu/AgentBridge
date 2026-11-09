@@ -190,6 +190,11 @@
 "Close terminal" = "關閉終端機";
 "End the CLI, then close" = "先結束 CLI 再關閉";
 "Cancel and close" = "取消並關閉";
+"Open in Window" = "在視窗中開啟";
+"Return to Conversation" = "返回對話";
+"This terminal is open in a separate window." = "終端機已在獨立視窗中開啟。";
+"Wait for the terminal process to stop before closing the terminal." = "請等待終端機程序停止後再關閉終端機。";
+"The terminal returned to the conversation window." = "終端機已返回對話視窗。";
 "Set up AgentBridge" = "設定 AgentBridge";
 "Set up the %@ CLI" = "設定 %@ CLI";
 "Setup Wizard" = "設定精靈";
@@ -225,6 +230,11 @@
 "Choose or create a folder…" = "選擇或建立資料夾…";
 "Change folder…" = "變更資料夾…";
 "Project Conversations" = "專案對話";
+"Hide Sidebar" = "隱藏側邊欄";
+"Show Sidebar" = "顯示側邊欄";
+"Hide Project Sidebar" = "隱藏專案側邊欄";
+"Show Project Sidebar" = "顯示專案側邊欄";
+"Show or hide the project settings and navigation sidebar." = "顯示或隱藏專案設定與導覽側邊欄。";
 "Autonomous Workflow" = "自主工作流程";
 "Skills & MCP" = "Skills 與 MCP";
 "Parallel session task records" = "平行工作階段任務記錄";

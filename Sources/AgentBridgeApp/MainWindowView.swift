@@ -6,6 +6,7 @@ import SwiftUI
 struct MainWindowView: View {
     @Bindable var model: AppModel
     @State var mainArea: MainArea = .chats
+    @State var isProjectSidebarVisible = true
     @State var isProjectConfigurationExpanded = false
     @State var contextPreview: ContextCompressionPreview?
     @State var contextPreviewSettings: LocalModelSettings?
@@ -33,11 +34,20 @@ struct MainWindowView: View {
                     HStack(spacing: 0) {
                         if mainArea == .chats {
                             chatsSidebar
+                            Divider()
+                        } else if mainArea == .conversation {
+                            if isProjectSidebarVisible {
+                                projectSidebar
+                                Divider()
+                            }
                         } else {
                             projectSidebar
+                            Divider()
                         }
-                        Divider()
                         mainAreaContent
+                    }
+                    if !model.setupWizard.isPresented, let launch = model.terminal.terminalLaunch {
+                        EmbeddedTerminalPanel(model: model, launch: launch)
                     }
                     Divider()
                     statusBar
@@ -77,6 +87,10 @@ struct MainWindowView: View {
         .onChange(of: model.extensions.selectedExtensionID) { _, _ in model.extensions.selectedExtensionDidChange() }
         .onChange(of: model.setupWizard.isPresented) { _, isPresented in
             if !isPresented { model.errorMessage = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: TerminalModel.didReturnToConversationNotification)) { notification in
+            guard (notification.object as? TerminalModel) === model.terminal else { return }
+            selectMainArea(.conversation)
         }
         .onAppear { model.refresh() }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in model.refreshInBackground() }
@@ -122,6 +136,18 @@ struct MainWindowView: View {
                 Text("Traditional Chinese").tag(AppLanguage.traditionalChinese)
             }
             .pickerStyle(.menu)
+            if mainArea == .conversation {
+                Button {
+                    isProjectSidebarVisible.toggle()
+                } label: {
+                    Label(
+                        model.localized(isProjectSidebarVisible ? "Hide Sidebar" : "Show Sidebar"),
+                        systemImage: "sidebar.left"
+                    )
+                }
+                .accessibilityLabel(model.localized(isProjectSidebarVisible ? "Hide Project Sidebar" : "Show Project Sidebar"))
+                .accessibilityHint(model.localized("Show or hide the project settings and navigation sidebar."))
+            }
             Button(model.localized("Setup Wizard")) { model.setupWizard.open() }
                 .disabled(!model.canPresentSetupWizard)
             if let session = model.selectedSession {
@@ -159,17 +185,7 @@ struct MainWindowView: View {
 
     func mainAreaButton(_ area: MainArea, title: String, symbol: String) -> some View {
         Button {
-            mainArea = area
-            switch area {
-            case .chats:
-                model.isProjectConversationActive = false
-            case .conversation:
-                model.chats.selectedDiscussionID = nil
-                model.isProjectConversationActive = model.selectedSessionID != nil
-            case .autonomous, .extensions:
-                model.chats.selectedDiscussionID = nil
-                model.isProjectConversationActive = model.selectedSessionID != nil
-            }
+            selectMainArea(area)
         } label: {
             Label(model.localized(title), systemImage: symbol)
                 .font(.callout.weight(mainArea == area ? .semibold : .regular))
@@ -179,6 +195,29 @@ struct MainWindowView: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(mainArea == area ? .isSelected : [])
+    }
+
+    private func selectMainArea(_ area: MainArea, focusProjectConversation: Bool = false) {
+        let isEnteringProjectConversations = area == .conversation && mainArea != .conversation
+        mainArea = area
+        switch area {
+        case .chats:
+            model.isProjectConversationActive = false
+        case .conversation:
+            model.chats.selectedDiscussionID = nil
+            model.isProjectConversationActive = model.selectedSessionID != nil
+            if focusProjectConversation || isEnteringProjectConversations {
+                isProjectSidebarVisible = model.selectedSessionID == nil
+            }
+        case .autonomous, .extensions:
+            model.chats.selectedDiscussionID = nil
+            model.isProjectConversationActive = model.selectedSessionID != nil
+        }
+    }
+
+    func openProjectConversation(_ sessionID: UUID) {
+        model.openProjectSession(sessionID)
+        selectMainArea(.conversation, focusProjectConversation: true)
     }
 
     @ViewBuilder
@@ -198,8 +237,7 @@ struct MainWindowView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 AutonomousWorkflowView(model: model) { sessionID in
-                    model.openProjectSession(sessionID)
-                    mainArea = .conversation
+                    openProjectConversation(sessionID)
                 }
             }
         case .extensions:
