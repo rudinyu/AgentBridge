@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.5 — 2026-11-09
+
+### Fixed
+
+- The App stopped with a fatal error at launch on any Mac without this repository's build folder, including other users' Macs. The App looked for its string tables through SwiftPM's `Bundle.module`, which only checks the top of the App and the build folder's absolute path, while packaging puts them in `Contents/Resources`. A packaged App now reads `Contents/Resources` and no longer calls `Bundle.module`. Released 0.12.3 and 0.12.4 builds both have this fault.
+
+### Tests
+
+- New tests cover the packaged resource lookup, a packaged App with no resource bundle, and a source check that keeps `Bundle.module` as the fallback only.
+- `scripts/verify-app-launch.sh` is a new release step. It checks that the string tables are in the App, moves the build output aside, and starts the App before the delivery ZIP is made.
+
 ## 0.12.4 — 2026-11-08
 
 - Release record: build 18 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `03db6719-3f60-4264-a291-0ded78fa33d8`), stapled, and passed signature, Gatekeeper and staple checks on a freshly extracted copy, whose helper reports `AgentBridge 0.12.4`. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `fe8d3c413b0144a25831c903f6b62ce2f2c5bee912289a1302d00aff05e9bffe`. The signed App itself has not been launched or clicked through. The translation fixes were checked in an unsigned development build; the Skills and MCP confirmation dialogs and the error alert were not checked in the running App.
