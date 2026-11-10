@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0 — 2026-11-10
+
+### Added
+
+- Project Conversations save each user-authored cross-provider handoff as a bounded, redacted Markdown history for the same canonical repository and pinned commit, then switch to or create a session for a target provider account that allows shared memory. Managed AgentBridge App and CLI chats load the latest entry only under bound-account memory consent; the suggested prompt fills only a blank App composer and is never sent automatically. Users can reveal the saved file or copy the latest entry for manual paste into native TUI. Native CLI TUI transcripts are not read. Clearing shared memory for a commit also clears its same-commit Markdown history; changing the workspace data root migrates the handoff files safely.
+
+### Improved
+
+- The brighter, higher-contrast terminal palette improves readability in both embedded and detached terminals.
+
 ## 0.12.6 — 2026-11-09
 
 - Release record: build 20 was signed with Developer ID Application (hardened runtime), accepted by Apple notarization (submission `053f88da-e5da-41a3-bddd-c2dcfe3b3f65`), stapled, and passed signature, Gatekeeper and ticket checks on the freshly extracted app. The app launched on arm64 and under Rosetta on x86_64 with build output moved aside. Delivery ZIP `build/AgentBridge-notarized.zip` has SHA-256 `2b960e19f4edb6855faa973da0f0499901e5d8f026b95ed34271358091b2db25`. The app was not manually clicked through and has not been run on an Intel Mac.

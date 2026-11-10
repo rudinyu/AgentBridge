@@ -51,6 +51,13 @@ final class AppModel {
     var memoryHandoffTargetSessionID: UUID?
     var selectedMemoryTurnIDs = Set<UUID>()
     var includeMemoryNotes = false
+    var continuationTargetProvider: AgentProvider = .codex
+    var continuationDoneSummary = ""
+    var continuationNextStep = ""
+    var continuationSuggestedPrompt = ""
+    var isReviewingProviderHandoffPrompt = false
+    var providerHandoffDocument: ProjectHandoffMarkdownDocument?
+    var providerHandoffScopeIdentifier: String?
     var apiBudget = ""
     var apiKey = ""
     var confirmAPIRun = false
@@ -65,6 +72,7 @@ final class AppModel {
     var memoryNotes = ""
     var confirmClearMemory = false
     var isSwitchingTarget = false
+    var isSavingProviderHandoff = false
 
     private(set) var service: BridgeService?
     @ObservationIgnored private(set) var refreshGeneration = 0
@@ -390,6 +398,7 @@ final class AppModel {
             if memorySnapshot?.scope.key != session.memory.scope.key { memoryNotes = session.memory.notes }
             memorySnapshot = session.memory
             projectMemoryHandoffs = session.handoffs
+            loadProviderHandoffMarkdown(for: sessionID)
             refreshChangeDiffIfNeeded(for: sessionID)
         case .failure(let error):
             errorMessage = error.localizedDescription
@@ -401,6 +410,8 @@ final class AppModel {
             events = []
             memorySnapshot = nil
             memoryNotes = ""
+            providerHandoffDocument = nil
+            providerHandoffScopeIdentifier = nil
             return
         }
         do {
@@ -410,9 +421,33 @@ final class AppModel {
             if memorySnapshot?.scope.key != snapshot.scope.key { memoryNotes = snapshot.notes }
             memorySnapshot = snapshot
             projectMemoryHandoffs = try service.projectMemoryHandoffs(sessionID: selectedSessionID)
+            loadProviderHandoffMarkdown(for: selectedSessionID)
             taskRecords = try service.taskRecords()
             refreshChangeDiffIfNeeded(for: selectedSessionID)
         } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadProviderHandoffMarkdown(for sessionID: UUID) {
+        guard let service, let session = sessions.first(where: { $0.id == sessionID }) else {
+            providerHandoffDocument = nil
+            providerHandoffScopeIdentifier = nil
+            return
+        }
+        do {
+            let document = try service.projectHandoffMarkdown(sessionID: sessionID)
+            guard selectedSessionID == sessionID else { return }
+            providerHandoffDocument = document
+            providerHandoffScopeIdentifier = document == nil
+                ? nil
+                : try Self.makeProviderHandoffScopeIdentifier(
+                    repositoryPath: session.sourceRepositoryPath,
+                    commit: session.snapshotCommit
+                )
+        } catch {
+            providerHandoffDocument = nil
+            providerHandoffScopeIdentifier = nil
             errorMessage = error.localizedDescription
         }
     }
@@ -452,12 +487,20 @@ final class AppModel {
         }
     }
 
-    func selectDefaultProvider(_ provider: AgentProvider) {
+    func selectDefaultProvider(
+        _ provider: AgentProvider,
+        onSessionSwitch: (@MainActor (Result<SessionRecord, Error>) -> Void)? = nil
+    ) {
         guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
             errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
-        guard settings.defaultProvider != provider else { return }
+        if settings.defaultProvider == provider {
+            if let anchor = selectedSession, let onSessionSwitch {
+                selectOrCreateSession(for: provider, anchoredTo: anchor, onCompletion: onSessionSwitch)
+            }
+            return
+        }
         guard let service else { return }
         let previous = settings
         settings.defaultProvider = provider
@@ -476,10 +519,13 @@ final class AppModel {
                 : "The default assistant for new sessions was saved."
             usage.loadedUsageControlsScopeKey = nil
             refresh(forceUsageStatistics: true)
-            if let anchor = selectedSession { selectOrCreateSession(for: provider, anchoredTo: anchor) }
+            if let anchor = selectedSession {
+                selectOrCreateSession(for: provider, anchoredTo: anchor, onCompletion: onSessionSwitch)
+            }
         } catch {
             settings = previous
             errorMessage = error.localizedDescription
+            onSessionSwitch?(.failure(error))
         }
     }
 
@@ -903,6 +949,7 @@ final class AppModel {
                 outputText = output.text
                 status = "Response finished."
                 prompt = ""
+                isReviewingProviderHandoffPrompt = false
             } catch {
                 errorMessage = error.localizedDescription
                 status = "Run ended."
@@ -1042,6 +1089,196 @@ final class AppModel {
         } catch { errorMessage = error.localizedDescription }
     }
 
+    func selectProviderHandoffTargetAccount(_ profileID: UUID) {
+        guard !isSavingProviderHandoff, !isSwitchingTarget else { return }
+        guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
+            errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
+            return
+        }
+        guard let service else { return }
+        let provider = selectedProviderHandoffTarget
+        guard accountProfiles[provider]?.contains(where: { $0.id == profileID }) == true else {
+            errorMessage = localized("The selected target account could not be found.")
+            return
+        }
+        do {
+            try service.selectAccountProfile(id: profileID, provider: provider)
+            selectedProfileIDs[provider] = profileID
+            accountProfiles[provider] = try service.accountProfiles(provider: provider)
+            authStatus.removeValue(forKey: profileID)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func setProviderHandoffTargetMemorySharing(_ allowed: Bool) {
+        guard !isSavingProviderHandoff, !isSwitchingTarget else { return }
+        guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
+            errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
+            return
+        }
+        guard let service, let profile = selectedProviderHandoffTargetProfile else { return }
+        do {
+            try service.setAccountSharedMemoryAllowed(id: profile.id, allowed: allowed)
+            accountProfiles[selectedProviderHandoffTarget] = try service.accountProfiles(provider: selectedProviderHandoffTarget)
+            status = localized(allowed
+                ? "This account can now load and save shared project memory."
+                : "This account will not load or save shared project memory.")
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func saveProviderHandoffAndSwitch() {
+        guard !isSavingProviderHandoff, !isSwitchingTarget else { return }
+        guard let service, let source = selectedSession else {
+            errorMessage = localized("Select a project conversation before creating a handoff.")
+            return
+        }
+        guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
+            errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
+            return
+        }
+        guard !terminal.terminalRunning, terminal.terminalLaunch == nil else {
+            errorMessage = localized("Close the active provider terminal before saving a handoff and switching sessions.")
+            return
+        }
+        guard activeRunFlags[source.id] == nil else {
+            errorMessage = localized("Wait for the current provider run to finish before saving a handoff.")
+            return
+        }
+
+        let targetProvider = selectedProviderHandoffTarget
+        guard targetProvider != source.provider else {
+            errorMessage = localized("Choose a different provider for the handoff target.")
+            return
+        }
+        let done = continuationDoneSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = continuationNextStep.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suggestedPrompt = continuationSuggestedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !done.isEmpty, !next.isEmpty, !suggestedPrompt.isEmpty else {
+            errorMessage = localized("Fill in what is done, what to do next, and the suggested next prompt.")
+            return
+        }
+
+        isSavingProviderHandoff = true
+        defer { isSavingProviderHandoff = false }
+        errorMessage = nil
+
+        do {
+            let targetProfileID = selectedProfileIDs[targetProvider] ?? AccountProfile.defaultID(for: targetProvider)
+            guard let targetProfile = try service.accountProfiles(provider: targetProvider)
+                .first(where: { $0.id == targetProfileID }) else {
+                errorMessage = localized("The selected target account could not be found.")
+                return
+            }
+            guard targetProfile.allowsSharedMemory else {
+                errorMessage = localized("The target account must allow shared project memory before switching.")
+                return
+            }
+
+            let repository = try ProjectMemoryRepositoryScope(repositoryPath: source.sourceRepositoryPath)
+            let handoffScopeIdentifier = try Self.makeProviderHandoffScopeIdentifier(
+                repositoryPath: repository.repositoryPath,
+                commit: source.snapshotCommit
+            )
+            let snapshot = try service.sharedMemory(sessionID: source.id)
+            guard snapshot.scope.repositoryPath == repository.repositoryPath,
+                  snapshot.scope.snapshotCommit.lowercased() == source.snapshotCommit.lowercased() else {
+                errorMessage = localized("The project memory no longer matches this conversation’s repository and pinned commit.")
+                return
+            }
+
+            let targetAccountName = displayName(of: targetProfile)
+            try service.selectAccountProfile(id: targetProfile.id, provider: targetProvider)
+            selectedProfileIDs[targetProvider] = targetProfile.id
+            accountProfiles[targetProvider] = try service.accountProfiles(provider: targetProvider)
+            let document = try service.saveProjectHandoffMarkdown(
+                sourceSessionID: source.id,
+                targetProvider: targetProvider,
+                targetProfileID: targetProfile.id,
+                done: done,
+                nextStep: next,
+                suggestedPrompt: suggestedPrompt
+            )
+            providerHandoffDocument = document
+            providerHandoffScopeIdentifier = handoffScopeIdentifier
+            status = localized("Handoff saved. Switching to the selected provider and account…")
+            selectDefaultProvider(targetProvider) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success(let targetSession):
+                    if targetSession.policy.accessMode == .readOnly || targetSession.provider == .local {
+                        if self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            self.prompt = document.suggestedPrompt
+                            self.isReviewingProviderHandoffPrompt = true
+                        }
+                    }
+                    self.status = self.localizedFormat(
+                        "Handoff saved and switched to %@ / %@ at commit %@.",
+                        self.localized(targetProvider.rawValue.capitalized),
+                        targetAccountName,
+                        String(source.snapshotCommit.prefix(12))
+                    )
+                case .failure:
+                    self.status = self.localized("Handoff was saved, but the target session could not be switched. The Markdown handoff remains available for this repository and commit.")
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            status = localized("Could not save the provider handoff.")
+        }
+    }
+
+    func copyProviderHandoffPrompt() {
+        guard canCopyProviderHandoffForCurrentSession,
+              let suggestedPrompt = providerHandoffDocument?.suggestedPrompt else {
+            errorMessage = localized("Save a handoff for this repository and commit before copying its suggested prompt.")
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(suggestedPrompt, forType: .string)
+        status = localized("Suggested next prompt copied. Review it before sending to the selected assistant.")
+    }
+
+    var canCopyProviderHandoffForCurrentSession: Bool {
+        guard let providerHandoffDocument,
+              !providerHandoffDocument.latestEntry.isEmpty,
+              let providerHandoffScopeIdentifier,
+              let session = selectedSession,
+              let currentScopeIdentifier = try? Self.makeProviderHandoffScopeIdentifier(
+                repositoryPath: session.sourceRepositoryPath,
+                commit: session.snapshotCommit
+              ) else { return false }
+        return providerHandoffScopeIdentifier == currentScopeIdentifier
+    }
+
+    func copyProviderHandoffForTerminal() {
+        guard canCopyProviderHandoffForCurrentSession,
+              let document = providerHandoffDocument else {
+            errorMessage = localized("Save a handoff for this repository and commit before copying it for the terminal.")
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(document.latestEntry, forType: .string)
+        status = localized("Complete handoff copied. Paste it manually into the terminal and review it; nothing is sent automatically.")
+    }
+
+    func revealProviderHandoffFile() {
+        guard canCopyProviderHandoffForCurrentSession,
+              let fileURL = providerHandoffDocument?.fileURL else {
+            errorMessage = localized("No saved handoff file is available for this repository and commit.")
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+        status = localized("Revealed the saved handoff history in Finder.")
+    }
+
+    private static func makeProviderHandoffScopeIdentifier(repositoryPath: String, commit: String) throws -> String {
+        let repository = try ProjectMemoryRepositoryScope(repositoryPath: repositoryPath)
+        return repository.key + ":" + commit.lowercased()
+    }
+
     var memoryHandoffTargets: [SessionRecord] {
         guard let source = selectedSession else { return [] }
         return sessions.filter { candidate in
@@ -1058,6 +1295,28 @@ final class AppModel {
         let boundProfileID = target.accountProfileID ?? AccountProfile.defaultID(for: target.provider)
         return selectedProfileIDs[target.provider] == boundProfileID
             && (accountProfiles[target.provider]?.first(where: { $0.id == boundProfileID })?.allowsSharedMemory ?? false)
+    }
+
+    var providerHandoffTargetOptions: [AgentProvider] {
+        guard let source = selectedSession else { return [] }
+        return AgentProvider.allCases.filter { $0 != source.provider }
+    }
+
+    var selectedProviderHandoffTarget: AgentProvider {
+        if providerHandoffTargetOptions.contains(continuationTargetProvider) {
+            return continuationTargetProvider
+        }
+        return providerHandoffTargetOptions.first ?? .codex
+    }
+
+    var selectedProviderHandoffTargetProfile: AccountProfile? {
+        let provider = selectedProviderHandoffTarget
+        let profileID = selectedProfileIDs[provider] ?? AccountProfile.defaultID(for: provider)
+        return accountProfiles[provider]?.first(where: { $0.id == profileID })
+    }
+
+    var selectedProviderHandoffTargetAllowsMemory: Bool {
+        selectedProviderHandoffTargetProfile?.allowsSharedMemory == true
     }
 
     var selectedAutonomousRun: AutonomousRunRecord? {
@@ -1171,7 +1430,11 @@ final class AppModel {
         }
     }
 
-    func selectOrCreateSession(for provider: AgentProvider, anchoredTo anchor: SessionRecord) {
+    func selectOrCreateSession(
+        for provider: AgentProvider,
+        anchoredTo anchor: SessionRecord,
+        onCompletion: (@MainActor (Result<SessionRecord, Error>) -> Void)? = nil
+    ) {
         guard isProjectConversationActive else { return }
         guard let profileID = selectedProfileIDs[provider], let service else { return }
         let access: AccessMode
@@ -1193,6 +1456,7 @@ final class AppModel {
             selectedSessionID = match.id
             repositoryPath = match.sourceRepositoryPath
             status = "Switched to the same-project \(provider.rawValue.capitalized) session; shared memory is unchanged."
+            onCompletion?(.success(match))
             return
         }
         repositoryPath = anchor.sourceRepositoryPath
@@ -1214,9 +1478,11 @@ final class AppModel {
                 status = session.snapshotCommit == anchor.snapshotCommit
                     ? "Session switched. Accounts that consented can load shared memory for the same commit."
                     : "A new session was created for the current commit. A different commit uses separate shared memory."
+                onCompletion?(.success(session))
             } catch {
                 errorMessage = error.localizedDescription
                 status = "Could not switch sessions."
+                onCompletion?(.failure(error))
             }
         }
     }
@@ -1304,13 +1570,25 @@ final class AppModel {
 
     func clearSharedMemory() {
         guard let service, let session = selectedSession else { return }
+        let savedHandoffPrompt = providerHandoffDocument?.suggestedPrompt
         do {
             try service.clearSharedMemory(sessionID: session.id)
             memorySnapshot = try service.sharedMemory(sessionID: session.id)
             memoryNotes = memorySnapshot?.notes ?? ""
+            providerHandoffDocument = nil
+            providerHandoffScopeIdentifier = nil
+            if !prompt.isEmpty, prompt == savedHandoffPrompt {
+                prompt = ""
+                isReviewingProviderHandoffPrompt = false
+            }
             confirmClearMemory = false
-            status = "Shared memory for this project and commit was cleared."
+            status = "Shared memory and saved handoff for this project and commit were cleared."
         } catch {
+            loadProviderHandoffMarkdown(for: session.id)
+            if providerHandoffDocument == nil, !prompt.isEmpty, prompt == savedHandoffPrompt {
+                prompt = ""
+                isReviewingProviderHandoffPrompt = false
+            }
             errorMessage = error.localizedDescription
         }
     }

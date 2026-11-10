@@ -68,11 +68,11 @@ struct MainWindowView: View {
         } message: {
             Text(model.localized(model.errorMessage ?? ""))
         }
-        .alert(model.localized("Clear shared memory for this project?"), isPresented: $model.confirmClearMemory) {
-            Button(model.localized("Clear Memory"), role: .destructive) { model.clearSharedMemory() }
+        .alert(model.localized("Clear shared memory and same-commit handoff for this project?"), isPresented: $model.confirmClearMemory) {
+            Button(model.localized("Clear Memory and Handoff"), role: .destructive) { model.clearSharedMemory() }
             Button(model.localized("Cancel"), role: .cancel) { model.confirmClearMemory = false }
         } message: {
-            Text(model.localized("This deletes chat memory and notes for this source repository and pinned commit. Native provider sessions will not be changed."))
+            Text(model.localized("This clears chat turns, notes, and the saved same-commit provider handoff Markdown for this canonical repository and pinned commit. It does not change provider sessions or separate cross-commit handoff records."))
         }
         .fileImporter(
             isPresented: Bindable(model.extensions).isImportingExtensionDescriptor,

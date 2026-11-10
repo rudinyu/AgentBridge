@@ -96,7 +96,7 @@ extension MainWindowView {
                 }
                 DisclosureGroup("Memory Notes and Terminal Handoff") {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("AgentBridge automatically saves successfully completed turns from app chats. TUI content in the embedded terminal is not imported; write key points here when handing work to another assistant.")
+                        Text("AgentBridge automatically saves successfully completed turns from app chats. TUI content in the embedded terminal is not imported. Use these notes for general shared context; use Continue in another provider to save a cross-provider handoff.")
                             .font(.caption).foregroundStyle(.secondary)
                         TextEditor(text: $model.memoryNotes)
                             .font(.system(.caption, design: .monospaced))
@@ -105,6 +105,93 @@ extension MainWindowView {
                             Button("Save Notes") { model.saveMemoryNotes() }
                             Button("Clear Memory for This Commit…", role: .destructive) { model.confirmClearMemory = true }
                             Spacer()
+                        }
+                    }
+                    .padding(.top, 5)
+                }
+                DisclosureGroup("Continue in another provider") {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Write the handoff yourself. AgentBridge does not read native CLI TUI transcripts. It saves a separate redacted Markdown history for this canonical repository and pinned commit. Managed AgentBridge App and CLI chats load the latest entry only when the bound account allows shared memory; native Codex and Claude TUI require manual copy and paste. The target account must allow shared project memory.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Picker("Target provider", selection: Binding(
+                                get: { model.selectedProviderHandoffTarget },
+                                set: { model.continuationTargetProvider = $0 }
+                            )) {
+                                ForEach(model.providerHandoffTargetOptions, id: \.self) { provider in
+                                    Text(model.localized(provider.rawValue.capitalized)).tag(provider)
+                                }
+                            }
+                            Picker("Target account", selection: Binding<UUID?>(
+                                get: { model.selectedProviderHandoffTargetProfile?.id },
+                                set: { if let profileID = $0 { model.selectProviderHandoffTargetAccount(profileID) } }
+                            )) {
+                                Text("Choose an account").tag(UUID?.none)
+                                ForEach(model.accountProfiles[model.selectedProviderHandoffTarget] ?? []) { profile in
+                                    Text(model.displayName(of: profile)).tag(Optional(profile.id))
+                                }
+                            }
+                        }
+                        if let profile = model.selectedProviderHandoffTargetProfile {
+                            Toggle("Allow this target account to load and save shared project memory", isOn: Binding(
+                                get: { profile.allowsSharedMemory },
+                                set: { model.setProviderHandoffTargetMemorySharing($0) }
+                            ))
+                            .font(.caption2)
+                            .disabled(model.isSavingProviderHandoff || model.isSwitchingTarget)
+                            if !profile.allowsSharedMemory {
+                                Label("Enable shared project memory for this target account to continue.", systemImage: "lock.fill")
+                                    .font(.caption2).foregroundStyle(.orange)
+                            }
+                        } else if model.selectedProviderHandoffTargetProfile == nil {
+                            Label("No target account is available for this provider.", systemImage: "exclamationmark.triangle")
+                                .font(.caption2).foregroundStyle(.orange)
+                        }
+                        if model.terminal.terminalRunning || model.terminal.terminalLaunch != nil {
+                            Label("Close the active provider terminal before saving a handoff and switching sessions.", systemImage: "exclamationmark.triangle")
+                                .font(.caption2).foregroundStyle(.orange)
+                        }
+                        if model.canCopyProviderHandoffForCurrentSession,
+                           let document = model.providerHandoffDocument {
+                            HStack(spacing: 8) {
+                                Text(document.fileURL.path)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .help(document.fileURL.path)
+                                Button("Reveal saved handoff in Finder") { model.revealProviderHandoffFile() }
+                            }
+                        }
+                        Text("What is done?").font(.caption.weight(.semibold))
+                        TextEditor(text: $model.continuationDoneSummary)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(minHeight: 42, maxHeight: 72)
+                        Text("What should happen next?").font(.caption.weight(.semibold))
+                        TextEditor(text: $model.continuationNextStep)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(minHeight: 42, maxHeight: 72)
+                        Text("Suggested next prompt · paste and review it yourself; it will not be read from the TUI or sent automatically.")
+                            .font(.caption.weight(.semibold))
+                        TextEditor(text: $model.continuationSuggestedPrompt)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(minHeight: 64, maxHeight: 120)
+                        HStack {
+                            Button("Save handoff and switch") { model.saveProviderHandoffAndSwitch() }
+                                .disabled(model.selectedProviderHandoffTargetProfile == nil
+                                    || !model.selectedProviderHandoffTargetAllowsMemory
+                                    || model.terminal.terminalRunning
+                                    || model.terminal.terminalLaunch != nil
+                                    || model.selectedSessionIsRunning
+                                    || model.continuationDoneSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    || model.continuationNextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    || model.continuationSuggestedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    || model.isSavingProviderHandoff
+                                    || model.isSwitchingTarget)
+                            Button("Copy saved suggested next prompt") { model.copyProviderHandoffPrompt() }
+                                .disabled(!model.canCopyProviderHandoffForCurrentSession)
+                            Button("Copy complete handoff for terminal") { model.copyProviderHandoffForTerminal() }
+                                .disabled(!model.canCopyProviderHandoffForCurrentSession)
                         }
                     }
                     .padding(.top, 5)
@@ -351,7 +438,15 @@ extension MainWindowView {
                     .font(.caption2).foregroundStyle(.orange)
             }
             HStack(alignment: .bottom, spacing: 10) {
-                TextEditor(text: $model.prompt)
+                TextEditor(text: Binding(
+                    get: { model.prompt },
+                    set: {
+                        model.prompt = $0
+                        if model.isReviewingProviderHandoffPrompt {
+                            model.isReviewingProviderHandoffPrompt = false
+                        }
+                    }
+                ))
                     .font(.system(.body, design: .rounded))
                     .frame(minHeight: 78, maxHeight: 118)
                     .padding(5)
@@ -373,6 +468,10 @@ extension MainWindowView {
                         .disabled(!model.canStartAnotherRun || model.isSwitchingTarget || isLoadingContextPreview || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.settings.usageMode == .api && session.provider != .local && (!model.isClaudeAPIRunContext || model.usage.budgetSnapshot == nil)) || (model.isClaudeAPIRunContext && model.usage.usageControls.disableFutureAPI) || (session.provider == .local && model.localModelSettingsAreDirty))
                     if model.selectedSessionIsRunning { Button("Cancel") { model.cancelRun() } }
                 }
+            }
+            if model.isReviewingProviderHandoffPrompt {
+                Label("This handoff prompt is untrusted historical context. Review and edit it before sending.", systemImage: "exclamationmark.triangle")
+                    .font(.caption2).foregroundStyle(.orange)
             }
             Text(model.localized(session.provider == .local
                 ? "Prompts and responses are stored in shared memory only after a successful turn. Context compression preserves recent turns and the exact current request."

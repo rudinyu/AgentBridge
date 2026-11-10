@@ -113,12 +113,20 @@ public struct SharedMemoryContext: Sendable {
     public let prompt: String
     public let revision: Int
     public let includedTurnCount: Int
+    public let includedProjectHandoffCount: Int
     public let wasTruncated: Bool
 
-    public init(prompt: String, revision: Int, includedTurnCount: Int, wasTruncated: Bool) {
+    public init(
+        prompt: String,
+        revision: Int,
+        includedTurnCount: Int,
+        includedProjectHandoffCount: Int = 0,
+        wasTruncated: Bool
+    ) {
         self.prompt = prompt
         self.revision = revision
         self.includedTurnCount = includedTurnCount
+        self.includedProjectHandoffCount = includedProjectHandoffCount
         self.wasTruncated = wasTruncated
     }
 }
@@ -396,6 +404,7 @@ public final class SharedMemoryStore: @unchecked Sendable {
             prompt: prompt,
             revision: stored.revision,
             includedTurnCount: envelope.turns.count,
+            includedProjectHandoffCount: 0,
             wasTruncated: envelopeWasTruncated
         )
     }

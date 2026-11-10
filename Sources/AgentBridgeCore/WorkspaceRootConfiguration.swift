@@ -253,7 +253,7 @@ public enum WorkspaceRootCoordinator {
     /// Folders AgentBridge manages inside a data root, including the
     /// legacy extension folders that may remain in earlier roots.
     private static let managedStorageNames = [
-        "workspaces", "shared-memory", "discussions", "task-board", "extension-policy", "extension-runtime"
+        "workspaces", "shared-memory", "handoffs", "discussions", "task-board", "extension-policy", "extension-runtime"
     ]
 
     public static func validateConfiguredRoot(_ rootURL: URL, privateRootURL: URL) throws -> URL {
@@ -322,7 +322,7 @@ public enum WorkspaceRootCoordinator {
             }
         }
         guard !isInsideManagedStorage else {
-            throw AgentBridgeError.invalidInput("The workspace data root cannot be inside AgentBridge-managed workspace, shared-memory, discussion or task-board folders.")
+            throw AgentBridgeError.invalidInput("The workspace data root cannot be inside AgentBridge-managed workspace, shared-memory, handoff, discussion or task-board folders.")
         }
         var canonicalMetadata = stat()
         guard lstat(canonical.path, &canonicalMetadata) == 0,

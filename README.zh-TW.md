@@ -4,7 +4,7 @@
 
 ![AgentBridge macOS app icon](Assets/AppIcon-1024.png)
 
-AgentBridge 0.12.6 是一個 macOS 14+ Swift 專案，提供共用核心、命令列工具 `agentbridge`，以及原生 SwiftUI App。它透過本機官方 Codex CLI 與 Claude Code CLI 工作；App 與 CLI 的唯讀聊天可依專案與固定提交版本共用記憶，也可由使用者明確選取記憶延續到另一個提交版本。首次使用時，設定精靈會引導語言、供應商、工作區資料夾、CLI 路徑、訂閱登入、共用記憶與本機用量設定；日後可從 App 標題列的「設定精靈」重新開啟。CLI 會使用相同的已保存工作區根目錄。App 預設使用英文，也支援繁體中文。
+AgentBridge 0.13.0 是一個 macOS 14+ Swift 專案，提供共用核心、命令列工具 `agentbridge`，以及原生 SwiftUI App。它透過本機官方 Codex CLI 與 Claude Code CLI 工作；App 與 CLI 的唯讀聊天可依專案與固定提交版本共用記憶。「專案對話」也可儲存明確撰寫的同提交跨供應商交接，記錄已完成工作、下一步與建議提示詞，再切換至允許共用記憶的目標帳戶。使用者也可另外選取記憶延續到不同提交版本。首次使用時，設定精靈會引導語言、供應商、工作區資料夾、CLI 路徑、訂閱登入、共用記憶與本機用量設定；日後可從 App 標題列的「設定精靈」重新開啟。CLI 會使用相同的已保存工作區根目錄。App 預設使用英文，也支援繁體中文。
 
 AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登入；Claude API 是可選的付費模式，必須逐次輸入 API key、單次預算並明確確認。每月 US$140 是 AgentBridge 本機帳本上限，不是 Anthropic 帳單的硬性限制。
 
@@ -29,11 +29,11 @@ AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh --app-name AgentBridge-0.12.6-dev.app
-open build/AgentBridge-0.12.6-dev.app
+./scripts/package-app.sh --app-name AgentBridge-0.13.0-dev.app
+open build/AgentBridge-0.13.0-dev.app
 ```
 
-`.codex/ci.sh` 建置 CLI/App 並執行核心測試；上列封裝命令會將 icon 打入未簽署的本機 `build/AgentBridge-0.12.6-dev.app`。省略 `--app-name` 時，預設輸出仍為 `build/AgentBridge.app`。發行時需使用 Developer ID 簽署、送交 Apple 公證、staple ticket 並驗證；步驟見[使用指南](docs/HOW_TO_USE.zh-TW.md)。建置與檢查不需要登入 provider、不會呼叫模型，也不會產生 Claude API 費用。CLI 位於 `build/swiftpm/debug/agentbridge`。
+`.codex/ci.sh` 建置 CLI/App 並執行核心測試；上列封裝命令會將 icon 打入未簽署的本機 `build/AgentBridge-0.13.0-dev.app`。省略 `--app-name` 時，預設輸出仍為 `build/AgentBridge.app`。發行時需使用 Developer ID 簽署、送交 Apple 公證、staple ticket 並驗證；步驟見[使用指南](docs/HOW_TO_USE.zh-TW.md)。建置與檢查不需要登入 provider、不會呼叫模型，也不會產生 Claude API 費用。CLI 位於 `build/swiftpm/debug/agentbridge`。
 
 ### 預設安全邊界
 
@@ -41,7 +41,7 @@ open build/AgentBridge-0.12.6-dev.app
 - 可檢視完整逐檔 diff、還原個別檔案或匯出 patch。接受／套用成果前，必須先成功驗證目前完全相同的 diff。套用會先檢查來源 base commit，再於指定本機 branch 建立未提交工作樹；AgentBridge 不會自動 commit、push 或 merge。
 - 只有使用者明確啟動後才會驗證。預設使用 Repository 的 `.codex/ci.sh`；自訂 executable 與獨立 argv 必須先明確核准。變更過的 `.codex/ci.sh` 不會預設執行；請還原它，或以自訂命令核准。驗證在已檢視 diff 的拋棄式副本中執行，位於 macOS 沙箱內，無法存取家目錄但可使用網路，並顯示命令、退出代碼、耗時及遮蔽後輸出。
 - 活動時間軸與任務看板顯示排序後的遮蔽事件，以及各工作階段實際啟動的任務記錄。最多可同時執行三個不同工作階段；取消只針對指定工作階段。
-- Codex/Claude 可共用相同 Repository/commit 的 AgentBridge App/CLI 記憶。延續到不同提交版本時，必須明確選取 App 保存的回合與／或備註，並由允許記憶共享的綁定帳戶執行。原生 TUI transcript 不會匯入。
+- Codex/Claude 可共用相同 Repository/commit 的 AgentBridge App/CLI 記憶。在「專案對話」撰寫交接，交接會以已遮蔽敏感內容的 Markdown 歷史另存於所選資料根目錄；切換前目標帳戶必須允許共用記憶。受管理的 AgentBridge App 與 CLI 聊天只會在工作階段綁定帳戶允許共用記憶時，載入最新一筆作為不可信歷史脈絡；建議提示詞可填入空白 App 輸入框供檢查，絕不自動送出。原生 Codex/Claude TUI 不會自動收到交接，逐字稿也不會被讀取；可在 Finder 顯示檔案，或複製最新一筆再手動貼上檢查。延續到不同提交版本仍須明確選取 App 保存的回合與／或備註。
 - 自主流程先產生任務圖供檢視，再依摘要綁定的核准執行；帳戶明確綁定、最多三個並行 agent、有限次審查修正並支援取消。成果仍留在隔離工作區，由使用者接受與套用。自主模式只使用訂閱。
 - 舊版 Skills/MCP 描述資料仍是惰性中繼資料。實際 Skill 指令快照與本機 stdio MCP 設定，另須依專案、供應商和帳戶核准執行；MCP 代理強制限制精確工具清單。不自動安裝套件或執行 Skill 腳本。
 - Mac Control 透過綁定目標 App 的代理，分別要求觀察與控制同意，並提供停止控制。截圖包含整個主螢幕，可能傳給所選供應商。macOS 權限須由使用者手動授予；桌面控制是 Repository 存取之外的額外能力。

@@ -72,6 +72,12 @@ extension BridgeService {
         }
 
         try copySharedMemoryDocuments(to: store.sharedMemoryURL, from: memorySourceRoots)
+        if let destinationRoot = store.workspaceRootURL {
+            let handoffSourceRoots = memorySourceRoots.map { $0.standardizedFileURL.deletingLastPathComponent() }
+            for sourceRoot in Dictionary(grouping: handoffSourceRoots, by: \.path).compactMap({ $0.value.first }) {
+                try ProjectHandoffMarkdownStore.copyHistories(from: sourceRoot, to: destinationRoot)
+            }
+        }
         let discussionSourceRoots = memorySourceRoots.map {
             $0.standardizedFileURL.deletingLastPathComponent().appendingPathComponent("discussions", isDirectory: true)
         }

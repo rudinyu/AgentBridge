@@ -259,7 +259,7 @@ extension BridgeService {
                 try? store.appendEvent(AuditEvent(
                     sessionID: sessionID,
                     kind: "memory.loaded",
-                    message: "Loaded shared memory revision \(memoryContext.revision), with \(memoryContext.includedTurnCount) earlier turn(s)\(memoryContext.wasTruncated ? " (content truncated)" : "")."
+                    message: "Loaded shared memory revision \(memoryContext.revision), with \(memoryContext.includedTurnCount) earlier turn(s) and \(memoryContext.includedProjectHandoffCount) project handoff entry(s)\(memoryContext.wasTruncated ? " (content truncated)" : "")."
                 ))
             }
 
@@ -656,7 +656,7 @@ extension BridgeService {
                 try? store.appendEvent(AuditEvent(
                     sessionID: sessionID,
                     kind: "memory.loaded",
-                    message: "Loaded shared memory revision \(memoryContext.revision), with \(memoryContext.includedTurnCount) earlier turn(s)\(memoryContext.wasTruncated ? " (content truncated)" : "")."
+                    message: "Loaded shared memory revision \(memoryContext.revision), with \(memoryContext.includedTurnCount) earlier turn(s) and \(memoryContext.includedProjectHandoffCount) project handoff entry(s)\(memoryContext.wasTruncated ? " (content truncated)" : "")."
                 ))
             }
             let (processResult, parsedOutput) = try await adapter.runChanges(

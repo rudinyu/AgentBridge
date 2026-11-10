@@ -20,11 +20,11 @@
 ```sh
 cd /Users/rudin_yu/codexworkspace/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh --app-name AgentBridge-0.12.6-dev.app
-open build/AgentBridge-0.12.6-dev.app
+./scripts/package-app.sh --app-name AgentBridge-0.13.0-dev.app
+open build/AgentBridge-0.13.0-dev.app
 ```
 
-CI 腳本會建置 CLI、App 並執行核心測試；封裝腳本會建立未簽署的本機 App。上述步驟不登入 provider、不呼叫模型，也不產生 Claude API 費用。若已建置此開發版，只要重新開啟 `build/AgentBridge-0.12.6-dev.app` 即可。若要交付給其他 Mac，請完成本文最後的 Developer ID 簽署與 Apple 公證流程。
+CI 腳本會建置 CLI、App 並執行核心測試；封裝腳本會建立未簽署的本機 App。上述步驟不登入 provider、不呼叫模型，也不產生 Claude API 費用。若已建置此開發版，只要重新開啟 `build/AgentBridge-0.13.0-dev.app` 即可。若要交付給其他 Mac，請完成本文最後的 Developer ID 簽署與 Apple 公證流程。
 
 第一次開啟 App 時，請選擇或建立存放工作區資料的資料夾。AgentBridge 必須先有這項設定才會建立工作階段，不會暗中把資料夾放在 Application Support。App 和 CLI 共用已保存的位置。自選資料夾會包含隔離的工作階段工作區與共用記憶：
 
@@ -32,11 +32,12 @@ CI 腳本會建置 CLI、App 並執行核心測試；封裝腳本會建立未簽
 <你選擇的資料夾>/
   workspaces/<工作階段 ID>/   # 每個工作階段各自的隔離 Git 複本
   shared-memory/              # App/CLI 共用對話記憶
+  handoffs/<repo-key>/<commit>.md # 同提交版本接續交接歷史，內容會遮蔽敏感資料
 ```
 
 私有 App 資料仍保存在 `~/Library/Application Support/AgentBridge`，包含 App 設定、帳戶設定資料、各 provider CLI 專用的 profile 資料夾（CLI 會在其中保存該 profile 的登入資料）、工作階段和稽核記錄，以及用量／預算帳本。內建帳戶仍使用 provider CLI 原有的登入資料夾。日後若要在 App 變更資料夾，請在「專案」面板的「資料根目錄」旁按「變更…」。若要從 CLI 設定或變更位置，執行 `agentbridge workspace set /absolute/path/to/folder`；執行 `agentbridge workspace show` 可查看已保存的位置。尚未選擇資料夾時，CLI 會顯示這項可直接執行的設定命令。
 
-變更資料夾時，AgentBridge 會把既有工作區和共用記憶複製到新位置，再更新既有工作階段記錄以使用新副本。原本的資料夾和檔案會完整保留；新工作階段則使用新資料夾。若目的地已有不同內容的工作區或記憶檔，AgentBridge 會停止並回報衝突，不會覆寫任一副本。變更資料夾不會改變共用記憶的識別方式：記憶仍以來源 Repository 的 canonical 路徑及工作階段固定的提交版本作為範圍。
+變更資料夾時，AgentBridge 會把既有工作區、共用記憶與交接歷史複製到新位置，再更新既有工作階段記錄以使用新副本。原本的資料夾和檔案會完整保留；新工作階段則使用新資料夾。若目的地已有不同內容的工作區、記憶或交接檔，AgentBridge 會停止並回報衝突，不會覆寫任一副本。變更資料夾不會改變共用記憶的識別方式：記憶仍以來源 Repository 的 canonical 路徑及工作階段固定的提交版本作為範圍。
 
 App 沒有可用的工作區資料夾時會自動開啟設定精靈。精靈會依序引導語言和供應商、必要的資料資料夾、選用的 CLI 尋找或路徑選擇、登入檢查、帳戶記憶同意設定，以及本機用量設定。只有工作區資料夾是必填項目；CLI 尚未安裝或登入尚未確認時仍可略過，最後的檢查頁會清楚列出未完成項目。精靈不會安裝軟體、執行 provider 工作、傳送模型請求或設定 API 金鑰。儲存帳戶或預設設定時可能會準備本機工作階段。只有你明確按下登入或狀態檢查按鈕時，才會啟動官方 CLI。設定預設使用訂閱登入；若尚未完成就結束 App，下次啟動會接續設定。有可用資料夾的既有安裝不會自動跳出精靈；按標題列的「設定精靈」即可重新開啟。除非你明確儲存變更，重新開啟不會改動已儲存的供應商設定或既有記憶同意設定。
 
@@ -98,7 +99,9 @@ CLI=build/swiftpm/debug/agentbridge
 
 共用記憶存放在 `<你選擇的資料夾>/shared-memory/`，並以來源 Repository 的 canonical 路徑及固定提交作為範圍。記憶範圍不受隔離工作區複本存放位置影響。App 與 CLI 的唯讀聊天成功完成後，會在帳戶允許共享時加入記憶。從 Codex 切到 Claude，或從 Claude 切到 Codex，當兩個工作階段使用相同來源路徑和提交版本時，可共用同一份 App/CLI 對話和手動備註。新帳戶預設共享；可在帳戶設定中逐一關閉。
 
-「專案共用記憶」區塊可查看聊天回合，並在「記憶備註與終端機交接」中儲存要交給另一位助理的內容。成功完成的 App 或 CLI 唯讀聊天會自動加入記憶；原生 Codex/Claude TUI 的輸入和輸出不會被擷取。請自行把需要交接的重點記入備註。清除記憶會刪除該來源與固定提交的聊天記憶及備註，不會刪除 provider 自己的 session 資料。
+「專案共用記憶」區塊可查看聊天回合，並在「記憶備註與終端機交接」及獨立交接表單中儲存要交給另一位助理的內容。成功完成的 App 或 CLI 唯讀聊天會自動加入記憶；原生 Codex/Claude TUI 的輸入和輸出不會被擷取。請自行把需要交接的重點記入備註或交接表單。「清除此提交的記憶」會刪除該 canonical Repository 與固定提交版本的聊天回合、備註及同提交版本交接 Markdown；不同提交版本的明確交接記錄和 provider 自己的 session 資料不會變更。
+
+要在同一個提交版本切換 provider 前準備交接，請先關閉作用中的 App 供應商終端機，再展開「接續到其他供應商」。選擇目標供應商與帳戶；若尚未同意，請啟用「允許此目標帳戶載入與儲存專案共用記憶」，未同意前無法切換。填寫已完成工作、下一步，以及要交給下一位助理的完整建議提示詞。若建議內容來自原生 TUI，請自行貼上並確認；AgentBridge 不會讀取該畫面。App 會將已遮蔽敏感內容的 Markdown 交接另存於 `<你選擇的資料夾>/handoffs/<repository-key>/<固定提交版本>.md`，保留先前交接歷史，既有記憶備註則維持獨立。檔案會記錄來源／目標供應商、帳戶、Repository 與提交版本脈絡，再將目標設為預設供應商並選取或建立相同提交版本的工作階段。唯讀 App 對話只會在輸入框空白時填入建議提示詞，供你檢查與修改；不會自動送出。重新開啟相同儲存庫與提交版本的對話時，可在 Finder 顯示或複製既有交接，但不會自動填入輸入框。「複製已儲存的建議提示詞」會從最新交接複製已遮蔽敏感資料的提示詞；「複製完整交接至終端機」會複製最新一筆（最多 16 KiB），包含已完成摘要、下一步、建議提示詞及來源／目標供應商、帳戶、Repository 與提交版本脈絡，供手動貼上及檢查。受管理的 AgentBridge App 與 CLI 聊天只會在工作階段綁定帳戶允許共用記憶時，載入最新已保存交接作為不可信歷史脈絡。原生 Codex/Claude TUI 不會自動收到交接，輸入與輸出也不會被擷取；需要時請使用複製功能，再手動貼入終端機。若儲存後建立或切換工作階段失敗，Markdown 檔仍保留供此儲存庫與提交版本使用。
 
 ### 6. 使用原生互動終端
 

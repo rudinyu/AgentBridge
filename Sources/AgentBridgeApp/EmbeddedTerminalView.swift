@@ -31,6 +31,33 @@ struct TerminalLaunchSpec: Equatable, Sendable, Identifiable {
     }
 }
 
+/// A fixed dark terminal theme with readable default text and ANSI colors.
+/// The normal/bright color pairs keep their ANSI hue and ordering while the
+/// normal colors are lifted enough to remain legible on the terminal background.
+private enum EmbeddedTerminalAppearance {
+    static let foreground = NSColor(srgbRed: 0.95, green: 0.96, blue: 0.98, alpha: 1)
+    static let background = NSColor(srgbRed: 0.08, green: 0.09, blue: 0.12, alpha: 1)
+
+    static let ansiPalette: [SwiftTerm.Color] = [
+        SwiftTerm.Color(red8: 131, green8: 139, blue8: 152), // black / neutral
+        SwiftTerm.Color(red8: 255, green8: 119, blue8: 119), // red
+        SwiftTerm.Color(red8: 166, green8: 220, blue8: 118), // green
+        SwiftTerm.Color(red8: 245, green8: 208, blue8: 111), // yellow
+        SwiftTerm.Color(red8: 128, green8: 183, blue8: 255), // blue
+        SwiftTerm.Color(red8: 215, green8: 160, blue8: 255), // magenta
+        SwiftTerm.Color(red8: 113, green8: 217, blue8: 209), // cyan
+        SwiftTerm.Color(red8: 214, green8: 218, blue8: 226), // white
+        SwiftTerm.Color(red8: 163, green8: 171, blue8: 184), // bright black / neutral
+        SwiftTerm.Color(red8: 255, green8: 138, blue8: 145), // bright red
+        SwiftTerm.Color(red8: 182, green8: 232, blue8: 142), // bright green
+        SwiftTerm.Color(red8: 255, green8: 224, blue8: 138), // bright yellow
+        SwiftTerm.Color(red8: 156, green8: 199, blue8: 255), // bright blue
+        SwiftTerm.Color(red8: 228, green8: 180, blue8: 255), // bright magenta
+        SwiftTerm.Color(red8: 146, green8: 228, blue8: 220), // bright cyan
+        SwiftTerm.Color(red8: 255, green8: 255, blue8: 255)  // bright white
+    ]
+}
+
 /// A local ANSI/VT100 view. OSC 52 clipboard requests and terminal links are denied.
 private final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewDelegate, @preconcurrency LocalProcessDelegate {
     private var process: LocalProcess?
@@ -49,12 +76,20 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
 
     override init(frame: CGRect, font: NSFont? = nil, options: TerminalOptions) {
         super.init(frame: frame, font: font, options: options)
+        configureAppearance()
         configureProcess()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+        configureAppearance()
         configureProcess()
+    }
+
+    private func configureAppearance() {
+        nativeForegroundColor = EmbeddedTerminalAppearance.foreground
+        nativeBackgroundColor = EmbeddedTerminalAppearance.background
+        installColors(EmbeddedTerminalAppearance.ansiPalette)
     }
 
     private func configureProcess() {
@@ -474,7 +509,8 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
             termName: "xterm-256color",
             scrollback: 2_000,
             enableSixelReported: false,
-            kittyImageCacheLimitBytes: 0
+            kittyImageCacheLimitBytes: 0,
+            ansi256PaletteStrategy: .base16Lab
         )
         let terminal = AgentBridgeTerminalView(frame: .zero, options: options)
         terminalLaunchID = launch.id
