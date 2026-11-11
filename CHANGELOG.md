@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.0 — 2026-11-11
+
+### Added
+
+- Project Conversations provide quota-independent quick continuation: switch providers without calling the source model or API. Done, Next step and suggested prompt are optional; blank fields receive conservative fallback text generated locally, without reading native TUI transcripts or asking either model. The redacted handoff is saved as Markdown for the same canonical repository and pinned commit, then AgentBridge switches to or creates a target session whose account allows shared memory. Managed AgentBridge App and CLI chats load the latest entry only with bound-account consent; the suggested prompt can fill a blank App composer for review and is never sent automatically. Native Codex and Claude TUI require manual copy and paste. Uncommitted files are not transferred between source and target session workspaces.
+
 ## 0.13.0 — 2026-11-10
 
 ### Added

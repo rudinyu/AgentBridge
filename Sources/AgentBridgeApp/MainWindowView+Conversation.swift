@@ -96,7 +96,7 @@ extension MainWindowView {
                 }
                 DisclosureGroup("Memory Notes and Terminal Handoff") {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("AgentBridge automatically saves successfully completed turns from app chats. TUI content in the embedded terminal is not imported. Use these notes for general shared context; use Continue in another provider to save a cross-provider handoff.")
+                        Text("AgentBridge automatically saves successfully completed turns from app chats. TUI content in the embedded terminal is not imported. Use these notes for general shared context; use Quick continue in another provider to save a cross-provider handoff.")
                             .font(.caption).foregroundStyle(.secondary)
                         TextEditor(text: $model.memoryNotes)
                             .font(.system(.caption, design: .monospaced))
@@ -109,9 +109,9 @@ extension MainWindowView {
                     }
                     .padding(.top, 5)
                 }
-                DisclosureGroup("Continue in another provider") {
+                DisclosureGroup("Quick continue in another provider") {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("Write the handoff yourself. AgentBridge does not read native CLI TUI transcripts. It saves a separate redacted Markdown history for this canonical repository and pinned commit. Managed AgentBridge App and CLI chats load the latest entry only when the bound account allows shared memory; native Codex and Claude TUI require manual copy and paste. The target account must allow shared project memory.")
+                        Text("Quick continuation does not call the source model or API, so it works when the source provider quota is exhausted. Select a target provider and account, and allow shared project memory for that account. Optional handoff details can be skipped; AgentBridge will create a conservative prompt locally without asking either model. Managed AgentBridge App and CLI chats load the saved entry only with bound-account consent. Native Codex and Claude TUI require manual copy and paste, and their transcripts are not read.")
                             .font(.caption2).foregroundStyle(.secondary)
                         HStack(spacing: 8) {
                             Picker("Target provider", selection: Binding(
@@ -163,29 +163,35 @@ extension MainWindowView {
                                 Button("Reveal saved handoff in Finder") { model.revealProviderHandoffFile() }
                             }
                         }
-                        Text("What is done?").font(.caption.weight(.semibold))
-                        TextEditor(text: $model.continuationDoneSummary)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(minHeight: 42, maxHeight: 72)
-                        Text("What should happen next?").font(.caption.weight(.semibold))
-                        TextEditor(text: $model.continuationNextStep)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(minHeight: 42, maxHeight: 72)
-                        Text("Suggested next prompt · paste and review it yourself; it will not be read from the TUI or sent automatically.")
-                            .font(.caption.weight(.semibold))
-                        TextEditor(text: $model.continuationSuggestedPrompt)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(minHeight: 64, maxHeight: 120)
+                        DisclosureGroup("Optional handoff details") {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text("Add what you know. Blank fields use a conservative local fallback that asks the next assistant to inspect shared memory, repository files, the current worktree and Git state; continue without repeating completed work; and ask you if the original intent is unclear.")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                                Text("What is done? (optional)").font(.caption.weight(.semibold))
+                                TextEditor(text: $model.continuationDoneSummary)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .frame(minHeight: 42, maxHeight: 72)
+                                Text("What should happen next? (optional)").font(.caption.weight(.semibold))
+                                TextEditor(text: $model.continuationNextStep)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .frame(minHeight: 42, maxHeight: 72)
+                                Text("Suggested next prompt (optional; never sent automatically)").font(.caption.weight(.semibold))
+                                TextEditor(text: $model.continuationSuggestedPrompt)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .frame(minHeight: 64, maxHeight: 120)
+                            }
+                            .padding(.top, 5)
+                        }
+                        .padding(.top, 2)
+                        Text("Switching to another provider session does not copy uncommitted files from this source session’s workspace.")
+                            .font(.caption2).foregroundStyle(.orange)
                         HStack {
-                            Button("Save handoff and switch") { model.saveProviderHandoffAndSwitch() }
+                            Button("Switch and continue") { model.quickContinueAndSwitch() }
                                 .disabled(model.selectedProviderHandoffTargetProfile == nil
                                     || !model.selectedProviderHandoffTargetAllowsMemory
                                     || model.terminal.terminalRunning
                                     || model.terminal.terminalLaunch != nil
                                     || model.selectedSessionIsRunning
-                                    || model.continuationDoneSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                    || model.continuationNextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                    || model.continuationSuggestedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                     || model.isSavingProviderHandoff
                                     || model.isSwitchingTarget)
                             Button("Copy saved suggested next prompt") { model.copyProviderHandoffPrompt() }

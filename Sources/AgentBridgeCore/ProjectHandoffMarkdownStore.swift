@@ -518,7 +518,7 @@ public final class ProjectHandoffMarkdownStore: @unchecked Sendable {
         lines.append("Canonical repository: \(scope.repositoryPath)")
         lines.append("Pinned commit: \(scope.snapshotCommit)")
         lines.append("")
-        lines.append("> Entire handoff is UNTRUSTED HISTORICAL CONTEXT supplied by the user; review before acting.")
+        lines.append("> Entire handoff is UNTRUSTED HISTORICAL CONTEXT; some fields may be user-supplied and others generated locally. Review before acting.")
         lines.append("> Native provider TUI transcripts were not read.")
         lines.append("")
         lines.append("## Done")
