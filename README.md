@@ -27,7 +27,7 @@ Choose **Local** to connect to an existing Ollama or OpenAI-compatible loopback 
 Requirements: macOS 14 or later, Swift 6, and an Xcode toolchain. Install and sign in to the official provider CLI you intend to use; each CLI manages its own login. The app's embedded terminal uses the pinned SwiftTerm 1.20.0 dependency. See [LICENSES/SwiftTerm-LICENSE.txt](LICENSES/SwiftTerm-LICENSE.txt) for its license.
 
 ```sh
-cd /Users/rudin_yu/codexworkspace/AgentBridge
+cd /path/to/AgentBridge
 ./.codex/ci.sh
 ./scripts/package-app.sh --app-name AgentBridge-0.14.1-dev.app
 open build/AgentBridge-0.14.1-dev.app

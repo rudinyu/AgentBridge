@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The in-app terminal can no longer get stuck with a spinner, an empty panel and a locked close button (reported after reopening Local Terminal following `exit`). A process that fails to start now ends the launch with a clear message. If an earlier terminal process is still running, AgentBridge shows that terminal again instead of a new one that cannot start; it never stops that process for you. The terminal view is moved back into the panel when SwiftUI replaces the panel's container. The close button waits for Control-C only while a started process is really running, so a launch with no process can always be closed.
+
 ## 0.14.1 — 2026-11-11
 
 ### Fixed

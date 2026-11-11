@@ -18,7 +18,7 @@
 `Assets/AppIcon-1024.png` 是 App icon 原始圖；封裝時會產生 macOS `.icns` 並加入 App。
 
 ```sh
-cd /Users/rudin_yu/codexworkspace/AgentBridge
+cd /path/to/AgentBridge
 ./.codex/ci.sh
 ./scripts/package-app.sh --app-name AgentBridge-0.14.1-dev.app
 open build/AgentBridge-0.14.1-dev.app
@@ -252,7 +252,7 @@ CLI 亦支援 `agentbridge cancel SESSION_ID` 取消執行、`agentbridge budget
 `scripts/package-app.sh` 會重建未簽署的 Universal（Apple Silicon 與 Intel）開發 App。準備好發行版本並通過 `.codex/ci.sh` 後，使用共用 `macos-notarization-release` helper 進行正式簽署與公證。helper 從使用者層級設定讀取 Apple 公證認證（Keychain profile 或 App Store Connect API key），與 Claude API key 分開；不要把簽署憑證或 Apple `.p8` 私鑰放進 Repository。App 簽署身份必須是 Developer ID Application。App 內的 `agentbridge` helper 要先簽署，再簽外層 App。
 
 ```sh
-cd /Users/rudin_yu/codexworkspace/AgentBridge
+cd /path/to/AgentBridge
 TOOL="$HOME/.codex/skills/macos-notarization-release/scripts/macos_notarization.py"
 APP="$PWD/build/AgentBridge.app"
 # 替換成 Keychain 中 Developer ID Application 憑證顯示的完整身份名稱。

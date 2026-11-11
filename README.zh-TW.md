@@ -27,7 +27,7 @@ AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登
 需求：macOS 14 或更新版本、Swift 6 與 Xcode toolchain。請先安裝並登入想使用的官方 provider CLI；登入由各 CLI 管理。SwiftTerm 1.20.0 以固定版本作為 App 內嵌終端的依賴，授權見 [LICENSES/SwiftTerm-LICENSE.txt](LICENSES/SwiftTerm-LICENSE.txt)。
 
 ```sh
-cd /Users/rudin_yu/codexworkspace/AgentBridge
+cd /path/to/AgentBridge
 ./.codex/ci.sh
 ./scripts/package-app.sh --app-name AgentBridge-0.14.1-dev.app
 open build/AgentBridge-0.14.1-dev.app

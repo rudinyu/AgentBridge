@@ -16,7 +16,7 @@ Run these commands from the AgentBridge repository:
 `Assets/AppIcon-1024.png` is the source app icon. Packaging converts it to a macOS `.icns` and bundles it in the app.
 
 ```sh
-cd /Users/rudin_yu/codexworkspace/AgentBridge
+cd /path/to/AgentBridge
 ./.codex/ci.sh
 ./scripts/package-app.sh --app-name AgentBridge-0.14.1-dev.app
 open build/AgentBridge-0.14.1-dev.app
@@ -250,7 +250,7 @@ If you moved or renamed a repository, its shared memory stays under the old path
 `scripts/package-app.sh` rebuilds an unsigned Universal (Apple silicon and Intel) development app. After preparing a release and passing `.codex/ci.sh`, use the shared `macos-notarization-release` helper for signing and notarization. It reads Apple notarization authentication from user-level configuration (a Keychain profile or App Store Connect API key), separate from the Claude API key. Do not place signing credentials or Apple's `.p8` private key in the repository. The app identity must be a Developer ID Application certificate. Sign the embedded `agentbridge` helper before signing the outer app bundle.
 
 ```sh
-cd /Users/rudin_yu/codexworkspace/AgentBridge
+cd /path/to/AgentBridge
 TOOL="$HOME/.codex/skills/macos-notarization-release/scripts/macos_notarization.py"
 APP="$PWD/build/AgentBridge.app"
 # Replace with the full identity label of the Developer ID Application certificate in Keychain.

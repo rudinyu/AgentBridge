@@ -70,6 +70,7 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
     private var usageSnapshotSequence: UInt64 = 0
     private var pendingUsageScreenSnapshot: DispatchWorkItem?
     private var usageCaptureFirstRow: Int?
+    private var terminationReported = false
     var onTermination: (@MainActor (Int32?) -> Void)?
     var onUsageScreenSnapshot: (@MainActor (String, Date) -> Bool)?
     var allowsUsageScreenCapture = false
@@ -98,16 +99,23 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
         linkReporting = .none
     }
 
-    func start(_ launch: TerminalLaunchSpec) {
-        guard let process else { return }
+    /// Returns false when no process was created. SwiftTerm reports a failed
+    /// `forkpty` only by leaving `running` false, with no delegate callback.
+    @discardableResult
+    func start(_ launch: TerminalLaunchSpec) -> Bool {
+        guard let process else { return false }
         process.startProcess(
             executable: launch.executablePath,
             args: launch.arguments,
             environment: launch.environment.keys.sorted().map { "\($0)=\(launch.environment[$0] ?? "")" },
             currentDirectory: launch.workingDirectory
         )
+        // A child that exits at once has already reported its termination here,
+        // so it did start even though it is no longer running.
+        guard process.running || terminationReported else { return false }
         updatePseudoTerminalSize()
         window?.makeFirstResponder(self)
+        return true
     }
 
     // The terminal is what the user types into once it opens, so it takes the
@@ -281,6 +289,7 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        terminationReported = true
         disableUsageScreenCapture()
         guard let onTermination else { return }
         Task { @MainActor in onTermination(exitCode) }
@@ -349,9 +358,22 @@ struct EmbeddedTerminalView: NSViewRepresentable {
 final class TerminalWindowController: NSObject, NSWindowDelegate {
     private weak var terminalModel: TerminalModel?
     private weak var appModel: AppModel?
+    /// A SwiftUI container that may host the terminal, and the launch it was made for.
+    private struct EmbeddedContainer {
+        weak var view: NSView?
+        let launchID: UUID
+    }
+
     private var terminalView: AgentBridgeTerminalView?
-    private var terminalLaunchID: UUID?
-    private weak var embeddedContainer: NSView?
+    /// The launch `terminalView` runs; kept whole so a refused newer launch can
+    /// hand the model back the one that is still running.
+    private var terminalLaunch: TerminalLaunchSpec?
+    private var terminalLaunchID: UUID? { terminalLaunch?.id }
+    /// Every live container, oldest first. SwiftUI may make a new container before
+    /// it dismantles the old one, or the other way round, and does not call
+    /// `updateNSView` again on a container whose inputs did not change, so the
+    /// terminal is re-mounted from here when the container holding it goes away.
+    private var embeddedContainers: [EmbeddedContainer] = []
     private weak var mainWindow: NSWindow?
     private var detachedWindow: NSWindow?
     private var detachedWindowRoot: NSView?
@@ -359,6 +381,20 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
     private var lastUsageCommandRequest = 0
 
     var hasRunningProcess: Bool { terminalView?.processIsRunning == true }
+
+    /// The launch whose process is running, if any.
+    var runningLaunch: TerminalLaunchSpec? { hasRunningProcess ? terminalLaunch : nil }
+
+    func hasRunningProcess(for launchID: UUID) -> Bool {
+        terminalLaunchID == launchID && hasRunningProcess
+    }
+
+    /// The newest live container for the current launch, preferring one in a window.
+    private var embeddedContainer: NSView? {
+        guard let terminalLaunchID else { return nil }
+        let live = embeddedContainers.filter { $0.launchID == terminalLaunchID }.compactMap(\.view)
+        return live.last(where: { $0.window != nil }) ?? live.last
+    }
 
     func attach(terminalModel: TerminalModel, appModel: AppModel) {
         self.terminalModel = terminalModel
@@ -371,30 +407,28 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
         usageCommandRequest: Int,
         allowsUsageScreenCapture: Bool
     ) {
-        embeddedContainer = container
+        registerEmbeddedContainer(container, launchID: launch.id)
         if let window = container.window { mainWindow = window }
         guard let terminal = terminalView(for: launch) else { return }
         configure(terminal, usageCommandRequest: usageCommandRequest, allowsUsageScreenCapture: allowsUsageScreenCapture)
         guard terminalModel?.terminalIsDetached != true else { return }
-        guard terminal.superview !== container else { return }
-
-        detachTerminalFromCurrentParent()
-        container.addSubview(terminal)
-        terminal.translatesAutoresizingMaskIntoConstraints = false
-        terminalConstraints = [
-            terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            terminal.topAnchor.constraint(equalTo: container.topAnchor),
-            terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-        ]
-        NSLayoutConstraint.activate(terminalConstraints)
+        embed(terminal, in: container)
     }
 
     func embeddedContainerDidDismantle(_ container: NSView, launchID: UUID) {
-        guard terminalLaunchID == launchID else { return }
-        if embeddedContainer === container { embeddedContainer = nil }
-        guard terminalModel?.terminalIsDetached != true, terminalView?.superview === container else { return }
+        embeddedContainers.removeAll { $0.view == nil || $0.view === container }
+        guard terminalLaunchID == launchID,
+              terminalModel?.terminalIsDetached != true,
+              terminalView?.superview === container else { return }
         detachTerminalFromCurrentParent()
+        // Another container for this launch may already exist; it will not be
+        // updated again on its own, so move the terminal there now.
+        mountTerminalIntoEmbeddedContainerIfPossible()
+    }
+
+    private func registerEmbeddedContainer(_ container: NSView, launchID: UUID) {
+        embeddedContainers.removeAll { $0.view == nil || $0.view === container }
+        embeddedContainers.append(EmbeddedContainer(view: container, launchID: launchID))
     }
 
     func openWindow() {
@@ -483,8 +517,8 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
         terminalView?.onTermination = nil
         terminalView?.onUsageScreenSnapshot = nil
         terminalView = nil
-        terminalLaunchID = nil
-        embeddedContainer = nil
+        terminalLaunch = nil
+        embeddedContainers.removeAll { $0.view == nil || $0.launchID == launchID }
         terminalModel?.terminalIsDetached = false
         lastUsageCommandRequest = 0
     }
@@ -502,7 +536,15 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
 
     private func terminalView(for launch: TerminalLaunchSpec) -> AgentBridgeTerminalView? {
         if terminalLaunchID == launch.id { return terminalView }
-        guard !hasRunningProcess else { return nil }
+        if let runningLaunch {
+            // The earlier process is never killed implicitly. Tell the model after
+            // this SwiftUI update, so it shows that launch again instead of waiting
+            // on one that will never start.
+            DispatchQueue.main.async { [weak self] in
+                self?.terminalModel?.terminalLaunchWasRefused(launch.id, runningLaunch: runningLaunch)
+            }
+            return nil
+        }
         if let oldLaunchID = terminalLaunchID { discardTerminal(launchID: oldLaunchID) }
 
         let options = TerminalOptions(
@@ -513,7 +555,7 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
             ansi256PaletteStrategy: .base16Lab
         )
         let terminal = AgentBridgeTerminalView(frame: .zero, options: options)
-        terminalLaunchID = launch.id
+        terminalLaunch = launch
         terminalView = terminal
         lastUsageCommandRequest = 0
         terminal.onTermination = { [weak self] exitCode in
@@ -530,7 +572,14 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
         }
         DispatchQueue.main.async { [weak self, weak terminal] in
             guard let self, self.terminalLaunchID == launch.id, let terminal else { return }
-            terminal.start(launch)
+            guard terminal.start(launch) else {
+                self.terminalModel?.terminalDidFailToStart(launchID: launch.id)
+                return
+            }
+            self.terminalModel?.terminalProcessDidStart(launchID: launch.id)
+            // A dismantle that ran before the process started may have left the
+            // view out of every container.
+            if terminal.superview == nil { self.mountTerminalIntoEmbeddedContainerIfPossible() }
         }
         return terminal
     }
@@ -551,6 +600,10 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
               let terminal = terminalView,
               let container = embeddedContainer else { return }
         if let window = container.window { mainWindow = window }
+        embed(terminal, in: container)
+    }
+
+    private func embed(_ terminal: AgentBridgeTerminalView, in container: NSView) {
         guard terminal.superview !== container else { return }
         detachTerminalFromCurrentParent()
         container.addSubview(terminal)
@@ -587,15 +640,8 @@ private final class DetachedTerminalToolbarModel {
     var isProfileLogin: Bool { terminalModel?.terminalIsProfileLogin == true }
     var sessionID: UUID? { terminalModel?.terminalSessionIDForView }
     var canSendUsageCommand: Bool { terminalModel?.canSendUsageCommand == true }
-    var closeTitle: String {
-        guard let terminalModel else { return "Close terminal" }
-        return terminalModel.terminalRunning
-            ? (terminalModel.terminalNeedsManualStop ? "End the CLI, then close" : "Cancel and close")
-            : "Close terminal"
-    }
-    var closeIsDisabled: Bool {
-        terminalModel?.terminalRunning == true && terminalModel?.terminalNeedsManualStop == true
-    }
+    var closeTitle: String { terminalModel?.closeButtonTitle ?? "Close terminal" }
+    var closeIsDisabled: Bool { terminalModel?.closeRequiresManualStop == true }
 
     func localized(_ key: String) -> String { appModel?.localized(key) ?? key }
     func cancelSession() {

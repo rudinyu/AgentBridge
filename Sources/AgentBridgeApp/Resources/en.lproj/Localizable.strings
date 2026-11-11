@@ -1305,6 +1305,8 @@
 "The global mode is API; switch to subscription sign-in mode before creating a Codex project session." = "The global mode is API; switch to subscription sign-in mode before creating a Codex project session.";
 "The global mode is API; switch to subscription sign-in mode before creating a Codex project session. The discussion itself still uses subscription sign-in." = "The global mode is API; switch to subscription sign-in mode before creating a Codex project session. The discussion itself still uses subscription sign-in.";
 "The in-app terminal closed." = "The in-app terminal closed.";
+"The in-app terminal could not start. Close the panel and try again." = "The in-app terminal could not start. Close the panel and try again.";
+"An earlier terminal process is still running, so it is shown again. End it before opening another terminal." = "An earlier terminal process is still running, so it is shown again. End it before opening another terminal.";
 "The interactive CLI must use an absolute executable path." = "The interactive CLI must use an absolute executable path.";
 "The interactive memory file is not a secure private regular file." = "The interactive memory file is not a secure private regular file.";
 "The interactive memory file write did not complete." = "The interactive memory file write did not complete.";

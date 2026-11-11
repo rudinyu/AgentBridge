@@ -89,14 +89,26 @@ final class TokenUsageTests: XCTestCase {
         let source = root.appendingPathComponent("source", isDirectory: true)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
         try Data("tracked\n".utf8).write(to: source.appendingPathComponent("tracked.txt"))
-        for arguments in [["init", "-q", source.path], ["-C", source.path, "add", "."],
-                          ["-C", source.path, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "init"]] {
+        for arguments in [["init", "-q", "--template=", "--", source.path], ["-C", source.path, "add", "."],
+                          ["-C", source.path, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                           "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "init"]] {
             let git = Process()
             git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
             git.arguments = arguments
+            git.environment = [
+                "HOME": NSTemporaryDirectory(),
+                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": "/dev/null",
+                "GIT_TERMINAL_PROMPT": "0"
+            ]
+            let output = Pipe()
+            git.standardOutput = output
+            git.standardError = output
             try git.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
             git.waitUntilExit()
-            XCTAssertEqual(git.terminationStatus, 0)
+            XCTAssertEqual(git.terminationStatus, 0, String(decoding: data, as: UTF8.self))
         }
         let codex = root.appendingPathComponent("bin/codex")
         try FileManager.default.createDirectory(at: codex.deletingLastPathComponent(), withIntermediateDirectories: true)

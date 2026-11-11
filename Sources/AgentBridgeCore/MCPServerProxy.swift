@@ -323,6 +323,11 @@ private struct ProxyProtocolState {
     private var toolCallCount = 0
     private var totalToolResponseBytes = 0
 
+    init(ticket: MCPProxyTicket, connection: MCPStdioConnection) {
+        self.ticket = ticket
+        self.connection = connection
+    }
+
     var maximumOutgoingLineBytes: Int {
         max(ticket.maximumToolResponseBytes + 64 * 1_024, Self.maximumToolListBytes + 64 * 1_024)
     }

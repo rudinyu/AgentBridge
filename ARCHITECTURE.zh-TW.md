@@ -36,7 +36,7 @@ Icon 以深靛藍底色呈現兩個不同助理節點，透過一道明亮的弧
 
 ## 目標與實作方式
 
-AgentBridge 0.12.5 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCore`、`agentbridge` CLI 與原生 SwiftUI App。App 和 CLI 共用已保存的工作區資料根目錄，以及私有設定、帳戶、工作階段索引、稽核、用量控制與 API 帳本。App 預設使用英文，並內建英文與繁體中文資源，可在 App 內選擇並保存語言。Core、CLI 與 App 的訊息原文一律是英文；繁體中文放在 `zh-Hant.lproj`，以整句或整句範本（例如 `Loaded %@ turn(s)`，其中擷取的值會再各自翻譯）對照。`en.lproj/Legacy.strings` 保留舊的中文對英文條目，讓這次改版前已保存的稽核事件在英文介面仍顯示為英文。CLI 只輸出英文。設定精靈會續接尚未完成的首次設定，也可從標題列重新開啟；`SetupWizardFlow` 將必要的工作區限制與選用的 CLI／登入狀態摘要做成可測試的核心邏輯。App 的內嵌終端使用 SwiftTerm 1.20.0；Release bundle 由 `scripts/package-app.sh` 組裝，不維護兩份 Xcode 專案設定。
+AgentBridge 0.14.1 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCore`、`agentbridge` CLI 與原生 SwiftUI App。App 和 CLI 共用已保存的工作區資料根目錄，以及私有設定、帳戶、工作階段索引、稽核、用量控制與 API 帳本。App 預設使用英文，並內建英文與繁體中文資源，可在 App 內選擇並保存語言。Core、CLI 與 App 的訊息原文一律是英文；繁體中文放在 `zh-Hant.lproj`，以整句或整句範本（例如 `Loaded %@ turn(s)`，其中擷取的值會再各自翻譯）對照。`en.lproj/Legacy.strings` 保留舊的中文對英文條目，讓這次改版前已保存的稽核事件在英文介面仍顯示為英文。CLI 只輸出英文。設定精靈會續接尚未完成的首次設定，也可從標題列重新開啟；`SetupWizardFlow` 將必要的工作區限制與選用的 CLI／登入狀態摘要做成可測試的核心邏輯。App 的內嵌終端使用 SwiftTerm 1.20.0；Release bundle 由 `scripts/package-app.sh` 組裝，不維護兩份 Xcode 專案設定。
 
 供應商整合透過本機官方 CLI 執行：Codex 使用 `codex exec --json` 或原生互動 CLI，Claude Code 使用 `claude -p --output-format stream-json` 或原生互動 CLI。程式不匯出或複製 OAuth 憑證，也不把 CLI session ID 當成跨供應商記憶。此專案使用 Swift 管理本機程序，不另外引入 Codex/Claude SDK runtime。
 
@@ -55,6 +55,8 @@ AgentBridge 0.12.5 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCo
 | `AccountProfileStore` | provider 帳戶標籤、選取狀態、分離 CLI 設定目錄及逐帳戶記憶同意 |
 | `SharedMemoryStore` | 依 canonical Repository 路徑及固定提交儲存跨供應商回合與使用者備註 |
 | `ProjectMemoryStore` | 依 canonical Repository 儲存明確選取的回合／備註交接，並保留來源／目標提交 provenance |
+| `ProjectHandoffMarkdownStore` | 將遮蔽後的同提交 provider 交接歷程以 Markdown 保存在 `<所選根目錄>/handoffs/`，依 canonical Repository 與固定提交分組；單筆上限 16 KiB，歷程上限 512 KiB |
+| `RunGate` | provider 程序啟動前的最後檢查：各帳戶的執行次數與 token 上限，以及 Claude API 花費預留；本身不保存狀態 |
 | `ParallelTaskBoard` | 記錄實際啟動的 App/CLI 操作、工作階段狀態、核准、進度、取消及結果參照 |
 | `ExtensionPolicyStore` | 保存惰性 descriptor metadata 與明確的每專案狹窄授權；不會啟用或執行 provider extension |
 | 自主編排 | 驗證模型產生的任務圖、綁定核准、排程相依任務與有限次審查修正，並保存流程狀態 |
@@ -71,7 +73,7 @@ AgentBridge 0.12.5 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCo
 
 App 與 CLI 共用已保存的根目錄。CLI 可用 `agentbridge workspace set /absolute/path/to/folder` 設定，並以 `agentbridge workspace show` 查看；需要該資料夾的命令若發現尚未設定，會顯示可直接執行的設定指令。
 
-使用者選擇的資料夾採用 `<root>/workspaces/<小寫工作階段 UUID>/` 存放每個工作階段的獨立 Git 複本，以 `<root>/shared-memory/` 存放 App/CLI 共用對話記憶，以 `<root>/discussions/` 存放先聊天後選專案的討論，並以 `<root>/task-board/` 存放平行任務看板。App 設定、帳戶設定資料、各 provider CLI 專用的 profile 資料夾（CLI 會在其中保存該 profile 的登入資料）、工作階段索引、稽核事件、用量控制、預算帳本、擴充功能政策授權、啟用擴充功能的執行同意及自主執行狀態，仍存放在私有的 `~/Library/Application Support/AgentBridge`，因為自選資料夾可能被同步或共享。舊版本將擴充功能政策與執行同意存放在自選資料夾；首次啟動時，若私有位置尚無文件，通過該儲存區完整性檢查的舊文件會一次性匯入私有資料。無效的舊文件會被略過，舊副本永不修改或刪除。已選根目錄也會保存在該私有資料夾。
+使用者選擇的資料夾採用 `<root>/workspaces/<小寫工作階段 UUID>/` 存放每個工作階段的獨立 Git 複本，以 `<root>/shared-memory/` 存放 App/CLI 共用對話記憶，以 `<root>/discussions/` 存放先聊天後選專案的討論，以 `<root>/handoffs/` 存放同提交 provider 交接 Markdown，並以 `<root>/task-board/` 存放平行任務看板。App 設定、帳戶設定資料、各 provider CLI 專用的 profile 資料夾（CLI 會在其中保存該 profile 的登入資料）、工作階段索引、稽核事件、用量控制、預算帳本、擴充功能政策授權、啟用擴充功能的執行同意及自主執行狀態，仍存放在私有的 `~/Library/Application Support/AgentBridge`，因為自選資料夾可能被同步或共享。舊版本將擴充功能政策與執行同意存放在自選資料夾；首次啟動時，若私有位置尚無文件，通過該儲存區完整性檢查的舊文件會一次性匯入私有資料。無效的舊文件會被略過，舊副本永不修改或刪除。已選根目錄也會保存在該私有資料夾。
 
 變更根目錄時，AgentBridge 會將既有工作區、共用記憶、討論與任務看板記錄複製到新位置，再以單次寫入更新既有工作階段記錄以指向新副本。根目錄會先於工作階段記錄保存，因此中斷時工作階段仍使用先前完整的副本；再次選擇同一根目錄即可完成更新。舊資料夾仍保持原樣。若目的地已有不同內容的工作區、記憶檔、討論或任務記錄，遷移會停止且不會覆寫任一副本。新根目錄不能位於目前或先前根目錄中任何由 AgentBridge 管理的資料夾內。新工作階段會建立在目前所選的根目錄。變更的是存放位置，不會改寫工作階段的來源 Repository 路徑或固定提交版本。若根目錄位於 iCloud Drive、Dropbox、OneDrive、Google Drive 或 Box，App 與 CLI 會提出警告但不拒絕：逐字稿、共用記憶與工作區副本會因此離開這台 Mac，而檔案鎖只能協調同一台 Mac 上的程序。
 
@@ -98,6 +100,8 @@ App 與 CLI 共用已保存的根目錄。CLI 可用 `agentbridge workspace set 
 App 與 CLI 的唯讀聊天回合只在 provider 執行成功後寫入 `<selected root>/shared-memory/`；兩者使用相同的自選根目錄。記憶範圍由來源 Repository 的 canonical 路徑及建立 session 時固定的 commit hash 組成，同一固定版本可由 Codex 與 Claude 共用。工作區資料根目錄不屬於記憶索引；選擇不同根目錄不會改變記憶識別。更換來源路徑或 commit 會得到另一份記憶。記憶內容包含明確送出的提示、成功回應及使用者備註，經敏感字串遮蔽、Unicode 安全截短及大小/回合數上限後寫入 owner-only 檔案。
 
 跨提交延續必須明確操作。使用者從來源工作階段選取 App 保存的回合與／或備註，並指定相同 canonical Repository、不同固定提交版本的目標工作階段；目標綁定帳戶也必須允許共用記憶。交接存於 `<selected root>/shared-memory/project-handoffs/`。只有符合目標 commit 的交接會進入目標工作階段下一次允許的提示，包含所選文字及來源／目標 provenance，並標示為有 16 KiB 上限的不可信歷史 JSON。原生 TUI transcript 永不匯入。
+
+同一提交的 provider 切換是另一條較輕量的路徑。專案對話的快速接續會將遮蔽後的 Markdown 條目附加到 `<所選根目錄>/handoffs/`（依相同 canonical Repository 與固定提交），再切換到或建立目標 provider 帳戶的工作階段；該帳戶必須允許共用記憶。寫入條目不會呼叫任何模型或 API，因此額度用盡後仍可使用；「已完成」、「下一步」與提示欄位留白時，由本機產生保守的預設文字。受管理的 App 與 CLI 對話只載入最新一筆，並視為不受信任的歷史內容，且僅在工作階段綁定的帳戶允許共用記憶時載入。建議提示可填入空白的 App 輸入框供檢視，絕不會自動送出。切換時不會複製來源工作階段工作區中未提交的檔案。清除某提交的共用記憶時也會清除這份歷程；變更根目錄時會與其他資料一併複製。原生 TUI 工作階段不會自動注入；使用者可在 Finder 顯示該檔案或複製最新條目。
 
 內建帳戶與新建帳戶預設都允許讀取和保存 AgentBridge 共用記憶。使用者可在每個帳戶設定中關閉；關閉不會刪除歷史內容，只會停止該帳戶自動載入或保存回合。既有帳戶的已儲存同意設定不會因更新而改變。記憶可在 App 內查看或清除。
 

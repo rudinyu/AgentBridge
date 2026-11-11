@@ -604,10 +604,10 @@ struct EmbeddedTerminalPanel: View {
                 } else {
                     Button(model.localized("Open in Window")) { model.terminal.openTerminalInWindow() }
                 }
-                Button(model.localized(model.terminal.terminalRunning ? (model.terminal.terminalNeedsManualStop ? "End the CLI, then close" : "Cancel and close") : "Close terminal")) {
+                Button(model.localized(model.terminal.closeButtonTitle)) {
                     model.terminal.closeEmbeddedTerminal()
                 }
-                .disabled(model.terminal.terminalRunning && model.terminal.terminalNeedsManualStop)
+                .disabled(model.terminal.closeRequiresManualStop)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)

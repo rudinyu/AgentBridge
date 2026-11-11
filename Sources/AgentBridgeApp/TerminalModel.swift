@@ -20,6 +20,10 @@ final class TerminalModel {
     var terminalNeedsManualStop = false
     var usageCommandRequest = 0
     var closeTerminalAfterCancellation = false
+    /// The launch whose process the window controller actually started. A launch
+    /// that never got a process must stay closable, so the manual-stop rule waits
+    /// for this rather than for `terminalRunning` alone.
+    private(set) var terminalProcessLaunchID: UUID?
     @ObservationIgnored let windowController = TerminalWindowController()
     private var activeTerminalProfileID: UUID?
     private var activeTerminalSessionID: UUID?
@@ -27,6 +31,26 @@ final class TerminalModel {
     private var conversationReturnSessionID: UUID?
 
     var terminalSessionIDForView: UUID? { activeTerminalSessionID }
+
+    /// True only while a started process of the shown launch must be ended by the
+    /// user first. Drives the close button, so it can never lock on a launch
+    /// whose process failed to start or was never created.
+    var closeRequiresManualStop: Bool {
+        guard terminalRunning, terminalNeedsManualStop, let launchID = terminalLaunch?.id else { return false }
+        return terminalProcessLaunchID == launchID
+    }
+
+    var closeButtonTitle: String {
+        guard terminalRunning else { return "Close terminal" }
+        if closeRequiresManualStop { return "End the CLI, then close" }
+        return terminalNeedsManualStop ? "Close terminal" : "Cancel and close"
+    }
+
+    /// An earlier launch's process can outlive the model's view of it; starting
+    /// another launch then would leave the panel without a terminal.
+    private var terminalIsBusy: Bool {
+        terminalRunning || windowController.hasRunningProcess
+    }
 
     var canSendUsageCommand: Bool {
         terminalIsUsageTUI
@@ -42,6 +66,10 @@ final class TerminalModel {
         }
         guard let session = app.selectedSession, session.policy.accessMode == .interactiveManualApproval else {
             app.errorMessage = "Create a session with interactive manual approval first."
+            return
+        }
+        guard !terminalIsBusy else {
+            app.errorMessage = "Close the current app terminal first."
             return
         }
         let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
@@ -76,7 +104,7 @@ final class TerminalModel {
             app.errorMessage = "The official usage TUI supports subscription sign-in only."
             return
         }
-        guard terminalLaunch == nil else {
+        guard terminalLaunch == nil, !terminalIsBusy else {
             app.errorMessage = "Close the current app terminal first."
             return
         }
@@ -176,7 +204,7 @@ final class TerminalModel {
             app.reportOperationError(app.localized("The terminal is locked while an autonomous workflow is active."))
             return
         }
-        guard !terminalRunning else {
+        guard !terminalIsBusy else {
             app.reportOperationError(app.localized("Close the current terminal before opening sign-in."))
             return
         }
@@ -209,7 +237,7 @@ final class TerminalModel {
 
     func openLocalShell() {
         guard let session = app.selectedSession else { app.errorMessage = "Select a session first."; return }
-        guard terminalLaunch == nil else { app.errorMessage = "Close the current app terminal first."; return }
+        guard terminalLaunch == nil, !terminalIsBusy else { app.errorMessage = "Close the current app terminal first."; return }
         let spec = TerminalLaunchSpec(
             title: "Local Terminal · \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)",
             executablePath: "/bin/sh",
@@ -232,20 +260,35 @@ final class TerminalModel {
     }
 
     func closeEmbeddedTerminal() {
-        if terminalRunning {
-            if terminalNeedsManualStop {
-                app.status = "Press Control-C in the terminal to end the current process before closing the terminal panel."
-                return
-            }
-            guard let sessionID = activeTerminalSessionID else {
-                app.status = "Finish the terminal task before closing the panel."
-                return
-            }
-            closeTerminalAfterCancellation = true
-            app.cancelSession(sessionID)
+        let closingLaunchID = terminalLaunch?.id
+        // A process still running for another launch must stay reachable: show it
+        // again instead of closing into a state where nothing can stop it.
+        if let runningLaunch = windowController.runningLaunch, runningLaunch.id != closingLaunchID {
+            showRunningLaunch(runningLaunch)
             return
         }
-        let closingLaunchID = terminalLaunch?.id
+        if terminalRunning {
+            if let closingLaunchID, windowController.hasRunningProcess(for: closingLaunchID) {
+                if terminalNeedsManualStop {
+                    app.status = "Press Control-C in the terminal to end the current process before closing the terminal panel."
+                    return
+                }
+                guard let sessionID = activeTerminalSessionID else {
+                    app.status = "Finish the terminal task before closing the panel."
+                    return
+                }
+                closeTerminalAfterCancellation = true
+                app.cancelSession(sessionID)
+                return
+            }
+            // Nothing runs for this launch: it never started, failed to start, or its
+            // exit has not been delivered yet. Finish it here so the panel can close.
+            if let closingLaunchID {
+                terminalDidTerminate(launchID: closingLaunchID, exitCode: nil)
+            } else {
+                terminalRunning = false
+            }
+        }
         if windowController.hasRunningProcess {
             app.status = "Wait for the terminal process to stop before closing the terminal."
             return
@@ -255,12 +298,56 @@ final class TerminalModel {
         terminalLaunch = nil
         conversationReturnSessionID = nil
         terminalRunning = false
+        terminalProcessLaunchID = nil
         terminalIsUsageTUI = false
         activeUsageProvider = nil
         activeTerminalProfileID = nil
         activeTerminalSessionID = nil
         terminalNeedsManualStop = false
+        closeTerminalAfterCancellation = false
         app.status = "The in-app terminal closed."
+    }
+
+    /// Called by the window controller once the launch's process exists.
+    func terminalProcessDidStart(launchID: UUID) {
+        guard terminalLaunch?.id == launchID else { return }
+        terminalProcessLaunchID = launchID
+    }
+
+    /// SwiftTerm reports nothing when it cannot create the pseudo-terminal or
+    /// child, so the controller calls this; without it the panel waits forever.
+    func terminalDidFailToStart(launchID: UUID) {
+        guard terminalLaunch?.id == launchID else { return }
+        terminalDidTerminate(launchID: launchID, exitCode: nil)
+        app.status = "The in-app terminal could not start. Close the panel and try again."
+        app.reportOperationError(app.localized("The in-app terminal could not start. Close the panel and try again."))
+    }
+
+    /// The controller refused `refusedLaunchID` because an earlier launch's process
+    /// still runs. That process is never killed implicitly, so it is shown again.
+    func terminalLaunchWasRefused(_ refusedLaunchID: UUID, runningLaunch: TerminalLaunchSpec) {
+        guard terminalLaunch == nil || terminalLaunch?.id == refusedLaunchID else { return }
+        showRunningLaunch(runningLaunch)
+    }
+
+    /// Points the model back at a launch whose process is still running. Its
+    /// session and account context is no longer known, so it gets the
+    /// conservative local-shell rules: the user ends it before closing, and no
+    /// /usage command or screen capture is allowed.
+    private func showRunningLaunch(_ launch: TerminalLaunchSpec) {
+        terminalLaunch = launch
+        terminalTitle = launch.title
+        terminalRunning = true
+        terminalProcessLaunchID = launch.id
+        terminalNeedsManualStop = true
+        terminalIsProfileLogin = false
+        terminalIsUsageTUI = false
+        activeUsageProvider = nil
+        activeTerminalProfileID = nil
+        activeTerminalSessionID = nil
+        closeTerminalAfterCancellation = false
+        app.status = "An earlier terminal process is still running, so it is shown again. End it before opening another terminal."
+        app.reportOperationError(app.localized("An earlier terminal process is still running, so it is shown again. End it before opening another terminal."))
     }
 
     func openTerminalInWindow() {
@@ -294,6 +381,7 @@ final class TerminalModel {
     func terminalDidTerminate(launchID: UUID, exitCode: Int32?) {
         guard terminalLaunch?.id == launchID else { return }
         terminalRunning = false
+        terminalProcessLaunchID = nil
         terminalIsUsageTUI = false
         activeUsageProvider = nil
         if let exitCode, exitCode == 0 {
