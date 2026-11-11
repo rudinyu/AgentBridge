@@ -1,3 +1,5 @@
+import Darwin
+import Foundation
 import XCTest
 @testable import AgentBridgeCore
 
@@ -70,7 +72,19 @@ final class TokenUsageTests: XCTestCase {
     }
 
     func testAManagedRunRecordsTheTokensItsCLIReported() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AgentBridge-Tokens-\(UUID().uuidString)", isDirectory: true)
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let fixtureParent = packageRoot.appendingPathComponent("build/test-fixtures", isDirectory: true)
+        try FileManager.default.createDirectory(at: fixtureParent, withIntermediateDirectories: true)
+        guard let resolvedPath = fixtureParent.path.withCString({ realpath($0, nil) }) else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        defer { free(resolvedPath) }
+        let canonicalParent = URL(fileURLWithPath: String(cString: resolvedPath), isDirectory: true)
+        let root = canonicalParent.appendingPathComponent("AgentBridge-Tokens-\(UUID().uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("source", isDirectory: true)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)

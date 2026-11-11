@@ -1,3 +1,4 @@
+import Darwin
 import AgentBridgeCore
 import Observation
 import XCTest
@@ -13,7 +14,19 @@ final class RefreshTests: XCTestCase {
     }
 
     private func makeFixture(sessions count: Int = 3, events eventCount: Int = 5) throws -> (Fixture, [SessionRecord]) {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("RefreshTests-\(UUID().uuidString)", isDirectory: true)
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let fixtureParent = packageRoot.appendingPathComponent("build/test-fixtures", isDirectory: true)
+        try FileManager.default.createDirectory(at: fixtureParent, withIntermediateDirectories: true)
+        guard let resolvedPath = fixtureParent.path.withCString({ realpath($0, nil) }) else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        defer { free(resolvedPath) }
+        let canonicalParent = URL(fileURLWithPath: String(cString: resolvedPath), isDirectory: true)
+        let root = canonicalParent.appendingPathComponent("RefreshTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.createDirectory(at: root.appendingPathComponent("data"), withIntermediateDirectories: true)
         let store = try AuditStore(rootURL: root.appendingPathComponent("state"), workspaceRootURL: root.appendingPathComponent("data"), managedWorkspaceRoots: [])
         let service = try BridgeService(store: store)

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.1 — 2026-11-11
+
+### Fixed
+
+- Added English and Traditional Chinese translations for project-handoff storage, migration, and context messages.
+- Canonicalized affected test fixture temporary roots before passing them to secure stores; runtime symlink checks remain unchanged.
+
 ## 0.14.0 — 2026-11-11
 
 ### Added

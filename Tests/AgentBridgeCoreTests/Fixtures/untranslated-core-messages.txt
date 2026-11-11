@@ -191,8 +191,6 @@ File and network permissions require matching, explicit path or host scopes.
 File scopes must be normalized relative paths without traversal components.
 Full context retained: all %@ turn(s) remain verbatim.
 Import the extension descriptor before granting permissions.
-Included %@ explicit project-memory handoff(s) for target commit %@; legacy workflow kept its existing bounded envelope.
-Included %@ explicitly selected project-memory handoff(s) for target commit %@; context was prepared by readable byte-bounded compression (UTF-8 byte estimates are not exact model token counts).
 Initialize the MCP connection first.
 Interpreter MCP entrypoint scripts must use an absolute path so their content can be pinned.
 Interpreter-based MCP commands must name a script or use an explicit inline/module mode.

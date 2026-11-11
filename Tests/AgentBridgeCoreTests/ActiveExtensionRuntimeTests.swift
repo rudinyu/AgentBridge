@@ -1106,19 +1106,21 @@ final class ActiveExtensionRuntimeTests: XCTestCase {
     }
 
     private func temporaryDirectory() throws -> URL {
-        // Foundation's URL path helpers keep macOS's `/var` alias in this
-        // XCTest environment. The file readers intentionally reject every
-        // symlink path component, so anchor fixtures at realpath's canonical
-        // temporary directory path.
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let fixtureParent = packageRoot.appendingPathComponent("build/test-fixtures", isDirectory: true)
+        try FileManager.default.createDirectory(at: fixtureParent, withIntermediateDirectories: true)
         var canonicalPath = [CChar](repeating: 0, count: Int(PATH_MAX))
-        let resolvedPath = FileManager.default.temporaryDirectory.path.withCString {
+        let resolvedPath = fixtureParent.path.withCString {
             realpath($0, &canonicalPath)
         }
         guard resolvedPath != nil else {
-            throw AgentBridgeError.persistence("Could not resolve the test temporary directory.")
+            throw AgentBridgeError.persistence("Could not resolve the project test-fixture directory.")
         }
-        let temporaryRoot = URL(fileURLWithPath: String(cString: canonicalPath), isDirectory: true)
-        let root = temporaryRoot
+        let canonicalParent = URL(fileURLWithPath: String(cString: canonicalPath), isDirectory: true)
+        let root = canonicalParent
             .appendingPathComponent("AgentBridge-ActiveExtensions-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         XCTAssertEqual(chmod(root.path, 0o700), 0)

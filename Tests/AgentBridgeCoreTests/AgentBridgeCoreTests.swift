@@ -1044,8 +1044,19 @@ printf '{"type":"result","subtype":"success","result":"%s"}\n' "$response"
     }
 
     private func temporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AgentBridgeTests-\(UUID().uuidString.lowercased())", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let fixtureParent = packageRoot.appendingPathComponent("build/test-fixtures", isDirectory: true)
+        try FileManager.default.createDirectory(at: fixtureParent, withIntermediateDirectories: true)
+        guard let resolvedPath = fixtureParent.path.withCString({ realpath($0, nil) }) else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        defer { free(resolvedPath) }
+        let canonicalParent = URL(fileURLWithPath: String(cString: resolvedPath), isDirectory: true)
+        let url = canonicalParent.appendingPathComponent("AgentBridgeTests-\(UUID().uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         return url
     }
 
