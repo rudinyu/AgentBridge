@@ -33,7 +33,7 @@ final class SessionRemovalTests: XCTestCase {
         XCTAssertEqual(preview.changedPaths.sorted(), ["notes.txt", "source.txt"])
         XCTAssertEqual(preview.changedPathCount, 2)
         XCTAssertTrue(preview.unsavedReferences.isEmpty)
-        XCTAssertNil(preview.inspectionProblem)
+        XCTAssertEqual(preview.inspectionProblems, [])
         XCTAssertTrue(preview.mayLoseWork)
     }
 
@@ -94,6 +94,58 @@ final class SessionRemovalTests: XCTestCase {
         let preview = try await fixture.service.sessionRemovalPreview(sessionID: fixture.session.id)
         XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path), "Git ran a program from the workspace's settings.")
         XCTAssertEqual(preview.changedPaths.sorted(), [".gitattributes", "source.txt"])
+    }
+
+    func testAnIgnoredFolderIsOneEntryAndLongListsKeepTheirCount() async throws {
+        let fixture = try await makeFixture()
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
+        try Data("build/\n*.log\n".utf8).write(to: workspace.appendingPathComponent(".gitignore"))
+        let build = workspace.appendingPathComponent("build", isDirectory: true)
+        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+        for index in 0..<3 { try Data("o\n".utf8).write(to: build.appendingPathComponent("\(index).o")) }
+        for index in 0..<60 { try Data("l\n".utf8).write(to: workspace.appendingPathComponent("run-\(index).log")) }
+
+        let preview = try await fixture.service.sessionRemovalPreview(sessionID: fixture.session.id)
+        XCTAssertEqual(preview.ignoredPathCount, 61)
+        XCTAssertEqual(preview.ignoredPaths.count, SessionRemovalPreview.maximumListedPaths)
+        XCTAssertTrue(preview.ignoredPaths.contains("build/"))
+        XCTAssertFalse(preview.ignoredPaths.contains { $0.hasPrefix("build/") && $0 != "build/" })
+    }
+
+    func testAnIgnoredFileAddedAfterTheReviewStopsTheRemoval() async throws {
+        let fixture = try await makeFixture()
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
+        try Data("*.local\n".utf8).write(to: workspace.appendingPathComponent(".gitignore"))
+        let preview = try await fixture.service.sessionRemovalPreview(sessionID: fixture.session.id)
+        try Data("secret\n".utf8).write(to: workspace.appendingPathComponent("settings.local"))
+
+        await XCTAssertThrowsErrorAsync(try await fixture.service.removeSession(sessionID: fixture.session.id, reviewed: preview))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("settings.local").path))
+    }
+
+    func testAStashLogThatCannotBeReadIsReportedInsteadOfIgnored() async throws {
+        let fixture = try await makeFixture()
+        let workspace = fixture.session.workspacePath
+        try Data("first\n".utf8).write(to: URL(fileURLWithPath: workspace).appendingPathComponent("source.txt"))
+        try FixtureGit.run(["-C", workspace, "stash", "-q"])
+        // Git skips a reflog it cannot parse without an error.
+        try Data("not a reflog\n".utf8).write(to: URL(fileURLWithPath: workspace).appendingPathComponent(".git/logs/refs/stash"))
+
+        let preview = try await fixture.service.sessionRemovalPreview(sessionID: fixture.session.id)
+        XCTAssertEqual(preview.inspectionProblems, [
+            "AgentBridge could not read the older stash entries, so it cannot tell whether they exist only in the workspace."
+        ])
+        XCTAssertEqual(preview.unsavedReferences, ["stash"])
+        XCTAssertTrue(preview.mayLoseWork)
+    }
+
+    func testLineAndParagraphSeparatorsInNamesAreNotShown() async throws {
+        let fixture = try await makeFixture()
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
+        try Data("x\n".utf8).write(to: workspace.appendingPathComponent("a\u{2028}b\u{2029}c.txt"))
+
+        let preview = try await fixture.service.sessionRemovalPreview(sessionID: fixture.session.id)
+        XCTAssertEqual(preview.changedPaths, ["a?b?c.txt"])
     }
 
     func testIgnoredFilesAreListedEvenWhenTheWorkspaceIgnoresThemItself() async throws {

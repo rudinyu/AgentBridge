@@ -878,7 +878,7 @@ public final class WorkspaceManager: @unchecked Sendable {
             return SessionRemovalPreview(sessionID: session.id, workspacePath: workspace.path, workspaceExists: false)
         }
         func problem(_ message: String) -> SessionRemovalPreview {
-            SessionRemovalPreview(sessionID: session.id, workspacePath: workspace.path, workspaceExists: true, inspectionProblem: message)
+            SessionRemovalPreview(sessionID: session.id, workspacePath: workspace.path, workspaceExists: true, inspectionProblems: [message])
         }
         guard isWithinManagedWorkspaces(workspace), isDirectory(workspace), !isSymbolicLink(workspace),
               workspace.lastPathComponent == session.id.uuidString.lowercased() else {
@@ -889,60 +889,87 @@ public final class WorkspaceManager: @unchecked Sendable {
             return problem("The source repository could not be found, so AgentBridge cannot tell which work in the workspace exists only there.")
         }
         do {
-            var unsaved: [String] = []
-            var headIsSaved = false
-            let head = try await workspaceCommit(workspace, "HEAD")
-            // Remote-tracking refs are left out: what they point at is on a remote.
-            let refs = try await runGit(arguments: [
-                "-C", workspace.path, "for-each-ref", "--format=%(objectname) %(refname)",
-                "refs/heads", "refs/tags", "refs/notes", "refs/stash"
-            ], workingDirectory: nil, outputLimit: 1_000_000)
-            for line in String(decoding: refs.standardOutput, as: UTF8.self).split(separator: "\n") {
-                let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
-                guard parts.count == 2 else { continue }
-                if try await !sourceHasCommit(source, parts[0]) {
-                    let name = parts[1].hasPrefix("refs/heads/") ? String(parts[1].dropFirst("refs/heads/".count)) : String(parts[1].dropFirst("refs/".count))
-                    unsaved.append(name)
-                }
-            }
-            // `refs/stash` names only the newest stash; older ones are in its reflog.
+            let references = try await unsavedReferences(in: workspace, source: source)
+            let reference = references.headIsSaved ? (references.head ?? session.snapshotCommit) : session.snapshotCommit
+            let contents = try await workTreeContents(workspace, against: reference, from: source)
+            var problems = references.problems
+            if !contents.complete { problems.append("The workspace has too many files to check them all.") }
+            return SessionRemovalPreview(
+                sessionID: session.id,
+                workspacePath: workspace.path,
+                workspaceExists: true,
+                changedPaths: contents.changed,
+                changedPathCount: contents.changed.count,
+                ignoredPaths: contents.ignored,
+                ignoredPathCount: contents.ignored.count,
+                unsavedReferences: references.names.sorted(),
+                inspectionProblems: problems
+            )
+        } catch {
+            return problem("AgentBridge could not compare the workspace with the source repository, so it cannot tell whether the workspace holds work that exists nowhere else.")
+        }
+    }
+
+    private struct UnsavedReferences {
+        var names: [String] = []
+        var problems: [String] = []
+        var head: String?
+        var headIsSaved = false
+    }
+
+    /// The workspace's branches, tags, notes, stash entries and detached HEAD whose
+    /// commits `source` lacks. Remote-tracking refs are left out: what they point
+    /// at is on a remote.
+    private func unsavedReferences(in workspace: URL, source: URL) async throws -> UnsavedReferences {
+        var result = UnsavedReferences()
+        let refs = try await runGit(arguments: [
+            "-C", workspace.path, "for-each-ref", "--format=%(objectname) %(refname)",
+            "refs/heads", "refs/tags", "refs/notes", "refs/stash"
+        ], workingDirectory: nil, outputLimit: 1_000_000)
+        var hasStash = false
+        for line in String(decoding: refs.standardOutput, as: UTF8.self).split(separator: "\n") {
+            let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            if parts[1] == "refs/stash" { hasStash = true }
+            if try await !sourceHasCommit(source, parts[0]) { result.names.append(Self.displayName(ofRef: parts[1])) }
+        }
+        if hasStash {
+            // `refs/stash` names only the newest stash; older ones are in its
+            // reflog. Git skips a reflog it cannot read without an error, so a
+            // log that does not even list the newest stash was not read.
             let stashes = try await runGit(
                 arguments: ["-C", workspace.path, "log", "--walk-reflogs", "--format=%H", "refs/stash", "--"],
                 workingDirectory: nil,
                 allowedExitCodes: [0, 128],
                 outputLimit: 1_000_000
             )
-            if stashes.exitCode == 0 {
-                let commits = String(decoding: stashes.standardOutput, as: UTF8.self).split(separator: "\n").map(String.init)
+            let commits = String(decoding: stashes.standardOutput, as: UTF8.self).split(separator: "\n").map(String.init)
+            if stashes.exitCode != 0 || commits.isEmpty {
+                result.problems.append("AgentBridge could not read the older stash entries, so it cannot tell whether they exist only in the workspace.")
+            } else {
                 for (index, commit) in commits.enumerated() where index > 0 {
-                    if try await !sourceHasCommit(source, commit) { unsaved.append("stash@{\(index)}") }
+                    if try await !sourceHasCommit(source, commit) { result.names.append("stash@{\(index)}") }
                 }
             }
-            if let head {
-                headIsSaved = try await sourceHasCommit(source, head)
-                let detached = try await runGit(
-                    arguments: ["-C", workspace.path, "symbolic-ref", "--quiet", "HEAD"],
-                    workingDirectory: nil,
-                    allowedExitCodes: [0, 1]
-                ).exitCode == 1
-                if detached && !headIsSaved { unsaved.append("HEAD") }
-            }
-            let reference = headIsSaved ? (head ?? session.snapshotCommit) : session.snapshotCommit
-            let changed = try await changedPaths(in: workspace, against: reference, from: source)
-            return SessionRemovalPreview(
-                sessionID: session.id,
-                workspacePath: workspace.path,
-                workspaceExists: true,
-                changedPaths: changed.paths,
-                changedPathCount: changed.paths.count,
-                ignoredPaths: changed.ignored,
-                ignoredPathCount: changed.ignored.count,
-                unsavedReferences: unsaved.sorted(),
-                inspectionProblem: changed.complete ? nil : "The workspace has too many changed files to check them all."
-            )
-        } catch {
-            return problem("AgentBridge could not compare the workspace with the source repository, so it cannot tell whether the workspace holds work that exists nowhere else.")
         }
+        result.head = try await workspaceCommit(workspace, "HEAD")
+        if let head = result.head {
+            result.headIsSaved = try await sourceHasCommit(source, head)
+            let detached = try await runGit(
+                arguments: ["-C", workspace.path, "symbolic-ref", "--quiet", "HEAD"],
+                workingDirectory: nil,
+                allowedExitCodes: [0, 1]
+            ).exitCode == 1
+            if detached && !result.headIsSaved { result.names.append("HEAD") }
+        }
+        return result
+    }
+
+    /// A branch by its name, any other ref without the leading `refs/`.
+    private static func displayName(ofRef ref: String) -> String {
+        let branches = "refs/heads/"
+        if ref.hasPrefix(branches) { return String(ref.dropFirst(branches.count)) }
+        return ref.hasPrefix("refs/") ? String(ref.dropFirst("refs/".count)) : ref
     }
 
     /// Deletes `session`'s isolated workspace and its private copy of the pinned
@@ -987,11 +1014,19 @@ public final class WorkspaceManager: @unchecked Sendable {
         ).exitCode == 0
     }
 
-    /// Paths in `workTree` that differ from `commit`, and its ignored files and
-    /// folders, read with a private copy of that commit fetched from `source`, so
-    /// the work tree's `.git` is not used. Ignore rules in the work tree only sort
-    /// files into the two lists; none is left out.
-    private func changedPaths(in workTree: URL, against commit: String, from source: URL) async throws -> (paths: [String], ignored: [String], complete: Bool) {
+    private struct WorkTreeContents {
+        /// Files that differ from the commit, untracked ones included.
+        var changed: [String] = []
+        /// Ignored files, and ignored folders as one entry each.
+        var ignored: [String] = []
+        /// False when Git's output was cut off, so some paths are missing.
+        var complete = true
+    }
+
+    /// What in `workTree` is not in `commit`, read with a private copy of that
+    /// commit fetched from `source`, so the work tree's `.git` is not used. Ignore
+    /// rules in the work tree only sort files into the two lists; none is left out.
+    private func workTreeContents(_ workTree: URL, against commit: String, from source: URL) async throws -> WorkTreeContents {
         let directory = store.rootURL.appendingPathComponent("tmp/git", isDirectory: true)
         try AuditStore.createPrivateDirectory(directory, fileManager: fileManager)
         let base = directory.appendingPathComponent("removal-\(UUID().uuidString.lowercased()).git", isDirectory: true)
@@ -1021,13 +1056,13 @@ public final class WorkspaceManager: @unchecked Sendable {
             indexFile: index,
             timeout: 300
         )
-        var paths: [String] = []
-        var ignored: [String] = []
+        var contents = WorkTreeContents(complete: !status.outputWasTruncated)
+        let ignoredMarker = Array("!! ".utf8)
         for entry in status.standardOutput.split(separator: 0, omittingEmptySubsequences: true) where entry.count > 3 {
             let path = String(decoding: entry.dropFirst(3), as: UTF8.self)
-            if entry.starts(with: Array("!! ".utf8)) { ignored.append(path) } else { paths.append(path) }
+            if entry.starts(with: ignoredMarker) { contents.ignored.append(path) } else { contents.changed.append(path) }
         }
-        return (paths, ignored, !status.outputWasTruncated)
+        return contents
     }
 
     private func isWithinManagedWorkspaces(_ url: URL) -> Bool {

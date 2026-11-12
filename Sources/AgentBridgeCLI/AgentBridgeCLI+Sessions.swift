@@ -119,9 +119,9 @@ extension AgentBridgeCLI {
         let preview = try await service.sessionRemovalPreview(sessionID: sessionID)
         print("Workspace to delete: \(preview.workspacePath)")
         if !preview.workspaceExists { print("The workspace folder no longer exists.") }
-        if let problem = preview.inspectionProblem { print(problem) }
+        for problem in preview.inspectionProblems { print(problem) }
         if !preview.unsavedReferences.isEmpty {
-            print("Branches or stashes whose commits exist only in this workspace: \(preview.unsavedReferences.joined(separator: ", "))")
+            print("Branches, tags, notes or stash entries whose commits exist only in this workspace: \(preview.unsavedReferences.joined(separator: ", "))")
         }
         func list(_ title: String, _ paths: [String], total: Int) {
             guard total > 0 else { return }

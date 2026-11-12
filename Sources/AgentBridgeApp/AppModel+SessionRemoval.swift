@@ -87,12 +87,12 @@ extension AppModel {
         if !preview.workspaceExists {
             parts.append(localized("The workspace folder no longer exists."))
         }
-        if let problem = preview.inspectionProblem {
+        for problem in preview.inspectionProblems {
             parts.append(localized(problem))
         }
         if !preview.unsavedReferences.isEmpty {
             parts.append(localizedFormat(
-                "Branches or stashes whose commits exist only in this workspace: %@",
+                "Branches, tags, notes or stash entries whose commits exist only in this workspace: %@",
                 preview.unsavedReferences.joined(separator: ", ")
             ))
         }

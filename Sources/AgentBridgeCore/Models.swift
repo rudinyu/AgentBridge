@@ -271,8 +271,8 @@ public struct SessionRemovalPreview: Equatable, Sendable {
     /// Branches, tags, notes and stash entries whose commits exist only in the
     /// workspace.
     public let unsavedReferences: [String]
-    /// Why the workspace could not be fully checked, if it could not.
-    public let inspectionProblem: String?
+    /// Why parts of the workspace could not be checked, if any could not.
+    public let inspectionProblems: [String]
 
     public init(
         sessionID: UUID,
@@ -283,7 +283,7 @@ public struct SessionRemovalPreview: Equatable, Sendable {
         ignoredPaths: [String] = [],
         ignoredPathCount: Int? = nil,
         unsavedReferences: [String] = [],
-        inspectionProblem: String? = nil
+        inspectionProblems: [String] = []
     ) {
         self.sessionID = sessionID
         self.workspacePath = workspacePath
@@ -293,12 +293,12 @@ public struct SessionRemovalPreview: Equatable, Sendable {
         self.ignoredPaths = ignoredPaths.prefix(Self.maximumListedPaths).map(Self.displayable)
         self.ignoredPathCount = ignoredPathCount ?? ignoredPaths.count
         self.unsavedReferences = unsavedReferences.map(Self.displayable)
-        self.inspectionProblem = inspectionProblem
+        self.inspectionProblems = inspectionProblems
     }
 
     /// Whether removal may lose work, or AgentBridge could not rule that out.
     public var mayLoseWork: Bool {
-        changedPathCount > 0 || ignoredPathCount > 0 || !unsavedReferences.isEmpty || inspectionProblem != nil
+        changedPathCount > 0 || ignoredPathCount > 0 || !unsavedReferences.isEmpty || !inspectionProblems.isEmpty
     }
 
     /// File and ref names come from a workspace anything may have written, so
@@ -306,7 +306,10 @@ public struct SessionRemovalPreview: Equatable, Sendable {
     /// as "?".
     private static func displayable(_ name: String) -> String {
         String(String.UnicodeScalarView(name.unicodeScalars.map { scalar in
-            scalar.properties.generalCategory == .control || scalar.properties.generalCategory == .format ? "?" : scalar
+            switch scalar.properties.generalCategory {
+            case .control, .format, .lineSeparator, .paragraphSeparator: return "?"
+            default: return scalar
+            }
         }))
     }
 }

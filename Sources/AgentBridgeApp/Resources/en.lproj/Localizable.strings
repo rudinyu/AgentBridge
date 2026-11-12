@@ -1731,7 +1731,7 @@
 "Remove Session" = "Remove Session";
 "AgentBridge deletes this session's isolated workspace: %@" = "AgentBridge deletes this session's isolated workspace: %@";
 "The workspace folder no longer exists." = "The workspace folder no longer exists.";
-"Branches or stashes whose commits exist only in this workspace: %@" = "Branches or stashes whose commits exist only in this workspace: %@";
+"Branches, tags, notes or stash entries whose commits exist only in this workspace: %@" = "Branches, tags, notes or stash entries whose commits exist only in this workspace: %@";
 "…and %@ more." = "…and %@ more.";
 "Files that differ from what the source repository has (%@):" = "Files that differ from what the source repository has (%@):";
 "Anything listed here is lost. Removal cannot be undone." = "Anything listed here is lost. Removal cannot be undone.";
@@ -1749,8 +1749,9 @@
 "The session workspace is outside AgentBridge's managed isolated directory, so it was not deleted." = "The session workspace is outside AgentBridge's managed isolated directory, so it was not deleted.";
 "Could not delete the isolated workspace at %@." = "Could not delete the isolated workspace at %@.";
 "The source repository could not be found, so AgentBridge cannot tell which work in the workspace exists only there." = "The source repository could not be found, so AgentBridge cannot tell which work in the workspace exists only there.";
-"The workspace has too many changed files to check them all." = "The workspace has too many changed files to check them all.";
+"The workspace has too many files to check them all." = "The workspace has too many files to check them all.";
 "AgentBridge could not compare the workspace with the source repository, so it cannot tell whether the workspace holds work that exists nowhere else." = "AgentBridge could not compare the workspace with the source repository, so it cannot tell whether the workspace holds work that exists nowhere else.";
 "The session was removed and its isolated workspace deleted." = "The session was removed and its isolated workspace deleted.";
 "The session was removed and its isolated workspace deleted, after the user confirmed it held work that might exist nowhere else." = "The session was removed and its isolated workspace deleted, after the user confirmed it held work that might exist nowhere else.";
 "Ignored files and folders, which Git does not keep (%@):" = "Ignored files and folders, which Git does not keep (%@):";
+"AgentBridge could not read the older stash entries, so it cannot tell whether they exist only in the workspace." = "AgentBridge could not read the older stash entries, so it cannot tell whether they exist only in the workspace.";

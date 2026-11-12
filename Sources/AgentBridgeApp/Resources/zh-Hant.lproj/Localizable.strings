@@ -1731,7 +1731,7 @@
 "Remove Session" = "移除工作階段";
 "AgentBridge deletes this session's isolated workspace: %@" = "AgentBridge 會刪除這個工作階段的隔離工作區：%@";
 "The workspace folder no longer exists." = "工作區資料夾已不存在。";
-"Branches or stashes whose commits exist only in this workspace: %@" = "只存在這個工作區、來源儲存庫沒有其 commit 的分支或 stash：%@";
+"Branches, tags, notes or stash entries whose commits exist only in this workspace: %@" = "只存在這個工作區、來源儲存庫沒有其 commit 的分支、tag、notes 或 stash：%@";
 "…and %@ more." = "…還有 %@ 個。";
 "Files that differ from what the source repository has (%@):" = "與來源儲存庫不同的檔案（%@ 個）：";
 "Anything listed here is lost. Removal cannot be undone." = "以上列出的內容都會遺失。移除後無法復原。";
@@ -1749,8 +1749,9 @@
 "The session workspace is outside AgentBridge's managed isolated directory, so it was not deleted." = "工作階段工作區不在 AgentBridge 管理的隔離資料夾內，因此沒有刪除。";
 "Could not delete the isolated workspace at %@." = "無法刪除位於 %@ 的隔離工作區。";
 "The source repository could not be found, so AgentBridge cannot tell which work in the workspace exists only there." = "找不到來源儲存庫，因此 AgentBridge 無法判斷工作區裡哪些內容只存在那裡。";
-"The workspace has too many changed files to check them all." = "工作區變更的檔案太多，無法全部檢查。";
+"The workspace has too many files to check them all." = "工作區的檔案太多，無法全部檢查。";
 "AgentBridge could not compare the workspace with the source repository, so it cannot tell whether the workspace holds work that exists nowhere else." = "AgentBridge 無法比對工作區與來源儲存庫，因此無法判斷工作區是否有只存在那裡的內容。";
 "The session was removed and its isolated workspace deleted." = "已移除工作階段並刪除其隔離工作區。";
 "The session was removed and its isolated workspace deleted, after the user confirmed it held work that might exist nowhere else." = "已移除工作階段並刪除其隔離工作區；使用者已確認工作區內可能有只存在那裡的內容。";
 "Ignored files and folders, which Git does not keep (%@):" = "被忽略的檔案與資料夾，Git 不會保存（%@ 個）：";
+"AgentBridge could not read the older stash entries, so it cannot tell whether they exist only in the workspace." = "AgentBridge 無法讀取較舊的 stash 紀錄，因此無法判斷它們是否只存在工作區。";
