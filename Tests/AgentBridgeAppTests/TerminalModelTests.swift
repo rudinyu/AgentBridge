@@ -173,6 +173,23 @@ final class TerminalModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
+    func testTheStatusLineSaysHowTheTerminalTaskEnded() throws {
+        let expectations: [(exitCode: Int32?, status: String)] = [
+            (0, "The terminal task completed."),
+            (1, "Terminal task ended (exit code 1)."),
+            (134, "Terminal task ended (exit code 134)."), // A crash: 128 + SIGABRT.
+            (nil, "Terminal task ended.") // Ended on purpose, or no code known.
+        ]
+        for expected in expectations {
+            let model = try makeModel()
+            let launch = try openLocalShell(in: model)
+            model.terminal.terminalProcessDidStart(launchID: launch.id)
+            model.terminal.terminalDidTerminate(launchID: launch.id, exitCode: expected.exitCode)
+            XCTAssertFalse(model.terminal.terminalRunning)
+            XCTAssertEqual(model.status, expected.status, "Exit code \(String(describing: expected.exitCode)).")
+        }
+    }
+
     func testTheNewMessagesAreTranslated() {
         XCTAssertEqual(
             AppLocalization.display("The in-app terminal could not start. Close the panel and try again.", language: .traditionalChinese),

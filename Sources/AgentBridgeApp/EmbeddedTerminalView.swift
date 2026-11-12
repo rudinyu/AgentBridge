@@ -302,28 +302,39 @@ final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewD
     func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
-    func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+    func processTerminated(_ source: LocalProcess, exitCode waitStatus: Int32?) {
         terminationReported = true
         disableUsageScreenCapture()
         guard let onTermination else { return }
-        let exitCode = exitCode.flatMap(Self.exitCode(fromWaitStatus:))
-        Task { @MainActor in onTermination(exitCode) }
+        let decodedExitCode = waitStatus.flatMap(Self.exitCode(fromWaitStatus:))
+        Task { @MainActor in onTermination(decodedExitCode) }
     }
 
     /// SwiftTerm 1.20.0 starts every process with forkpty (its Subprocess path is
     /// compiled out) and passes the raw `waitpid` status word as `exitCode`, so
     /// `exit 1` arrives as 256. This turns it into the child's exit code, once,
-    /// here, so nothing downstream sees a status word. A child ended by a signal
-    /// gets nil, as for any end with no exit code: the app itself ends processes
-    /// with SIGTERM/SIGKILL when a terminal is closed or cancelled, and that must
-    /// not read as a failure. If a SwiftTerm upgrade starts passing decoded codes
-    /// (as its Subprocess path does), drop this, or codes would be decoded twice.
+    /// here, so nothing downstream sees a status word. If a SwiftTerm upgrade
+    /// starts passing decoded codes (as its Subprocess path does), drop this, or
+    /// codes would be decoded twice; the real-process tests catch that.
+    ///
+    /// A child ended by a signal that ends a terminal on purpose gets nil, as for
+    /// any end with no exit code, so it does not read as a failure: SIGTERM and
+    /// SIGKILL (`terminateWithEscalation`, SwiftTerm's `terminate()`), SIGINT
+    /// (Control-C, which the panel asks the user to press) and SIGHUP (the
+    /// pseudo-terminal closing). Any other signal, such as SIGSEGV or SIGABRT from
+    /// a crash, gets the shell's 128 + signal number, so a crash shows a code. A
+    /// stopped child (not an end) gets nil.
     static func exitCode(fromWaitStatus status: Int32) -> Int32? {
         // Swift does not import the W* macros. The low 7 bits are the
         // terminating signal (WTERMSIG), 0 for a normal exit (WIFEXITED), and
         // 0x7f for a stopped child; bits 8-15 hold the exit code (WEXITSTATUS).
-        guard status & 0x7f == 0 else { return nil }
-        return (status >> 8) & 0xff
+        // Bit 7 marks a core dump and is ignored.
+        let signal = status & 0x7f
+        switch signal {
+        case 0: return (status >> 8) & 0xff
+        case 0x7f, SIGHUP, SIGINT, SIGTERM, SIGKILL: return nil
+        default: return 128 + signal
+        }
     }
 
     func dataReceived(slice: ArraySlice<UInt8>) {

@@ -9,8 +9,10 @@ import XCTest
 /// containers, and real child processes run in the terminal view.
 ///
 /// Work the controller defers with `DispatchQueue.main.async` (the process start,
-/// a refusal report) is checked with `drainMainQueue()`, which is deterministic.
-/// Only real process events (a child exiting) are awaited with a timed loop.
+/// a refusal report) is checked with `drainMainQueue()`, which is deterministic
+/// for main-queue blocks. Real process events (a child exiting) and the exit
+/// report, which arrives in a main-actor `Task`, are awaited with a loop that
+/// returns as soon as the condition holds.
 @MainActor
 final class TerminalWindowControllerTests: XCTestCase {
     private func launch(_ executable: String, _ arguments: [String] = [], title: String = "Test Terminal") -> TerminalLaunchSpec {
@@ -98,7 +100,8 @@ final class TerminalWindowControllerTests: XCTestCase {
     }
 
     /// A model showing a launch whose real process (`sleep 30`) the controller has
-    /// started. Callers end it with `stop(_:)`, usually in a `defer`.
+    /// started. Callers end it with `stop(_:)`, usually in a `defer`; a teardown
+    /// block also signals it, so it cannot outlive a test that fails midway.
     private func startRunningTerminal() throws -> RunningTerminal {
         let model = try makeTestAppModel()
         let controller = model.terminal.windowController
@@ -108,20 +111,28 @@ final class TerminalWindowControllerTests: XCTestCase {
         model.terminal.terminalRunning = true
         mount(controller, in: container, running)
         let view = try XCTUnwrap(terminal(in: container))
+        // Does nothing once the process has ended.
+        addTeardownBlock { @MainActor in view.terminateWithEscalation() }
         // The controller starts the process in a main-queue block.
         drainMainQueue()
         XCTAssertTrue(controller.hasRunningProcess(for: running.id), "The deferred start did not start the process.")
         return RunningTerminal(model: model, controller: controller, launch: running, container: container, view: view)
     }
 
-    /// Ends the running process and waits until it has exited and the exit report,
-    /// queued on the main queue as the process stops, has reached the model.
+    /// Ends the running process and waits until it has exited and its exit report
+    /// (a main-actor `Task` queued as the process stops) has been delivered to the
+    /// controller's handler, and so to the model. Returns at once if no process runs.
     @discardableResult
     private func stop(_ running: RunningTerminal) -> Bool {
+        guard running.controller.hasRunningProcess else { return true }
+        var reported = false
+        let report = running.view.onTermination
+        running.view.onTermination = { exitCode in
+            report?(exitCode)
+            reported = true
+        }
         running.view.terminateWithEscalation()
-        guard runMainLoop(until: { !running.controller.hasRunningProcess }) else { return false }
-        drainMainQueue()
-        return true
+        return runMainLoop { reported && !running.controller.hasRunningProcess }
     }
 
     /// The model moves on to a launch the controller cannot start; SwiftUI then
@@ -200,22 +211,23 @@ final class TerminalWindowControllerTests: XCTestCase {
 
     // MARK: Starting a real process
 
-    /// Starts `spec` in a new view and returns every exit the view reported, once
-    /// the first one arrived and anything already queued after it has run.
+    /// Starts `spec` in a new view and returns every exit the view reported: the
+    /// first one, plus any further one that shows up while the main queue and the
+    /// main actor are drained after it.
     private func exitCodes(running spec: TerminalLaunchSpec, file: StaticString = #filePath, line: UInt = #line) -> [Int32?] {
         let view = AgentBridgeTerminalView.make()
-        var exitCodes: [Int32?] = []
-        view.onTermination = { exitCodes.append($0) }
+        var reported: [Int32?] = []
+        view.onTermination = { reported.append($0) }
 
         XCTAssertTrue(view.start(spec), "The child did not start.", file: file, line: line)
-        XCTAssertTrue(exitCodes.isEmpty, "Its exit is reported after start returns.", file: file, line: line)
-        XCTAssertTrue(runMainLoop { !exitCodes.isEmpty }, "The child's exit was not reported.", file: file, line: line)
-        // SwiftTerm reports an exit from a one-shot process source and cancels the
-        // source in the same call, so a second report could only be a main-queue
-        // hop that is already queued.
+        XCTAssertTrue(reported.isEmpty, "Its exit is reported after start returns.", file: file, line: line)
+        XCTAssertTrue(runMainLoop { !reported.isEmpty && !view.processIsRunning }, "The child's exit was not reported.", file: file, line: line)
+        // "Once" rests on SwiftTerm: it reports an exit from a one-shot process
+        // source on the main queue and cancels the source in the same block, so
+        // no second report can be made. The drain gives a hop that is already
+        // queued a chance to show up; it cannot prove that none ever will.
         drainMainQueue()
-        XCTAssertFalse(view.processIsRunning, file: file, line: line)
-        return exitCodes
+        return reported
     }
 
     func testAChildThatExitsAtOnceStartsAndReportsItsExitOnce() {
@@ -230,12 +242,26 @@ final class TerminalWindowControllerTests: XCTestCase {
         XCTAssertEqual(exitCodes(running: launch("/bin/sh", ["-c", "kill -TERM $$"])), [nil])
     }
 
+    func testAChildEndedByAnotherSignalReportsTheShellsSignalExitCode() {
+        // Fault signals are covered by the decoder test: a real one writes a crash report on every run.
+        XCTAssertEqual(exitCodes(running: launch("/bin/sh", ["-c", "kill -USR1 $$"])), [128 + SIGUSR1])
+    }
+
     func testAWaitStatusIsDecodedIntoAnExitCode() {
         XCTAssertEqual(AgentBridgeTerminalView.exitCode(fromWaitStatus: 0), 0)
         XCTAssertEqual(AgentBridgeTerminalView.exitCode(fromWaitStatus: 1 << 8), 1)
         XCTAssertEqual(AgentBridgeTerminalView.exitCode(fromWaitStatus: 255 << 8), 255)
-        XCTAssertNil(AgentBridgeTerminalView.exitCode(fromWaitStatus: SIGTERM), "Ended by a signal.")
-        XCTAssertNil(AgentBridgeTerminalView.exitCode(fromWaitStatus: 0x80 | SIGKILL), "Ended by a signal, with a core dump.")
+        // Signals that end a terminal on purpose: the app's close and cancel
+        // (TERM, KILL), Control-C (INT) and the pseudo-terminal closing (HUP).
+        for signal in [SIGTERM, SIGKILL, SIGINT, SIGHUP] {
+            XCTAssertNil(AgentBridgeTerminalView.exitCode(fromWaitStatus: signal), "Ended on purpose by signal \(signal).")
+        }
+        XCTAssertNil(AgentBridgeTerminalView.exitCode(fromWaitStatus: 0x80 | SIGKILL), "Ended on purpose, with a core dump.")
+        // Any other signal, such as a crash, gets the shell's 128 + signal number.
+        XCTAssertEqual(AgentBridgeTerminalView.exitCode(fromWaitStatus: SIGSEGV), 139)
+        XCTAssertEqual(AgentBridgeTerminalView.exitCode(fromWaitStatus: 0x80 | SIGABRT), 134, "With a core dump.")
+        XCTAssertEqual(AgentBridgeTerminalView.exitCode(fromWaitStatus: SIGBUS), 128 + SIGBUS)
+        XCTAssertEqual(AgentBridgeTerminalView.exitCode(fromWaitStatus: SIGQUIT), 131)
         XCTAssertNil(AgentBridgeTerminalView.exitCode(fromWaitStatus: (SIGSTOP << 8) | 0x7f), "Stopped, not ended.")
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import XCTest
 
 /// Runs `/usr/bin/git` for a test's own fixture repositories, cut off from this machine and the parent process:
 /// no inherited `GIT_*` variables, no system or global config, no init templates, no hooks, and a fixed identity.
@@ -47,13 +48,61 @@ enum FixtureGit {
         process.standardOutput = output
         process.standardError = errors
         try process.run()
+        // Both pipes are drained at once: read one after the other, git blocks on
+        // a full standard error pipe while the test waits for standard output to end.
+        let stderr = DataBox()
+        let stderrDrained = DispatchGroup()
+        stderrDrained.enter()
+        let errorReader = errors.fileHandleForReading
+        DispatchQueue.global().async {
+            stderr.data = errorReader.readDataToEndOfFile()
+            stderrDrained.leave()
+        }
         let stdout = output.fileHandleForReading.readDataToEndOfFile()
-        let stderr = errors.fileHandleForReading.readDataToEndOfFile()
+        stderrDrained.wait()
         process.waitUntilExit()
         return (
             process.terminationStatus,
             String(decoding: stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines),
-            String(decoding: stderr, as: UTF8.self)
+            String(decoding: stderr.data, as: UTF8.self)
         )
+    }
+
+    /// Written by the reading queue before `leave()` and read after `wait()`.
+    private final class DataBox: @unchecked Sendable {
+        var data = Data()
+    }
+}
+
+final class FixtureGitTests: XCTestCase {
+    /// Git's standard error is drained while its standard output is read, so a
+    /// command that writes more than a pipe buffer (about 64 KB) to standard error
+    /// before closing standard output does not leave git and the test waiting on
+    /// each other. A shell alias makes git itself produce that output.
+    func testACommandWithMoreThanAPipeBufferOfErrorOutputCompletes() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("FixtureGitTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let errorBytes = 512 * 1_024
+        let arguments = [
+            "-C", directory.path,
+            "-c", "alias.noisy=!yes x | head -c \(errorBytes) >&2; echo done",
+            "noisy"
+        ]
+
+        // Run off the test thread so a deadlock fails the test instead of hanging the run.
+        let finished = expectation(description: "git returned")
+        let result = ResultBox()
+        DispatchQueue.global().async {
+            result.value = Result { try FixtureGit.run(arguments) }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 30)
+        guard let value = result.value else { return }
+        XCTAssertEqual(try value.get(), "done")
+    }
+
+    private final class ResultBox: @unchecked Sendable {
+        var value: Result<String, Error>?
     }
 }

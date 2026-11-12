@@ -32,14 +32,25 @@ extension XCTestCase {
         return model
     }
 
-    /// Returns once every block already on the main queue has run: main-queue work
-    /// runs in order, so the block queued here runs after all of it. Use this to
-    /// show that a `DispatchQueue.main.async` hop has (or has not) done something,
-    /// instead of waiting a fixed time. Main-actor `Task`s are queued the same way.
+    /// Runs the main run loop until a `DispatchQueue.main.async` block and a
+    /// `Task { @MainActor }` queued here have both run, for `rounds` rounds.
+    ///
+    /// Guaranteed: the main queue is serial and FIFO, so every block already on
+    /// it has run, and in a later round so has any block those blocks queued.
+    /// Not guaranteed: main-actor `Task`s already queued have run. Their order
+    /// relative to main-queue blocks and to this hop is up to the executor and
+    /// their priority; the hop and the extra round only make it likely. So use
+    /// this for deferred main-queue work, and to give a stray main-actor hop a
+    /// chance to show itself; wait on the condition itself for anything a
+    /// main-actor `Task` must have done.
     @MainActor
-    func drainMainQueue() {
-        let drained = expectation(description: "main queue drained")
-        DispatchQueue.main.async { drained.fulfill() }
-        wait(for: [drained], timeout: 5)
+    func drainMainQueue(rounds: Int = 2) {
+        for round in 1...max(1, rounds) {
+            let queueBlockRan = expectation(description: "main-queue block \(round) ran")
+            let mainActorTaskRan = expectation(description: "main-actor task \(round) ran")
+            DispatchQueue.main.async { queueBlockRan.fulfill() }
+            Task { @MainActor in mainActorTaskRan.fulfill() }
+            wait(for: [queueBlockRan, mainActorTaskRan], timeout: 5)
+        }
     }
 }
