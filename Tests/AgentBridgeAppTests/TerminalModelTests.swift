@@ -151,6 +151,37 @@ final class TerminalModelTests: XCTestCase {
         assertClosed(model)
     }
 
+    func testARefusedLaunchLeavesNothingOfItselfBehind() throws {
+        let model = try makeModel()
+        let refused = try openLocalShell(in: model)
+        let selectedSession = try XCTUnwrap(model.selectedSession)
+        // State another open function or a pending cancel-and-close could have set
+        // for the refused launch before the controller refused it.
+        model.terminal.terminalIsProfileLogin = true
+        model.terminal.terminalIsUsageTUI = true
+        model.terminal.closeTerminalAfterCancellation = true
+        let running = TerminalLaunchSpec(title: "Earlier Terminal", executablePath: "/bin/sh", arguments: [], environment: [:], workingDirectory: "/tmp")
+
+        model.terminal.terminalLaunchWasRefused(refused.id, runningLaunch: running)
+        XCTAssertFalse(model.terminal.terminalIsProfileLogin)
+        XCTAssertFalse(model.terminal.terminalIsUsageTUI)
+        XCTAssertFalse(model.terminal.closeTerminalAfterCancellation)
+        XCTAssertNil(model.terminal.terminalSessionIDForView)
+        XCTAssertEqual(model.terminal.terminalProcessLaunchID, running.id)
+        XCTAssertEqual(model.selectedSession, selectedSession, "Opening a terminal never marks a session as running.")
+
+        // The refused launch never had a process, so a late report for it changes nothing.
+        model.terminal.terminalDidTerminate(launchID: refused.id, exitCode: 0)
+        model.terminal.terminalDidFailToStart(launchID: refused.id)
+        XCTAssertTrue(model.terminal.terminalRunning)
+        XCTAssertEqual(model.terminal.terminalLaunch?.id, running.id)
+
+        // The earlier process ending does not close the panel by itself.
+        model.terminal.terminalDidTerminate(launchID: running.id, exitCode: 0)
+        XCTAssertEqual(model.terminal.terminalLaunch?.id, running.id)
+        XCTAssertFalse(model.terminal.terminalRunning)
+    }
+
     func testARefusalForALaunchTheModelNoLongerShowsIsIgnored() throws {
         let model = try makeModel()
         let current = try openLocalShell(in: model)

@@ -59,7 +59,8 @@ private enum EmbeddedTerminalAppearance {
 }
 
 /// A local ANSI/VT100 view. OSC 52 clipboard requests and terminal links are denied.
-private final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewDelegate, @preconcurrency LocalProcessDelegate {
+/// Internal rather than private only so tests can start a real process in it.
+final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewDelegate, @preconcurrency LocalProcessDelegate {
     private var process: LocalProcess?
     var processIsRunning: Bool { process?.running == true }
     private let usageCaptureLock = NSLock()
@@ -70,6 +71,7 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
     private var usageSnapshotSequence: UInt64 = 0
     private var pendingUsageScreenSnapshot: DispatchWorkItem?
     private var usageCaptureFirstRow: Int?
+    /// Never reset: each view runs one launch and is discarded afterwards.
     private var terminationReported = false
     var onTermination: (@MainActor (Int32?) -> Void)?
     var onUsageScreenSnapshot: (@MainActor (String, Date) -> Bool)?
@@ -85,6 +87,18 @@ private final class AgentBridgeTerminalView: TerminalView, @preconcurrency Termi
         super.init(coder: coder)
         configureAppearance()
         configureProcess()
+    }
+
+    /// A view with the options every launch uses.
+    static func make() -> AgentBridgeTerminalView {
+        let options = TerminalOptions(
+            termName: "xterm-256color",
+            scrollback: 2_000,
+            enableSixelReported: false,
+            kittyImageCacheLimitBytes: 0,
+            ansi256PaletteStrategy: .base16Lab
+        )
+        return AgentBridgeTerminalView(frame: .zero, options: options)
     }
 
     private func configureAppearance() {
@@ -379,6 +393,9 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
     private var detachedWindowRoot: NSView?
     private var terminalConstraints: [NSLayoutConstraint] = []
     private var lastUsageCommandRequest = 0
+    /// The launch whose refusal was last sent to the model. SwiftUI may update a
+    /// container several times before that report runs, so it is sent once.
+    private var reportedRefusalLaunchID: UUID?
 
     var hasRunningProcess: Bool { terminalView?.processIsRunning == true }
 
@@ -540,6 +557,8 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
             // The earlier process is never killed implicitly. Tell the model after
             // this SwiftUI update, so it shows that launch again instead of waiting
             // on one that will never start.
+            guard reportedRefusalLaunchID != launch.id else { return nil }
+            reportedRefusalLaunchID = launch.id
             DispatchQueue.main.async { [weak self] in
                 self?.terminalModel?.terminalLaunchWasRefused(launch.id, runningLaunch: runningLaunch)
             }
@@ -547,17 +566,11 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
         }
         if let oldLaunchID = terminalLaunchID { discardTerminal(launchID: oldLaunchID) }
 
-        let options = TerminalOptions(
-            termName: "xterm-256color",
-            scrollback: 2_000,
-            enableSixelReported: false,
-            kittyImageCacheLimitBytes: 0,
-            ansi256PaletteStrategy: .base16Lab
-        )
-        let terminal = AgentBridgeTerminalView(frame: .zero, options: options)
+        let terminal = AgentBridgeTerminalView.make()
         terminalLaunch = launch
         terminalView = terminal
         lastUsageCommandRequest = 0
+        reportedRefusalLaunchID = nil
         terminal.onTermination = { [weak self] exitCode in
             guard let self, self.terminalLaunchID == launch.id else { return }
             self.terminalModel?.terminalDidTerminate(launchID: launch.id, exitCode: exitCode)

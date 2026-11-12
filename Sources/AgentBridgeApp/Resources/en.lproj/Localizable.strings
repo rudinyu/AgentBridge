@@ -820,6 +820,7 @@
 "Allow shared project memory after creation (on by default)" = "Allow shared project memory after creation (on by default)";
 "An API run requires explicit confirmation of its paid budget." = "An API run requires explicit confirmation of its paid budget.";
 "An account named this already exists for %@. Choose a different name." = "An account named this already exists for %@. Choose a different name.";
+"An earlier terminal process is still running, so it is shown again. End it before opening another terminal." = "An earlier terminal process is still running, so it is shown again. End it before opening another terminal.";
 "An existing isolated workspace is not a regular folder; the data root was not changed." = "An existing isolated workspace is not a regular folder; the data root was not changed.";
 "An untracked file changed or is not a regular file; nothing was restored." = "An untracked file changed or is not a regular file; nothing was restored.";
 "Anthropic API Key (held in memory only)" = "Anthropic API Key (held in memory only)";
@@ -1306,7 +1307,6 @@
 "The global mode is API; switch to subscription sign-in mode before creating a Codex project session. The discussion itself still uses subscription sign-in." = "The global mode is API; switch to subscription sign-in mode before creating a Codex project session. The discussion itself still uses subscription sign-in.";
 "The in-app terminal closed." = "The in-app terminal closed.";
 "The in-app terminal could not start. Close the panel and try again." = "The in-app terminal could not start. Close the panel and try again.";
-"An earlier terminal process is still running, so it is shown again. End it before opening another terminal." = "An earlier terminal process is still running, so it is shown again. End it before opening another terminal.";
 "The interactive CLI must use an absolute executable path." = "The interactive CLI must use an absolute executable path.";
 "The interactive memory file is not a secure private regular file." = "The interactive memory file is not a secure private regular file.";
 "The interactive memory file write did not complete." = "The interactive memory file write did not complete.";

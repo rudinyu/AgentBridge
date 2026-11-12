@@ -323,6 +323,7 @@ private struct ProxyProtocolState {
     private var toolCallCount = 0
     private var totalToolResponseBytes = 0
 
+    // Explicit because Swift 6.3 rejects the implicit memberwise init, made private by the private stored properties, at the call site outside this struct.
     init(ticket: MCPProxyTicket, connection: MCPStdioConnection) {
         self.ticket = ticket
         self.connection = connection

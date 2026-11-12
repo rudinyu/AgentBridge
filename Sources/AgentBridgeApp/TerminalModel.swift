@@ -43,6 +43,8 @@ final class TerminalModel {
     var closeButtonTitle: String {
         guard terminalRunning else { return "Close terminal" }
         if closeRequiresManualStop { return "End the CLI, then close" }
+        // A manual-stop launch whose process has not started (or failed to start)
+        // has nothing to end or cancel, so closing it is a plain close.
         return terminalNeedsManualStop ? "Close terminal" : "Cancel and close"
     }
 
@@ -319,8 +321,7 @@ final class TerminalModel {
     func terminalDidFailToStart(launchID: UUID) {
         guard terminalLaunch?.id == launchID else { return }
         terminalDidTerminate(launchID: launchID, exitCode: nil)
-        app.status = "The in-app terminal could not start. Close the panel and try again."
-        app.reportOperationError(app.localized("The in-app terminal could not start. Close the panel and try again."))
+        reportTerminalProblem("The in-app terminal could not start. Close the panel and try again.")
     }
 
     /// The controller refused `refusedLaunchID` because an earlier launch's process
@@ -346,8 +347,15 @@ final class TerminalModel {
         activeTerminalProfileID = nil
         activeTerminalSessionID = nil
         closeTerminalAfterCancellation = false
-        app.status = "An earlier terminal process is still running, so it is shown again. End it before opening another terminal."
-        app.reportOperationError(app.localized("An earlier terminal process is still running, so it is shown again. End it before opening another terminal."))
+        reportTerminalProblem("An earlier terminal process is still running, so it is shown again. End it before opening another terminal.")
+    }
+
+    /// Puts `message` in the status line, which is localized when shown, and
+    /// reports it as an error, as the open functions report a busy terminal. The
+    /// error also reaches the setup wizard, which does not show the status line.
+    private func reportTerminalProblem(_ message: String) {
+        app.status = message
+        app.reportOperationError(app.localized(message))
     }
 
     func openTerminalInWindow() {

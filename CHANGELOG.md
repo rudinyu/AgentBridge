@@ -5,6 +5,12 @@
 ### Fixed
 
 - The in-app terminal can no longer get stuck with a spinner, an empty panel and a locked close button (reported after reopening Local Terminal following `exit`). A process that fails to start now ends the launch with a clear message. If an earlier terminal process is still running, AgentBridge shows that terminal again instead of a new one that cannot start; it never stops that process for you. The terminal view is moved back into the panel when SwiftUI replaces the panel's container. The close button waits for Control-C only while a started process is really running, so a launch with no process can always be closed.
+- AgentBridge builds with Swift 6.3 (Xcode 26.6) again; the MCP proxy's private protocol state now declares its initializer explicitly.
+- `.codex/ci.sh` clears the repository-scoped Git variables that a Git hook exports, and the token-usage test fixture ignores global Git configuration, templates and hooks, so the checks give the same result when run from a pre-commit hook.
+
+### Documentation
+
+- The architecture documents describe 0.14.1, including the Markdown handoff store and same-commit quick continuation. The README and usage guides no longer contain a machine-specific checkout path.
 
 ## 0.14.1 — 2026-11-11
 

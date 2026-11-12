@@ -820,6 +820,7 @@
 "Allow shared project memory after creation (on by default)" = "建立後允許共用專案記憶（預設開啟）";
 "An API run requires explicit confirmation of its paid budget." = "API 執行需要明確確認本次付費預算。";
 "An account named this already exists for %@. Choose a different name." = "已有同名的 %@ 帳戶設定，請改用不同名稱。";
+"An earlier terminal process is still running, so it is shown again. End it before opening another terminal." = "先前的終端機程序仍在執行，因此重新顯示。請先結束它，再開啟其他終端機。";
 "An existing isolated workspace is not a regular folder; the data root was not changed." = "既有隔離工作區不是一般資料夾；資料根目錄未變更。";
 "An untracked file changed or is not a regular file; nothing was restored." = "未追蹤檔案已改變或不是一般檔案，未執行還原。";
 "Anthropic API Key (held in memory only)" = "Anthropic API key（只保留在記憶體）";
@@ -1306,7 +1307,6 @@
 "The global mode is API; switch to subscription sign-in mode before creating a Codex project session. The discussion itself still uses subscription sign-in." = "目前全域模式為 API；請先切換至訂閱登入模式，再為 Codex 建立專案工作階段。討論本身仍使用訂閱登入。";
 "The in-app terminal closed." = "已關閉 App 內終端機。";
 "The in-app terminal could not start. Close the panel and try again." = "App 內終端機無法啟動。請關閉面板後再試一次。";
-"An earlier terminal process is still running, so it is shown again. End it before opening another terminal." = "先前的終端機程序仍在執行，因此重新顯示。請先結束它，再開啟其他終端機。";
 "The interactive CLI must use an absolute executable path." = "互動 CLI 必須使用絕對執行檔路徑。";
 "The interactive memory file is not a secure private regular file." = "互動記憶檔不是安全的私有一般檔案。";
 "The interactive memory file write did not complete." = "互動記憶檔寫入未完成。";
