@@ -31,6 +31,15 @@ final class TerminalModelTests: XCTestCase {
         return launch
     }
 
+    func testTheLocalShellTitleSaysItIsTheIsolatedCopy() throws {
+        let model = try makeModel()
+        _ = try openLocalShell(in: model)
+        let title = model.terminal.terminalTitle
+        XCTAssertEqual(title, "Local Terminal · isolated copy of repo")
+        XCTAssertEqual(AppLocalization.display(title, language: .traditionalChinese), "本機終端機 · repo 的隔離副本")
+        model.terminal.closeEmbeddedTerminal()
+    }
+
     private func assertClosed(_ model: AppModel, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertNil(model.terminal.terminalLaunch, file: file, line: line)
         XCTAssertFalse(model.terminal.terminalRunning, file: file, line: line)

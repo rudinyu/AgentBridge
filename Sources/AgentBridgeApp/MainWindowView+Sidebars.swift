@@ -338,11 +338,11 @@ extension MainWindowView {
                         .font(.caption2).foregroundStyle(.secondary)
                 } else {
                     Picker("New session access mode", selection: $model.requestedAccessMode) {
-                        Text("Read-only (default)").tag(AccessMode.readOnly)
+                        Text("Native interactive terminal (default)").tag(AccessMode.interactiveManualApproval)
+                            .disabled(model.settings.usageMode == .api)
                         Text("Isolated changes (plan approval required)").tag(AccessMode.isolatedChanges)
                             .disabled(model.settings.usageMode == .api)
-                        Text("Native interactive terminal").tag(AccessMode.interactiveManualApproval)
-                            .disabled(model.settings.usageMode == .api)
+                        Text("Read-only").tag(AccessMode.readOnly)
                     }
                     .font(.caption)
                 }

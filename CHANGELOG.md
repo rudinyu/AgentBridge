@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- New sessions default to the native interactive terminal instead of read-only. Local models and Claude API mode still allow only read-only; when you switch away from them, the default comes back unless you chose a mode yourself.
+- The local shell's title reads "Local Terminal · isolated copy of" the repository name, since it opens in the session's isolated copy rather than the source repository.
+
 ### Added
 
 - Sessions can be removed. Right-click a session in either list and choose Remove Session…, or run `agentbridge session remove SESSION-ID`. AgentBridge first shows what removal deletes: files in the isolated workspace that differ from what the source repository has, ignored files and folders such as `.env`, and branches, tags, notes or stash entries whose commits exist only there. From the CLI, `--confirm` removes nothing when work would be lost unless `--discard-unsaved-work` is added too. Removal deletes the workspace and cannot be undone; the session's audit events and usage records are kept, so usage statistics still count it. Running sessions, sessions with a terminal open in their workspace and Claude sessions with an unreconciled API call cannot be removed, and nothing is deleted if the workspace changed after it was reviewed. The check reads the workspace with AgentBridge's own Git settings, so settings in the workspace's `.git` cannot make it run a program.

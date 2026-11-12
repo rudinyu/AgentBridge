@@ -64,7 +64,7 @@ Open **Chats** and choose **New Chat**. Select a provider/account and send the f
 1. Choose Codex or Claude under **Assistant**. Codex only offers official CLI subscription login.
 2. Confirm the account under **Official CLI Accounts**. To use another account, add and sign in to it first as described below.
 3. Enter the Git repository path under **Project**, or click **Choose Repository…**.
-4. Leave **Interactive Terminal Session** off and click **Create a New Session for This Project**. This creates a read-only chat session.
+4. Under **New session access mode**, choose **Read-only** (the default is **Native interactive terminal**) and click **Create a New Session for This Project**. This creates a read-only chat session.
 5. Enter a prompt on the right and click **Send**. A successfully completed turn is saved to shared memory for this repository and pinned commit.
 
 Each session pins the source `HEAD` at creation and runs in its own isolated clone under `<chosen folder>/workspaces/<session-id>/`. Uncommitted and untracked files are not copied. If the source commit later changes, an existing session keeps its original snapshot. A new session uses the new source commit and a separate memory scope. AgentBridge does not merge or push workspace changes automatically.
@@ -106,12 +106,12 @@ For quota-independent quick continuation, close any active in-app provider termi
 To use the native interactive Codex or Claude interface:
 
 1. Make sure subscription login is selected. Claude API mode does not support the interactive terminal.
-2. Enable **Interactive Terminal Session** and create the session.
+2. Keep **New session access mode** at **Native interactive terminal (default)** and click **Create a New Session for This Project**.
 3. Click **Open Embedded Terminal** and enter prompts and control the next steps in the provider TUI. Commands such as `/status` are handled by the official CLI. Use **Open in Window** to resize the live terminal in its own window, or **Return to Conversation** to move that same session back. In **Project Conversations**, hide the sidebar to give the working area more room.
 
 This differs from the read-only chat on the right. Codex interactive sessions keep the read-only sandbox. Claude uses its native Manual permission flow; a user-approved action may change the isolated clone, read files outside the workspace, or access the network. Terminal transcripts stay in the current screen and are not written to AgentBridge memory or audit logs.
 
-The upper-right **Local Terminal** action opens a shell at the repository clone, but it runs with the current macOS user's permissions and may access files outside the clone or use the network. The Git clone is not an operating-system sandbox.
+The upper-right **Local Terminal** action opens a shell at the repository clone (its title reads **Local Terminal · isolated copy of** the repository name, because it is not the source repository), but it runs with the current macOS user's permissions and may access files outside the clone or use the network. The Git clone is not an operating-system sandbox.
 
 ### 7. Usage dashboard and local run limits
 
@@ -155,7 +155,7 @@ From the CLI, `"$CLI" session remove SESSION-ID` shows the same check without re
 
 ### 9. Safe changes, activity, memory handoff, and extensions
 
-Read-only stays the default. For an isolated change, choose **Isolated Changes** under **Access mode** and create a new session while subscription mode is selected. It uses a fresh workspace based on the source repository's committed `HEAD`; uncommitted source files are not copied. Native interactive TUI mode is separate.
+The native interactive terminal is the default access mode. For an isolated change, choose **Isolated changes** under **New session access mode** and create a new session while subscription mode is selected. It uses a fresh workspace based on the source repository's committed `HEAD`; uncommitted source files are not copied. Native interactive TUI mode is separate.
 
 In **Changes**, write a title, summary, and steps for the plan, then save and review it. The change run sees no shared memory unless you select **Include shared memory in the change run** (or pass `--with-memory` to `changes plan`); approval then covers the memory as it is, so approve again if it changes. Edit the plan until it matches the work you want. Click **Approve reviewed plan** before **Run approved changes** becomes available. The provider writes only in the isolated session workspace. Codex change runs use headless `codex exec`: AgentBridge does not enable automatic approval, and no runtime approval prompt is available. A command that needs permissions outside the configured sandbox fails closed; keep the work within the approved plan and workspace. The CLI offers the same sequence:
 

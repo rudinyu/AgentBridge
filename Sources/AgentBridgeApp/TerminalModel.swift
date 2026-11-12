@@ -241,7 +241,9 @@ final class TerminalModel {
         guard let session = app.selectedSession else { app.errorMessage = "Select a session first."; return }
         guard terminalLaunch == nil, !terminalIsBusy else { app.errorMessage = "Close the current app terminal first."; return }
         let spec = TerminalLaunchSpec(
-            title: "Local Terminal · \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)",
+            // The shell runs in the session's isolated copy, not in the source
+            // repository the name comes from, so the title says so.
+            title: "Local Terminal · isolated copy of \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)",
             executablePath: "/bin/sh",
             arguments: ["-f"],
             environment: sanitizedTerminalEnvironment(),

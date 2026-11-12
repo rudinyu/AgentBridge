@@ -1089,7 +1089,7 @@
 "Local Runs in the Last 5 Hours" = "Local Runs in the Last 5 Hours";
 "Local Runs in the Last 7 Days" = "Local Runs in the Last 7 Days";
 "Local Terminal" = "Local Terminal";
-"Local Terminal · %@" = "Local Terminal · %@";
+"Local Terminal · isolated copy of %@" = "Local Terminal · isolated copy of %@";
 "Local model connection failed: %@" = "Local model connection failed: %@";
 "Local model endpoints must use http://127.0.0.1 or http://[::1] without credentials, query parameters, or fragments." = "Local model endpoints must use http://127.0.0.1 or http://[::1] without credentials, query parameters, or fragments.";
 "Local model settings are invalid. Check the endpoint, model name, context window, and output limit." = "Local model settings are invalid. Check the endpoint, model name, context window, and output limit.";
@@ -1152,7 +1152,7 @@
 "Prompts and responses enter shared memory only after a successful completion. The key is not saved." = "Prompts and responses enter shared memory only after a successful completion. The key is not saved.";
 "Prompts can contain up to 256 KiB." = "Prompts can contain up to 256 KiB.";
 "Provider reported US$%@." = "Provider reported US$%@.";
-"Read-only (default)" = "Read-only (default)";
+"Native interactive terminal (default)" = "Native interactive terminal (default)";
 "Ready." = "Ready.";
 "Requested to stop the current discussion turn." = "Requested to stop the current discussion turn.";
 "Reserved" = "Reserved";

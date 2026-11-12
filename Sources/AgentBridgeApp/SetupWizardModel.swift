@@ -271,7 +271,7 @@ final class SetupWizardModel {
         let previous = app.settings
         app.settings.defaultProvider = provider
         if provider == .codex { app.settings.usageMode = .subscription }
-        if provider == .local { app.requestedAccessMode = .readOnly }
+        app.applyAccessModeLimits()
         do {
             try service.saveSettings(app.settings)
             if previous.defaultProvider != app.settings.defaultProvider || previous.usageMode != app.settings.usageMode {

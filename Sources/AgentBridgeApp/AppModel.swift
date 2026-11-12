@@ -35,7 +35,13 @@ final class AppModel {
     var localModelError: String?
     var isRefreshingLocalModels = false
     var isTestingLocalModel = false
-    var requestedAccessMode: AccessMode = .readOnly
+    /// The access mode for the next session. The native interactive terminal is
+    /// the default; local models and Claude API mode allow only read-only.
+    var requestedAccessMode: AccessMode = .interactiveManualApproval
+    /// Whether `requestedAccessMode` was set to read-only only because the
+    /// provider or usage mode allowed nothing else, so it can go back to the
+    /// default once they do.
+    @ObservationIgnored private var accessModeWasLimitedToReadOnly = false
     var repositoryPath = ""
     var workspaceRootPath = ""
     var isChangingWorkspaceRoot = false
@@ -98,6 +104,23 @@ final class AppModel {
     /// What removing a session would delete, while the user decides.
     var sessionRemovalPreview: SessionRemovalPreview?
     var isRemovingSession = false
+
+    /// Keeps `requestedAccessMode` to what the provider and usage mode allow:
+    /// read-only for local models and Claude API mode. When those allow more
+    /// again, a mode that was limited goes back to the interactive default; a
+    /// read-only mode the user chose stays.
+    func applyAccessModeLimits() {
+        let onlyReadOnly = settings.defaultProvider == .local || settings.usageMode == .api
+        if onlyReadOnly {
+            if requestedAccessMode != .readOnly {
+                requestedAccessMode = .readOnly
+                accessModeWasLimitedToReadOnly = true
+            }
+        } else if accessModeWasLimitedToReadOnly {
+            requestedAccessMode = .interactiveManualApproval
+            accessModeWasLimitedToReadOnly = false
+        }
+    }
 
     /// Whether this app is running `sessionID` right now.
     func hasActiveRun(for sessionID: UUID) -> Bool { activeRunFlags[sessionID] != nil }
@@ -363,6 +386,7 @@ final class AppModel {
                 loadedSettings.localModel = localModelDraft
             }
             settings = loadedSettings
+            applyAccessModeLimits()
             savedLocalModelSettings = persistedLocalModel
             if persistedLocalModelChanged { invalidateLocalModelConnectionState() }
             codexPath = settings.codexBinaryPath ?? ""
@@ -566,8 +590,7 @@ final class AppModel {
         if provider == .codex, settings.usageMode == .api {
             settings.usageMode = .subscription
         }
-        if provider == .local { requestedAccessMode = .readOnly }
-        if provider == .codex && settings.usageMode == .api { requestedAccessMode = .readOnly }
+        applyAccessModeLimits()
         clearAPIAuthorization()
         do {
             updateBinaryPathsInSettings()
@@ -598,7 +621,7 @@ final class AppModel {
               let service else { return }
         let previous = settings
         settings.usageMode = usageMode
-        if usageMode == .api { requestedAccessMode = .readOnly }
+        applyAccessModeLimits()
         clearAPIAuthorization()
         do {
             updateBinaryPathsInSettings()

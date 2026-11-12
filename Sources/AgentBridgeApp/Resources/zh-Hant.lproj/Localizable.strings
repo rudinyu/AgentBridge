@@ -1089,7 +1089,7 @@
 "Local Runs in the Last 5 Hours" = "近 5 小時本機執行";
 "Local Runs in the Last 7 Days" = "近 7 天本機執行";
 "Local Terminal" = "本機終端機";
-"Local Terminal · %@" = "本機終端 · %@";
+"Local Terminal · isolated copy of %@" = "本機終端機 · %@ 的隔離副本";
 "Local model connection failed: %@" = "本機模型連線失敗：%@";
 "Local model endpoints must use http://127.0.0.1 or http://[::1] without credentials, query parameters, or fragments." = "本機模型端點只能使用沒有帳密、查詢或片段的 http://127.0.0.1 或 http://[::1] 位址。";
 "Local model settings are invalid. Check the endpoint, model name, context window, and output limit." = "本機模型設定無效；請檢查端點、模型名稱、上下文視窗與輸出上限。";
@@ -1152,7 +1152,7 @@
 "Prompts and responses enter shared memory only after a successful completion. The key is not saved." = "提示和回應只在成功完成後進入共用記憶；金鑰不會保存。";
 "Prompts can contain up to 256 KiB." = "提示內容最多 256 KiB。";
 "Provider reported US$%@." = "供應商回報 US$%@。";
-"Read-only (default)" = "唯讀（預設）";
+"Native interactive terminal (default)" = "原生互動終端（預設）";
 "Ready." = "就緒。";
 "Requested to stop the current discussion turn." = "已要求停止目前討論回合。";
 "Reserved" = "已保留";
