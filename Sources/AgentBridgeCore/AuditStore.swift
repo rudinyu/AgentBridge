@@ -299,7 +299,7 @@ public final class AuditStore: @unchecked Sendable {
         let descriptor = try openPrivateLockFile(at: url, failure: "Could not lock the session.")
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             _ = close(descriptor)
-            throw AgentBridgeError.sessionMismatch("This session is already running in another window or terminal.")
+            throw AgentBridgeError.sessionMismatch(AgentBridgeError.sessionBusyMessage)
         }
         return descriptor
     }

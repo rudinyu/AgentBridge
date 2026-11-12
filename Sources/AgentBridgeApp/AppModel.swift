@@ -86,6 +86,12 @@ final class AppModel {
     private var store: AuditStore?
     @ObservationIgnored private var activeRunFlags: [UUID: CancellationFlag] = [:]
     @ObservationIgnored private var autonomousCancellationFlags: [UUID: CancellationFlag] = [:]
+    /// Sessions whose change diff is loading. Loading holds the session's run
+    /// lease, so a second load started meanwhile would find it taken.
+    @ObservationIgnored private(set) var changeDiffLoadsInFlight: Set<UUID> = []
+    /// Sessions asked to reload their diff while a load was in flight; each gets
+    /// one more load when the current one ends, so the shown diff is not stale.
+    @ObservationIgnored private var changeDiffReloadsRequested: Set<UUID> = []
     private var activeRunSessionID: UUID?
     private var savedLocalModelSettings: LocalModelSettings?
 
@@ -458,21 +464,44 @@ final class AppModel {
         }
     }
 
+    /// Loads the selected isolated-changes session's diff in the background.
+    ///
+    /// Refreshes, including the one every 2 seconds, and selection changes all
+    /// ask for this. Only one load per session runs at a time, because a load
+    /// holds the session's run lease and an overlapping one would fail as if
+    /// another window were running the session. A request made meanwhile is
+    /// served by one more load afterwards. A lease held by anything else, such as
+    /// a CLI run of the same session, keeps the current diff without an alert;
+    /// the next refresh tries again.
     private func refreshChangeDiffIfNeeded(for selectedSessionID: UUID) {
-        if selectedSession?.policy.accessMode == .isolatedChanges,
-           activeRunFlags[selectedSessionID] == nil,
-           selectedSession?.status != .running {
-            Task { @MainActor [weak self] in
-                guard let self, let service = self.service else { return }
+        guard selectedSession?.policy.accessMode == .isolatedChanges,
+              activeRunFlags[selectedSessionID] == nil,
+              selectedSession?.status != .running else {
+            changes.changeDiff = nil
+            return
+        }
+        guard !changeDiffLoadsInFlight.contains(selectedSessionID) else {
+            changeDiffReloadsRequested.insert(selectedSessionID)
+            return
+        }
+        changeDiffLoadsInFlight.insert(selectedSessionID)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let service = self.service {
                 do {
                     let diff = try await service.changesDiff(sessionID: selectedSessionID)
                     if self.selectedSessionID == selectedSessionID { self.changes.changeDiff = diff }
+                } catch let error as AgentBridgeError where error.isSessionBusy {
+                    // Held by other work on this session; keep what is shown.
                 } catch {
                     if self.selectedSessionID == selectedSessionID { self.errorMessage = error.localizedDescription }
                 }
             }
-        } else {
-            changes.changeDiff = nil
+            self.changeDiffLoadsInFlight.remove(selectedSessionID)
+            if self.changeDiffReloadsRequested.remove(selectedSessionID) != nil,
+               self.selectedSessionID == selectedSessionID {
+                self.refreshChangeDiffIfNeeded(for: selectedSessionID)
+            }
         }
     }
 

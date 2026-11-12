@@ -588,6 +588,15 @@ public enum AgentBridgeError: Error, LocalizedError, Equatable {
     }
 }
 
+extension AgentBridgeError {
+    /// What taking a session's run lease reports when the lease is already held,
+    /// by another process or by other work in this one.
+    public static let sessionBusyMessage = "This session is already running in another window or terminal."
+
+    /// True when the error only says the session's run lease is held elsewhere.
+    public var isSessionBusy: Bool { self == .sessionMismatch(Self.sessionBusyMessage) }
+}
+
 public enum RuntimePaths {
     public static func applicationSupportRoot(fileManager: FileManager = .default) throws -> URL {
         let base = try fileManager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
