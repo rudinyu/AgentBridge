@@ -35,7 +35,7 @@ final class ChangeWorkflowTests: XCTestCase {
     func testPlanMustBeReviewedBeforeAnyChangeRunAndSourceRemainsUntouched() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
-        let sourceHeadBefore = try gitText(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"])
+        let sourceHeadBefore = try FixtureGit.run(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"])
         let sourceTextBefore = try String(contentsOf: fixture.sourceURL.appendingPathComponent("source.txt"), encoding: .utf8)
         XCTAssertEqual(SessionPolicy().accessMode, .readOnly)
 
@@ -61,9 +61,9 @@ final class ChangeWorkflowTests: XCTestCase {
 
         let saved = try XCTUnwrap(fixture.store.session(id: fixture.session.id))
         XCTAssertNil(saved.approvedChangePlanDigest)
-        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"]), sourceHeadBefore)
+        XCTAssertEqual(try FixtureGit.run(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"]), sourceHeadBefore)
         XCTAssertEqual(try String(contentsOf: fixture.sourceURL.appendingPathComponent("source.txt"), encoding: .utf8), sourceTextBefore)
-        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
+        XCTAssertEqual(try FixtureGit.run(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
     }
 
     func testFileDiffAndPatchExportStayInsideTheIsolatedWorkspace() async throws {
@@ -86,7 +86,7 @@ final class ChangeWorkflowTests: XCTestCase {
         let restoredDiff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
         XCTAssertEqual(restoredDiff.files.map(\.path), ["source.txt"])
         XCTAssertEqual(try String(contentsOf: sourcePath, encoding: .utf8), sourceTextBefore)
-        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
+        XCTAssertEqual(try FixtureGit.run(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
     }
 
     func testReviewingChangesStillWorksWhileTheRunLimitIsReached() async throws {
@@ -185,7 +185,7 @@ final class ChangeWorkflowTests: XCTestCase {
         }
 
         XCTAssertEqual(
-            try git(["-C", fixture.sourceURL.path, "show-ref", "--verify", "--quiet", "refs/heads/agentbridge/unbound-diff-test"], allowedExitCodes: [0, 1]),
+            try FixtureGit.exitStatus(["-C", fixture.sourceURL.path, "show-ref", "--verify", "--quiet", "refs/heads/agentbridge/unbound-diff-test"]),
             1
         )
     }
@@ -220,9 +220,9 @@ final class ChangeWorkflowTests: XCTestCase {
         let diffDigest = try await fixture.service.changesDiff(sessionID: fixture.session.id).digest
 
         try Data("source advanced\n".utf8).write(to: fixture.sourceURL.appendingPathComponent("source.txt"))
-        try git(["-C", fixture.sourceURL.path, "add", "source.txt"])
-        try git(["-C", fixture.sourceURL.path, "commit", "-m", "advance source"])
-        let advancedHead = try gitText(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"])
+        try FixtureGit.run(["-C", fixture.sourceURL.path, "add", "source.txt"])
+        try FixtureGit.run(["-C", fixture.sourceURL.path, "commit", "-m", "advance source"])
+        let advancedHead = try FixtureGit.run(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"])
         let advancedText = try String(contentsOf: fixture.sourceURL.appendingPathComponent("source.txt"), encoding: .utf8)
 
         var session = try XCTUnwrap(fixture.store.session(id: fixture.session.id))
@@ -236,11 +236,11 @@ final class ChangeWorkflowTests: XCTestCase {
 
         // The branch starts at the session's base, so the source moving on does not matter.
         let result = try await fixture.service.applyChangesToLocalBranch(sessionID: fixture.session.id, branchName: "agentbridge/review-test")
-        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "rev-parse", "refs/heads/agentbridge/review-test"]), fixture.session.snapshotCommit)
+        XCTAssertEqual(try FixtureGit.run(["-C", fixture.sourceURL.path, "rev-parse", "refs/heads/agentbridge/review-test"]), fixture.session.snapshotCommit)
         XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: result.worktreePath).appendingPathComponent("source.txt"), encoding: .utf8), "isolated change\n")
-        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"]), advancedHead)
+        XCTAssertEqual(try FixtureGit.run(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"]), advancedHead)
         XCTAssertEqual(try String(contentsOf: fixture.sourceURL.appendingPathComponent("source.txt"), encoding: .utf8), advancedText)
-        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
+        XCTAssertEqual(try FixtureGit.run(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
     }
 
     func testApplyIsRefusedWhenTheSourceNoLongerHasTheBaseCommit() async throws {
@@ -250,13 +250,13 @@ final class ChangeWorkflowTests: XCTestCase {
         let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
         try markVerified(diff, fixture)
         let source = fixture.sourceURL.path
-        try git(["-C", source, "checkout", "-q", "--orphan", "rewritten"])
-        try git(["-C", source, "commit", "-q", "-m", "rewritten history"])
-        let oldBranches = try gitText(["-C", source, "for-each-ref", "--format=%(refname:short)", "refs/heads/"])
+        try FixtureGit.run(["-C", source, "checkout", "-q", "--orphan", "rewritten"])
+        try FixtureGit.run(["-C", source, "commit", "-q", "-m", "rewritten history"])
+        let oldBranches = try FixtureGit.run(["-C", source, "for-each-ref", "--format=%(refname:short)", "refs/heads/"])
             .split(separator: "\n").map(String.init).filter { $0 != "rewritten" }
-        for branch in oldBranches { try git(["-C", source, "branch", "-q", "-D", branch]) }
-        try git(["-C", source, "reflog", "expire", "--expire=now", "--all"])
-        try git(["-C", source, "gc", "-q", "--prune=now"])
+        for branch in oldBranches { try FixtureGit.run(["-C", source, "branch", "-q", "-D", branch]) }
+        try FixtureGit.run(["-C", source, "reflog", "expire", "--expire=now", "--all"])
+        try FixtureGit.run(["-C", source, "gc", "-q", "--prune=now"])
         do {
             _ = try await fixture.service.applyChangesToLocalBranch(sessionID: fixture.session.id, branchName: "agentbridge/gone")
             XCTFail("Changes were applied without the session's base commit.")
@@ -265,7 +265,7 @@ final class ChangeWorkflowTests: XCTestCase {
                 return XCTFail("Unexpected error: \(error)")
             }
         }
-        XCTAssertEqual(try git(["-C", source, "show-ref", "--verify", "--quiet", "refs/heads/agentbridge/gone"], allowedExitCodes: [0, 1]), 1)
+        XCTAssertEqual(try FixtureGit.exitStatus(["-C", source, "show-ref", "--verify", "--quiet", "refs/heads/agentbridge/gone"]), 1)
     }
 
     func testASessionLeftRunningByAStoppedProcessIsMarkedFailed() async throws {
@@ -289,7 +289,7 @@ final class ChangeWorkflowTests: XCTestCase {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let sourcePath = fixture.sourceURL.appendingPathComponent("source.txt")
-        let sourceHead = try gitText(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"])
+        let sourceHead = try FixtureGit.run(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"])
         let sourceText = try String(contentsOf: sourcePath, encoding: .utf8)
         let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
         try Data("accepted isolated edit\n".utf8).write(to: workspace.appendingPathComponent("source.txt"))
@@ -312,13 +312,13 @@ final class ChangeWorkflowTests: XCTestCase {
         XCTAssertEqual(result.branchName, "agentbridge/review-test")
         XCTAssertEqual(result.changedFileCount, 2)
         XCTAssertTrue(FileManager.default.fileExists(atPath: result.worktreePath))
-        XCTAssertEqual(try gitText(["-C", result.worktreePath, "branch", "--show-current"]), result.branchName)
-        XCTAssertEqual(try gitText(["-C", result.worktreePath, "rev-parse", "HEAD"]), sourceHead)
-        XCTAssertTrue(try gitText(["-C", result.worktreePath, "status", "--porcelain"]).contains("source.txt"))
+        XCTAssertEqual(try FixtureGit.run(["-C", result.worktreePath, "branch", "--show-current"]), result.branchName)
+        XCTAssertEqual(try FixtureGit.run(["-C", result.worktreePath, "rev-parse", "HEAD"]), sourceHead)
+        XCTAssertTrue(try FixtureGit.run(["-C", result.worktreePath, "status", "--porcelain"]).contains("source.txt"))
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: result.worktreePath).contains("new.txt"))
-        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"]), sourceHead)
+        XCTAssertEqual(try FixtureGit.run(["-C", fixture.sourceURL.path, "rev-parse", "HEAD"]), sourceHead)
         XCTAssertEqual(try String(contentsOf: sourcePath, encoding: .utf8), sourceText)
-        XCTAssertEqual(try gitText(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
+        XCTAssertEqual(try FixtureGit.run(["-C", fixture.sourceURL.path, "status", "--porcelain"]), "")
     }
 
     func testVerificationRequiresCustomCommandApprovalAndPassesArgumentsLiterally() async throws {
@@ -652,7 +652,7 @@ final class ChangeWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let workspace = URL(fileURLWithPath: fixture.session.workspacePath)
         let marker = fixture.rootURL.appendingPathComponent("filter-ran")
-        try git(["-C", workspace.path, "config", "filter.review.clean", "touch \(marker.path); cat"])
+        try FixtureGit.run(["-C", workspace.path, "config", "filter.review.clean", "touch \(marker.path); cat"])
         try Data("source.txt filter=review\n".utf8).write(to: workspace.appendingPathComponent(".git/info/attributes"))
         try Data("source.txt filter=review\n".utf8).write(to: workspace.appendingPathComponent(".gitattributes"))
         try Data("changed\n".utf8).write(to: workspace.appendingPathComponent("source.txt"))
@@ -670,7 +670,7 @@ final class ChangeWorkflowTests: XCTestCase {
         let marker = fixture.rootURL.appendingPathComponent("filter-ran")
         let included = fixture.rootURL.appendingPathComponent("included.gitconfig")
         try Data("[filter \"review\"]\n\tclean = touch \(marker.path); cat\n".utf8).write(to: included)
-        try git(["-C", workspace.path, "config", "include.path", included.path])
+        try FixtureGit.run(["-C", workspace.path, "config", "include.path", included.path])
         try Data("source.txt filter=review\n".utf8).write(to: workspace.appendingPathComponent(".git/info/attributes"))
         try Data("changed\n".utf8).write(to: workspace.appendingPathComponent("source.txt"))
         let diff = try await fixture.service.changesDiff(sessionID: fixture.session.id)
@@ -840,15 +840,15 @@ final class ChangeWorkflowTests: XCTestCase {
                 try Data("hidden.txt\n".utf8).write(to: workspace.appendingPathComponent(".git/info/exclude"))
             },
             { workspace in
-                try self.git(["-C", workspace.path, "update-index", "--assume-unchanged", "source.txt"])
+                try FixtureGit.run(["-C", workspace.path, "update-index", "--assume-unchanged", "source.txt"])
             },
             { workspace in
-                try self.git(["-C", workspace.path, "update-index", "--skip-worktree", "source.txt"])
+                try FixtureGit.run(["-C", workspace.path, "update-index", "--skip-worktree", "source.txt"])
             },
             { workspace in
                 // Committing moves the workspace's own HEAD, so its status looks clean.
-                try self.git(["-C", workspace.path, "add", "--all"])
-                try self.git(["-C", workspace.path, "commit", "-q", "-m", "hide the edit"])
+                try FixtureGit.run(["-C", workspace.path, "add", "--all"])
+                try FixtureGit.run(["-C", workspace.path, "commit", "-q", "-m", "hide the edit"])
             }
         ]
         for hide in hidingMoves {
@@ -868,7 +868,7 @@ final class ChangeWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let nested = URL(fileURLWithPath: fixture.session.workspacePath).appendingPathComponent("nested", isDirectory: true)
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
-        try git(["init", "-q", nested.path])
+        try FixtureGit.run(["init", "-q", nested.path])
         try Data("unseen\n".utf8).write(to: nested.appendingPathComponent("inner.txt"))
         do {
             _ = try await fixture.service.changesDiff(sessionID: fixture.session.id)
@@ -1001,75 +1001,22 @@ final class ChangeWorkflowTests: XCTestCase {
         try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: workspaces, withIntermediateDirectories: true)
         try Data("original\n".utf8).write(to: source.appendingPathComponent("source.txt"))
-        try git(["init", "-q", source.path])
-        try git(["-C", source.path, "config", "user.name", "AgentBridge Tests"])
-        try git(["-C", source.path, "config", "user.email", "agentbridge-tests@example.invalid"])
-        try git(["-C", source.path, "add", "source.txt"])
+        try FixtureGit.run(["init", "-q", source.path])
+        try FixtureGit.run(["-C", source.path, "config", "user.name", "AgentBridge Tests"])
+        try FixtureGit.run(["-C", source.path, "config", "user.email", "agentbridge-tests@example.invalid"])
+        try FixtureGit.run(["-C", source.path, "add", "source.txt"])
         if let projectScript {
             let script = source.appendingPathComponent(".codex/ci.sh")
             try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(projectScript.utf8).write(to: script)
             try FileManager.default.setAttributes([.posixPermissions: projectScriptPermissions], ofItemAtPath: script.path)
-            try git(["-C", source.path, "add", ".codex/ci.sh"])
+            try FixtureGit.run(["-C", source.path, "add", ".codex/ci.sh"])
         }
-        try git(["-C", source.path, "commit", "-q", "-m", "initial"])
+        try FixtureGit.run(["-C", source.path, "commit", "-q", "-m", "initial"])
 
         let store = try AuditStore(rootURL: state, workspaceRootURL: workspaces, managedWorkspaceRoots: [])
         let service = try BridgeService(store: store)
         let session = try await service.createSession(sourcePath: source.path, provider: .codex, accessMode: .isolatedChanges)
         return Fixture(rootURL: root, sourceURL: source, store: store, service: service, session: session)
-    }
-
-    @discardableResult
-    private func git(_ arguments: [String], allowedExitCodes: Set<Int32> = [0]) throws -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        var environment = ProcessInfo.processInfo.environment
-        environment["GIT_CONFIG_NOSYSTEM"] = "1"
-        environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
-        environment["GIT_AUTHOR_NAME"] = "AgentBridge Tests"
-        environment["GIT_AUTHOR_EMAIL"] = "agentbridge-tests@example.invalid"
-        environment["GIT_COMMITTER_NAME"] = "AgentBridge Tests"
-        environment["GIT_COMMITTER_EMAIL"] = "agentbridge-tests@example.invalid"
-        process.environment = environment
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard allowedExitCodes.contains(process.terminationStatus) else {
-            throw NSError(
-                domain: "ChangeWorkflowTests.Git",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: String(decoding: data, as: UTF8.self)]
-            )
-        }
-        return process.terminationStatus
-    }
-
-    private func gitText(_ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        var environment = ProcessInfo.processInfo.environment
-        environment["GIT_CONFIG_NOSYSTEM"] = "1"
-        environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
-        process.environment = environment
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw NSError(
-                domain: "ChangeWorkflowTests.Git",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: String(decoding: data, as: UTF8.self)]
-            )
-        }
-        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

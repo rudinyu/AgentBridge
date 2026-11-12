@@ -1,4 +1,3 @@
-import Darwin
 import AgentBridgeCore
 import XCTest
 @testable import AgentBridgeApp
@@ -9,25 +8,9 @@ import XCTest
 /// are called directly.
 @MainActor
 final class TerminalModelTests: XCTestCase {
+    /// A model with one selected session, which the local shell needs.
     private func makeModel() throws -> AppModel {
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let fixtureParent = packageRoot.appendingPathComponent("build/test-fixtures", isDirectory: true)
-        try FileManager.default.createDirectory(at: fixtureParent, withIntermediateDirectories: true)
-        guard let resolvedPath = fixtureParent.path.withCString({ realpath($0, nil) }) else {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-        }
-        defer { free(resolvedPath) }
-        let canonicalParent = URL(fileURLWithPath: String(cString: resolvedPath), isDirectory: true)
-        let root = canonicalParent.appendingPathComponent("TerminalModelTests-\(UUID().uuidString)", isDirectory: true)
-        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try FileManager.default.createDirectory(at: root.appendingPathComponent("data"), withIntermediateDirectories: true)
-        let store = try AuditStore(rootURL: root.appendingPathComponent("state"), workspaceRootURL: root.appendingPathComponent("data"), managedWorkspaceRoots: [])
-        let service = try BridgeService(store: store)
-        try store.saveSessions([
+        let model = try makeTestAppModel(sessions: [
             SessionRecord(
                 updatedAt: Date(),
                 provider: .codex,
@@ -37,8 +20,6 @@ final class TerminalModelTests: XCTestCase {
                 sourceWasDirty: false
             )
         ])
-        let model = AppModel(store: store, service: service)
-        model.refresh()
         XCTAssertNotNil(model.selectedSession)
         return model
     }

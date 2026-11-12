@@ -548,43 +548,12 @@ final class UsageStatisticsTests: XCTestCase {
 
     private func makeGitRepository(at source: URL) throws {
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
-        try runGit(["init", "-q", source.path])
-        try runGit(["-C", source.path, "config", "user.name", "AgentBridge Test"])
-        try runGit(["-C", source.path, "config", "user.email", "agentbridge@example.invalid"])
+        try FixtureGit.run(["init", "-q", source.path])
+        try FixtureGit.run(["-C", source.path, "config", "user.name", "AgentBridge Test"])
+        try FixtureGit.run(["-C", source.path, "config", "user.email", "agentbridge@example.invalid"])
         try Data("committed\n".utf8).write(to: source.appendingPathComponent("tracked.txt"))
-        try runGit(["-C", source.path, "add", "tracked.txt"])
-        try runGit(["-C", source.path, "commit", "-q", "-m", "snapshot"])
-    }
-
-    @discardableResult
-    private func runGit(_ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.environment = [
-            "HOME": FileManager.default.temporaryDirectory.path,
-            "PATH": "/usr/bin:/bin",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_SYSTEM": "/dev/null",
-            "GIT_TERMINAL_PROMPT": "0"
-        ]
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        try process.run()
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errorOutput = stderr.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw NSError(
-                domain: "UsageStatisticsTests.Git",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: String(decoding: errorOutput, as: UTF8.self)]
-            )
-        }
-        return String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        try FixtureGit.run(["-C", source.path, "add", "tracked.txt"])
+        try FixtureGit.run(["-C", source.path, "commit", "-q", "-m", "snapshot"])
     }
 
     private func makeManualSettlementFixture(status: SessionStatus = .failed) throws -> ManualAPISettlementFixture {

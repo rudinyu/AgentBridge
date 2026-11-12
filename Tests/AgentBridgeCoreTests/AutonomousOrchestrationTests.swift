@@ -759,11 +759,11 @@ final class AutonomousOrchestrationTests: XCTestCase {
             try Data(Self.projectCIScript.utf8).write(to: ciScript)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: ciScript.path)
         }
-        try runFixtureCommand("/usr/bin/git", arguments: ["init", "-q", source.path])
-        try runFixtureCommand("/usr/bin/git", arguments: ["-C", source.path, "config", "user.name", "AgentBridge Fixture"])
-        try runFixtureCommand("/usr/bin/git", arguments: ["-C", source.path, "config", "user.email", "agentbridge-fixture@example.invalid"])
-        try runFixtureCommand("/usr/bin/git", arguments: ["-C", source.path, "add", ".gitignore", "greeting.txt"] + (includeProjectCI ? [".codex/ci.sh"] : []))
-        try runFixtureCommand("/usr/bin/git", arguments: ["-C", source.path, "commit", "-q", "-m", "fixture base"])
+        try FixtureGit.run(["init", "-q", source.path])
+        try FixtureGit.run(["-C", source.path, "config", "user.name", "AgentBridge Fixture"])
+        try FixtureGit.run(["-C", source.path, "config", "user.email", "agentbridge-fixture@example.invalid"])
+        try FixtureGit.run(["-C", source.path, "add", ".gitignore", "greeting.txt"] + (includeProjectCI ? [".codex/ci.sh"] : []))
+        try FixtureGit.run(["-C", source.path, "commit", "-q", "-m", "fixture base"])
 
         let executable = bin.appendingPathComponent("codex")
         let executableSource = Self.fakeCodexExecutable
@@ -788,31 +788,6 @@ final class AutonomousOrchestrationTests: XCTestCase {
         settings.codexBinaryPath = executable.path
         try service.saveSettings(settings)
         return AutonomousWorkflowFixture(rootURL: root, sourceURL: source, homeURL: home, auditStore: auditStore, service: service)
-    }
-
-    private func runFixtureCommand(_ executable: String, arguments: [String]) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.environment = [
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-            "HOME": FileManager.default.temporaryDirectory.path,
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_TERMINAL_PROMPT": "0"
-        ]
-        let standardOutput = Pipe()
-        let standardError = Pipe()
-        process.standardOutput = standardOutput
-        process.standardError = standardError
-        try process.run()
-        let output = standardOutput.fileHandleForReading.readDataToEndOfFile()
-        let errorOutput = standardError.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let message = String(data: errorOutput + output, encoding: .utf8) ?? ""
-            throw NSError(domain: "AutonomousOrchestrationTests", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: message])
-        }
     }
 
     private static let fakeCodexExecutable = #"""

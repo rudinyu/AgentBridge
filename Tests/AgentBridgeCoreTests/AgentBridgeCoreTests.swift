@@ -691,21 +691,21 @@ final class AgentBridgeCoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("source", isDirectory: true)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
-        try runGit(["init", "-q", source.path])
-        try runGit(["-C", source.path, "config", "user.name", "AgentBridge Test"])
-        try runGit(["-C", source.path, "config", "user.email", "agentbridge@example.invalid"])
+        try FixtureGit.run(["init", "-q", source.path])
+        try FixtureGit.run(["-C", source.path, "config", "user.name", "AgentBridge Test"])
+        try FixtureGit.run(["-C", source.path, "config", "user.email", "agentbridge@example.invalid"])
         try Data("committed\n".utf8).write(to: source.appendingPathComponent("tracked.txt"))
-        try runGit(["-C", source.path, "add", "tracked.txt"])
-        try runGit(["-C", source.path, "commit", "-q", "-m", "snapshot"])
+        try FixtureGit.run(["-C", source.path, "add", "tracked.txt"])
+        try FixtureGit.run(["-C", source.path, "commit", "-q", "-m", "snapshot"])
 
         let fsmonitor = root.appendingPathComponent("fsmonitor-fixture")
         let marker = root.appendingPathComponent("fsmonitor-ran")
         try Data("#!/bin/sh\nprintf called > '\(marker.path)'\n".utf8).write(to: fsmonitor)
         XCTAssertEqual(chmod(fsmonitor.path, mode_t(0o700)), 0)
-        try runGit(["-C", source.path, "config", "core.fsmonitor", fsmonitor.path])
+        try FixtureGit.run(["-C", source.path, "config", "core.fsmonitor", fsmonitor.path])
         try Data("local-only\n".utf8).write(to: source.appendingPathComponent("uncommitted.txt"))
         let configBefore = try Data(contentsOf: source.appendingPathComponent(".git/config"))
-        let statusBefore = try runGit(["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", source.path, "status", "--porcelain=v1", "--untracked-files=normal"])
+        let statusBefore = try FixtureGit.run(["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", source.path, "status", "--porcelain=v1", "--untracked-files=normal"])
 
         let store = try AuditStore(rootURL: root.appendingPathComponent("state", isDirectory: true))
         let manager = WorkspaceManager(store: store)
@@ -713,13 +713,13 @@ final class AgentBridgeCoreTests: XCTestCase {
         try await manager.validateWorkspace(for: session, accessMode: .readOnly)
 
         let configAfter = try Data(contentsOf: source.appendingPathComponent(".git/config"))
-        let statusAfter = try runGit(["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", source.path, "status", "--porcelain=v1", "--untracked-files=normal"])
+        let statusAfter = try FixtureGit.run(["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", source.path, "status", "--porcelain=v1", "--untracked-files=normal"])
         XCTAssertEqual(configAfter, configBefore)
         XCTAssertEqual(statusAfter, statusBefore)
         XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path), "The source repository's fsmonitor command ran.")
         XCTAssertTrue(session.sourceWasDirty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: URL(fileURLWithPath: session.workspacePath).appendingPathComponent("uncommitted.txt").path))
-        XCTAssertEqual(try runGit(["-C", session.workspacePath, "remote"]), "")
+        XCTAssertEqual(try FixtureGit.run(["-C", session.workspacePath, "remote"]), "")
         XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: session.workspacePath).appendingPathComponent("tracked.txt"), encoding: .utf8), "committed\n")
 
         do {
@@ -952,9 +952,9 @@ printf '{"type":"result","subtype":"success","result":"%s"}\n' "$response"
         XCTAssertEqual(codexFirst.text, "codex-answer-from-codex")
 
         try Data("advanced source head\n".utf8).write(to: source.appendingPathComponent("tracked.txt"))
-        try runGit(["-C", source.path, "add", "tracked.txt"])
-        try runGit(["-C", source.path, "commit", "-q", "-m", "advance source after first session"])
-        let advancedHead = try runGit(["-C", source.path, "rev-parse", "HEAD"])
+        try FixtureGit.run(["-C", source.path, "add", "tracked.txt"])
+        try FixtureGit.run(["-C", source.path, "commit", "-q", "-m", "advance source after first session"])
+        let advancedHead = try FixtureGit.run(["-C", source.path, "rev-parse", "HEAD"])
         XCTAssertNotEqual(advancedHead, codexFirstSession.snapshotCommit)
 
         let claudeSession = try await service.createSession(
@@ -1062,39 +1062,12 @@ printf '{"type":"result","subtype":"success","result":"%s"}\n' "$response"
 
     private func makeGitRepository(at source: URL) throws {
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
-        try runGit(["init", "-q", source.path])
-        try runGit(["-C", source.path, "config", "user.name", "AgentBridge Test"])
-        try runGit(["-C", source.path, "config", "user.email", "agentbridge@example.invalid"])
+        try FixtureGit.run(["init", "-q", source.path])
+        try FixtureGit.run(["-C", source.path, "config", "user.name", "AgentBridge Test"])
+        try FixtureGit.run(["-C", source.path, "config", "user.email", "agentbridge@example.invalid"])
         try Data("committed\n".utf8).write(to: source.appendingPathComponent("tracked.txt"))
-        try runGit(["-C", source.path, "add", "tracked.txt"])
-        try runGit(["-C", source.path, "commit", "-q", "-m", "snapshot"])
-    }
-
-    @discardableResult
-    private func runGit(_ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.environment = [
-            "HOME": FileManager.default.temporaryDirectory.path,
-            "PATH": "/usr/bin:/bin",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_SYSTEM": "/dev/null",
-            "GIT_TERMINAL_PROMPT": "0"
-        ]
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        try process.run()
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errorOutput = stderr.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw NSError(domain: "AgentBridgeTests.Git", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: String(decoding: errorOutput, as: UTF8.self)])
-        }
-        return String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        try FixtureGit.run(["-C", source.path, "add", "tracked.txt"])
+        try FixtureGit.run(["-C", source.path, "commit", "-q", "-m", "snapshot"])
     }
 
     private func fileMode(atPath path: String) -> Int {

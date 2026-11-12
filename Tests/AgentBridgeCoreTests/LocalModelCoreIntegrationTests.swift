@@ -235,7 +235,7 @@ final class LocalModelCoreIntegrationTests: XCTestCase {
         let root = try temporaryDirectory("AgentBridge-LocalProject")
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("source", isDirectory: true)
-        try makeGitRepository(at: source, home: root)
+        try makeGitRepository(at: source)
         let (store, service, _) = try makeService(root: root)
         let modelList = Data(#"{"data":[{"id":"local-chat","context_length":8192}]}"#.utf8)
         let response = Data([
@@ -303,7 +303,7 @@ final class LocalModelCoreIntegrationTests: XCTestCase {
         let root = try temporaryDirectory("AgentBridge-LocalUnsupported")
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("source", isDirectory: true)
-        try makeGitRepository(at: source, home: root)
+        try makeGitRepository(at: source)
         let (store, service, _) = try makeService(root: root)
         let server = try LoopbackHTTPServer { _ in .json(Data(#"{"models":[]}"#.utf8)) }
         defer { server.stop() }
@@ -351,9 +351,9 @@ final class LocalModelCoreIntegrationTests: XCTestCase {
         XCTAssertTrue(try service.sessions().isEmpty)
 
         let session = try await service.createSession(sourcePath: source.path, provider: .local)
-        let workspaceHead = try gitOutput(["-C", session.workspacePath, "rev-parse", "HEAD"], home: root)
-        let workspaceStatus = try gitOutput(["-C", session.workspacePath, "status", "--porcelain"], home: root)
-        let sourceHead = try gitOutput(["-C", source.path, "rev-parse", "HEAD"], home: root)
+        let workspaceHead = try FixtureGit.run(["-C", session.workspacePath, "rev-parse", "HEAD"])
+        let workspaceStatus = try FixtureGit.run(["-C", session.workspacePath, "status", "--porcelain"])
+        let sourceHead = try FixtureGit.run(["-C", source.path, "rev-parse", "HEAD"])
 
         do {
             _ = try await service.runInteractive(sessionID: session.id)
@@ -385,10 +385,10 @@ final class LocalModelCoreIntegrationTests: XCTestCase {
             assistantText: "memory"
         ))
 
-        XCTAssertEqual(try gitOutput(["-C", session.workspacePath, "rev-parse", "HEAD"], home: root), workspaceHead)
-        XCTAssertEqual(try gitOutput(["-C", session.workspacePath, "status", "--porcelain"], home: root), workspaceStatus)
+        XCTAssertEqual(try FixtureGit.run(["-C", session.workspacePath, "rev-parse", "HEAD"]), workspaceHead)
+        XCTAssertEqual(try FixtureGit.run(["-C", session.workspacePath, "status", "--porcelain"]), workspaceStatus)
         XCTAssertTrue(workspaceStatus.isEmpty)
-        XCTAssertEqual(try gitOutput(["-C", source.path, "rev-parse", "HEAD"], home: root), sourceHead)
+        XCTAssertEqual(try FixtureGit.run(["-C", source.path, "rev-parse", "HEAD"]), sourceHead)
         XCTAssertEqual(try store.session(id: session.id)?.status, .created)
         XCTAssertNil(try store.session(id: session.id)?.changePlan)
         XCTAssertFalse(try store.events(sessionID: session.id).contains(where: {
@@ -429,46 +429,11 @@ final class LocalModelCoreIntegrationTests: XCTestCase {
         return root
     }
 
-    private func makeGitRepository(at url: URL, home: URL) throws {
+    private func makeGitRepository(at url: URL) throws {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        _ = try gitOutput(["-c", "init.defaultBranch=main", "init", "--quiet", "--", url.path], home: home)
+        try FixtureGit.run(["-c", "init.defaultBranch=main", "init", "--quiet", "--", url.path])
         try Data("# Local integration fixture\n".utf8).write(to: url.appendingPathComponent("README.md"))
-        _ = try gitOutput(["-C", url.path, "add", "README.md"], home: home)
-        _ = try gitOutput([
-            "-C", url.path,
-            "-c", "user.name=Fixture",
-            "-c", "user.email=fixture@example.invalid",
-            "-c", "core.hooksPath=/dev/null",
-            "commit", "--quiet", "-m", "initial"
-        ], home: home)
-    }
-
-    private func gitOutput(_ arguments: [String], home: URL) throws -> String {
-        let process = Process()
-        let output = Pipe()
-        let errors = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.environment = [
-            "HOME": home.path,
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_TERMINAL_PROMPT": "0"
-        ]
-        process.standardOutput = output
-        process.standardError = errors
-        try process.run()
-        let stdout = output.fileHandleForReading.readDataToEndOfFile()
-        let stderr = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw NSError(
-                domain: "LocalModelCoreIntegrationTests.Git",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: String(decoding: stderr, as: UTF8.self)]
-            )
-        }
-        return String(decoding: stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        try FixtureGit.run(["-C", url.path, "add", "README.md"])
+        try FixtureGit.run(["-C", url.path, "commit", "--quiet", "-m", "initial"])
     }
 }

@@ -238,23 +238,9 @@ final class WorkspaceRootConfigurationTests: XCTestCase {
     private func makeGitRepository(at url: URL) throws {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         try Data("fixture\n".utf8).write(to: url.appendingPathComponent("README.md"))
-        for arguments in [
-            ["-c", "init.defaultBranch=main", "init", "--quiet", "--", url.path],
-            ["-C", url.path, "add", "README.md"],
-            ["-C", url.path, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
-             "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "initial"]
-        ] {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = arguments
-            process.environment = [
-                "HOME": NSTemporaryDirectory(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-                "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"
-            ]
-            try process.run()
-            process.waitUntilExit()
-            XCTAssertEqual(process.terminationStatus, 0, "git \(arguments.joined(separator: " ")) failed")
-        }
+        try FixtureGit.run(["-c", "init.defaultBranch=main", "init", "--quiet", "--", url.path])
+        try FixtureGit.run(["-C", url.path, "add", "README.md"])
+        try FixtureGit.run(["-C", url.path, "commit", "--quiet", "-m", "initial"])
     }
 
     private func makeTemporaryDirectory() throws -> URL {

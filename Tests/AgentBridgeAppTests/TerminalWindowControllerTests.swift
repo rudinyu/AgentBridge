@@ -7,31 +7,12 @@ import XCTest
 /// The window controller keeps the one live terminal view while SwiftUI makes and
 /// dismantles its containers in either order. Plain `NSView`s stand in for those
 /// containers, and real child processes run in the terminal view.
+///
+/// Work the controller defers with `DispatchQueue.main.async` (the process start,
+/// a refusal report) is checked with `drainMainQueue()`, which is deterministic.
+/// Only real process events (a child exiting) are awaited with a timed loop.
 @MainActor
 final class TerminalWindowControllerTests: XCTestCase {
-    private func makeModel() throws -> AppModel {
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let fixtureParent = packageRoot.appendingPathComponent("build/test-fixtures", isDirectory: true)
-        try FileManager.default.createDirectory(at: fixtureParent, withIntermediateDirectories: true)
-        guard let resolvedPath = fixtureParent.path.withCString({ realpath($0, nil) }) else {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-        }
-        defer { free(resolvedPath) }
-        let canonicalParent = URL(fileURLWithPath: String(cString: resolvedPath), isDirectory: true)
-        let root = canonicalParent.appendingPathComponent("TerminalWindowControllerTests-\(UUID().uuidString)", isDirectory: true)
-        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try FileManager.default.createDirectory(at: root.appendingPathComponent("data"), withIntermediateDirectories: true)
-        let store = try AuditStore(rootURL: root.appendingPathComponent("state"), workspaceRootURL: root.appendingPathComponent("data"), managedWorkspaceRoots: [])
-        let service = try BridgeService(store: store)
-        let model = AppModel(store: store, service: service)
-        model.refresh()
-        return model
-    }
-
     private func launch(_ executable: String, _ arguments: [String] = [], title: String = "Test Terminal") -> TerminalLaunchSpec {
         TerminalLaunchSpec(
             title: title,
@@ -42,10 +23,10 @@ final class TerminalWindowControllerTests: XCTestCase {
         )
     }
 
-    /// Lets queued main-queue work, such as the deferred process start and the
-    /// termination callback, run until `condition` holds.
+    /// Runs the main run loop until `condition` holds, for real process events.
+    /// Returns as soon as it holds; the timeout only bounds a failure.
     @discardableResult
-    private func runMainLoop(timeout: TimeInterval = 5, until condition: () -> Bool = { false }) -> Bool {
+    private func runMainLoop(timeout: TimeInterval = 10, until condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition(), Date() < deadline {
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
@@ -64,7 +45,7 @@ final class TerminalWindowControllerTests: XCTestCase {
     // MARK: Re-mounting
 
     func testDismantlingTheOldContainerBeforeTheNewOneIsUpdatedMountsIntoTheNewOne() throws {
-        let model = try makeModel()
+        let model = try makeTestAppModel()
         let controller = model.terminal.windowController
         let spec = launch("/usr/bin/true")
         let old = NSView(), new = NSView()
@@ -80,7 +61,7 @@ final class TerminalWindowControllerTests: XCTestCase {
     }
 
     func testDismantlingTheOldContainerAfterTheNewOneWasUpdatedMovesTheTerminalToTheNewOne() throws {
-        let model = try makeModel()
+        let model = try makeTestAppModel()
         let controller = model.terminal.windowController
         let spec = launch("/usr/bin/true")
         let old = NSView(), new = NSView()
@@ -108,90 +89,161 @@ final class TerminalWindowControllerTests: XCTestCase {
 
     // MARK: Running process and refusal
 
-    func testANewLaunchIsRefusedOnceWhileAnEarlierProcessRunsAndTheModelShowsThatProcessAgain() throws {
-        let model = try makeModel()
+    private struct RunningTerminal {
+        let model: AppModel
+        let controller: TerminalWindowController
+        let launch: TerminalLaunchSpec
+        let container: NSView
+        let view: AgentBridgeTerminalView
+    }
+
+    /// A model showing a launch whose real process (`sleep 30`) the controller has
+    /// started. Callers end it with `stop(_:)`, usually in a `defer`.
+    private func startRunningTerminal() throws -> RunningTerminal {
+        let model = try makeTestAppModel()
         let controller = model.terminal.windowController
         let running = launch("/bin/sleep", ["30"], title: "Earlier Terminal")
-        let first = NSView()
+        let container = NSView()
         model.terminal.terminalLaunch = running
         model.terminal.terminalRunning = true
-        mount(controller, in: first, running)
-        let view = try XCTUnwrap(terminal(in: first))
-        defer {
-            view.terminateWithEscalation()
-            runMainLoop { !controller.hasRunningProcess }
-        }
+        mount(controller, in: container, running)
+        let view = try XCTUnwrap(terminal(in: container))
+        // The controller starts the process in a main-queue block.
+        drainMainQueue()
+        XCTAssertTrue(controller.hasRunningProcess(for: running.id), "The deferred start did not start the process.")
+        return RunningTerminal(model: model, controller: controller, launch: running, container: container, view: view)
+    }
 
-        XCTAssertTrue(runMainLoop { controller.hasRunningProcess(for: running.id) }, "The deferred start never ran.")
-        XCTAssertEqual(controller.runningLaunch, running)
-        XCTAssertFalse(controller.hasRunningProcess(for: UUID()))
-        XCTAssertEqual(model.terminal.terminalProcessLaunchID, running.id)
+    /// Ends the running process and waits until it has exited and the exit report,
+    /// queued on the main queue as the process stops, has reached the model.
+    @discardableResult
+    private func stop(_ running: RunningTerminal) -> Bool {
+        running.view.terminateWithEscalation()
+        guard runMainLoop(until: { !running.controller.hasRunningProcess }) else { return false }
+        drainMainQueue()
+        return true
+    }
 
-        // The model moved on to a new launch that the controller cannot start, and
-        // SwiftUI updates its container several times before the report runs.
+    /// The model moves on to a launch the controller cannot start; SwiftUI then
+    /// updates that launch's container `updates` times before the report runs.
+    private func refuse(_ refused: TerminalLaunchSpec, in running: RunningTerminal, updates: Int = 1) {
+        running.model.terminal.terminalLaunch = refused
+        let container = NSView()
+        for _ in 0..<updates { mount(running.controller, in: container, refused) }
+        XCTAssertTrue(container.subviews.isEmpty, "A refused launch gets no terminal.")
+    }
+
+    func testTheControllerReportsTheLaunchWhoseProcessRuns() throws {
+        let running = try startRunningTerminal()
+        defer { stop(running) }
+
+        XCTAssertEqual(running.controller.runningLaunch, running.launch)
+        XCTAssertFalse(running.controller.hasRunningProcess(for: UUID()))
+        XCTAssertEqual(running.model.terminal.terminalProcessLaunchID, running.launch.id)
+    }
+
+    func testANewLaunchIsRefusedWhileAnEarlierProcessRunsAndTheModelShowsThatProcessAgain() throws {
+        let running = try startRunningTerminal()
+        defer { stop(running) }
+
+        refuse(launch("/usr/bin/true"), in: running, updates: 3)
+        XCTAssertTrue(terminal(in: running.container) === running.view, "The running terminal is not moved or replaced.")
+        drainMainQueue()
+        XCTAssertEqual(running.model.terminal.terminalLaunch?.id, running.launch.id)
+        XCTAssertTrue(running.model.terminal.closeRequiresManualStop)
+        XCTAssertNotNil(running.model.errorMessage)
+    }
+
+    func testTheSameRefusedLaunchIsNotReportedAgain() throws {
+        let running = try startRunningTerminal()
+        defer { stop(running) }
         let refused = launch("/usr/bin/true")
-        let second = NSView()
-        model.terminal.terminalLaunch = refused
-        for _ in 0..<3 { mount(controller, in: second, refused) }
-        XCTAssertTrue(second.subviews.isEmpty)
-        XCTAssertTrue(terminal(in: first) === view, "The running terminal is not moved or replaced.")
-        XCTAssertTrue(runMainLoop { model.terminal.terminalLaunch?.id == running.id })
-        XCTAssertTrue(model.terminal.closeRequiresManualStop)
-        XCTAssertNotNil(model.errorMessage)
+        refuse(refused, in: running, updates: 3)
+        drainMainQueue()
+        XCTAssertEqual(running.model.terminal.terminalLaunch?.id, running.launch.id)
 
-        // The same refused launch is not reported again, even if the model went back to it.
-        model.errorMessage = nil
-        model.terminal.terminalLaunch = refused
-        mount(controller, in: second, refused)
-        runMainLoop(timeout: 0.2)
-        XCTAssertEqual(model.terminal.terminalLaunch?.id, refused.id)
-        XCTAssertNil(model.errorMessage)
+        // Even if the model goes back to it, that launch is not reported again.
+        running.model.errorMessage = nil
+        refuse(refused, in: running)
+        drainMainQueue()
+        XCTAssertEqual(running.model.terminal.terminalLaunch?.id, refused.id)
+        XCTAssertNil(running.model.errorMessage)
+    }
 
-        // A different refused launch is reported.
-        let another = launch("/usr/bin/true")
-        model.terminal.terminalLaunch = another
-        mount(controller, in: NSView(), another)
-        XCTAssertTrue(runMainLoop { model.terminal.terminalLaunch?.id == running.id })
-        XCTAssertNotNil(model.errorMessage)
+    func testADifferentRefusedLaunchIsReportedToo() throws {
+        let running = try startRunningTerminal()
+        defer { stop(running) }
+        refuse(launch("/usr/bin/true"), in: running)
+        drainMainQueue()
+        running.model.errorMessage = nil
 
-        // Once the earlier process ends, nothing runs and the panel closes normally.
-        view.terminateWithEscalation()
-        XCTAssertTrue(runMainLoop { !controller.hasRunningProcess && !model.terminal.terminalRunning })
-        XCTAssertNil(controller.runningLaunch)
-        model.terminal.closeEmbeddedTerminal()
-        XCTAssertNil(model.terminal.terminalLaunch)
-        XCTAssertEqual(model.status, "The in-app terminal closed.")
+        refuse(launch("/usr/bin/true"), in: running)
+        drainMainQueue()
+        XCTAssertEqual(running.model.terminal.terminalLaunch?.id, running.launch.id)
+        XCTAssertNotNil(running.model.errorMessage)
+    }
+
+    func testOnceTheEarlierProcessEndsThePanelClosesNormally() throws {
+        let running = try startRunningTerminal()
+        refuse(launch("/usr/bin/true"), in: running)
+        drainMainQueue()
+
+        XCTAssertTrue(stop(running), "The process did not end.")
+        XCTAssertNil(running.controller.runningLaunch)
+        XCTAssertFalse(running.model.terminal.terminalRunning)
+        // Ending it from the app is not reported as a failure with a signal number.
+        XCTAssertEqual(running.model.status, "Terminal task ended.")
+        running.model.terminal.closeEmbeddedTerminal()
+        XCTAssertNil(running.model.terminal.terminalLaunch)
+        XCTAssertEqual(running.model.status, "The in-app terminal closed.")
     }
 
     // MARK: Starting a real process
 
-    func testAChildThatExitsAtOnceStartsAndReportsItsExitOnce() {
+    /// Starts `spec` in a new view and returns every exit the view reported, once
+    /// the first one arrived and anything already queued after it has run.
+    private func exitCodes(running spec: TerminalLaunchSpec, file: StaticString = #filePath, line: UInt = #line) -> [Int32?] {
         let view = AgentBridgeTerminalView.make()
         var exitCodes: [Int32?] = []
         view.onTermination = { exitCodes.append($0) }
 
-        XCTAssertTrue(view.start(launch("/usr/bin/true")), "A child that exits at once still started.")
-        XCTAssertTrue(exitCodes.isEmpty, "Its exit is reported after start returns.")
-        XCTAssertTrue(runMainLoop { !exitCodes.isEmpty })
-        runMainLoop(timeout: 0.3)
-        XCTAssertEqual(exitCodes, [0])
-        XCTAssertFalse(view.processIsRunning)
+        XCTAssertTrue(view.start(spec), "The child did not start.", file: file, line: line)
+        XCTAssertTrue(exitCodes.isEmpty, "Its exit is reported after start returns.", file: file, line: line)
+        XCTAssertTrue(runMainLoop { !exitCodes.isEmpty }, "The child's exit was not reported.", file: file, line: line)
+        // SwiftTerm reports an exit from a one-shot process source and cancels the
+        // source in the same call, so a second report could only be a main-queue
+        // hop that is already queued.
+        drainMainQueue()
+        XCTAssertFalse(view.processIsRunning, file: file, line: line)
+        return exitCodes
+    }
+
+    func testAChildThatExitsAtOnceStartsAndReportsItsExitOnce() {
+        XCTAssertEqual(exitCodes(running: launch("/usr/bin/true")), [0])
+    }
+
+    func testAChildsExitStatusIsReportedAsItsExitCode() {
+        XCTAssertEqual(exitCodes(running: launch("/bin/sh", ["-c", "exit 3"])), [3])
+    }
+
+    func testAChildEndedByASignalReportsNoExitCode() {
+        XCTAssertEqual(exitCodes(running: launch("/bin/sh", ["-c", "kill -TERM $$"])), [nil])
+    }
+
+    func testAWaitStatusIsDecodedIntoAnExitCode() {
+        XCTAssertEqual(AgentBridgeTerminalView.exitCode(fromWaitStatus: 0), 0)
+        XCTAssertEqual(AgentBridgeTerminalView.exitCode(fromWaitStatus: 1 << 8), 1)
+        XCTAssertEqual(AgentBridgeTerminalView.exitCode(fromWaitStatus: 255 << 8), 255)
+        XCTAssertNil(AgentBridgeTerminalView.exitCode(fromWaitStatus: SIGTERM), "Ended by a signal.")
+        XCTAssertNil(AgentBridgeTerminalView.exitCode(fromWaitStatus: 0x80 | SIGKILL), "Ended by a signal, with a core dump.")
+        XCTAssertNil(AgentBridgeTerminalView.exitCode(fromWaitStatus: (SIGSTOP << 8) | 0x7f), "Stopped, not ended.")
     }
 
     func testAMissingExecutableStartsAChildThatExitsWithAFailure() {
-        let view = AgentBridgeTerminalView.make()
-        var exitCodes: [Int32?] = []
-        view.onTermination = { exitCodes.append($0) }
-
         // forkpty succeeds and the child's execve fails, so SwiftTerm reports a
-        // started process whose exit is a failure, not a start failure.
-        XCTAssertTrue(view.start(launch("/nonexistent/agentbridge-\(UUID().uuidString)")))
-        XCTAssertTrue(runMainLoop { !exitCodes.isEmpty })
-        runMainLoop(timeout: 0.3)
-        XCTAssertEqual(exitCodes.count, 1)
-        let status = exitCodes.first.flatMap { $0 }
-        XCTAssertNotNil(status)
-        XCTAssertNotEqual(status, 0)
-        XCTAssertFalse(view.processIsRunning)
+        // started process that exits with 127, not a start failure. This is
+        // SwiftTerm 1.20.0's forkpty path (its Subprocess path is compiled out);
+        // another SwiftTerm version may report this differently.
+        XCTAssertEqual(exitCodes(running: launch("/nonexistent/agentbridge-\(UUID().uuidString)")), [127])
     }
 }

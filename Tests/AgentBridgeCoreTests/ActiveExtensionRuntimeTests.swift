@@ -121,11 +121,11 @@ final class ActiveExtensionRuntimeTests: XCTestCase {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
         try Data("fixture\n".utf8).write(to: source.appendingPathComponent("source.txt"))
-        try runGit(["init", "-q", source.path])
-        try runGit(["-C", source.path, "config", "user.name", "AgentBridge Tests"])
-        try runGit(["-C", source.path, "config", "user.email", "agentbridge-tests@example.invalid"])
-        try runGit(["-C", source.path, "add", "source.txt"])
-        try runGit(["-C", source.path, "commit", "-q", "-m", "initial"])
+        try FixtureGit.run(["init", "-q", source.path])
+        try FixtureGit.run(["-C", source.path, "config", "user.name", "AgentBridge Tests"])
+        try FixtureGit.run(["-C", source.path, "config", "user.email", "agentbridge-tests@example.invalid"])
+        try FixtureGit.run(["-C", source.path, "add", "source.txt"])
+        try FixtureGit.run(["-C", source.path, "commit", "-q", "-m", "initial"])
 
         let fakeCodex = root.appendingPathComponent("codex")
         let authStartedURL = providerHome.appendingPathComponent("authentication-started")
@@ -1135,29 +1135,6 @@ final class ActiveExtensionRuntimeTests: XCTestCase {
         ] as [String: Any] }
         let data = try JSONSerialization.data(withJSONObject: ["tools": tools], options: [.sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed])
         return try XCTUnwrap(String(data: data, encoding: .utf8))
-    }
-
-    private func runGit(_ arguments: [String]) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        var environment = ProcessInfo.processInfo.environment
-        environment["GIT_CONFIG_NOSYSTEM"] = "1"
-        environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
-        process.environment = environment
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw NSError(
-                domain: "ActiveExtensionRuntimeTests.Git",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: String(decoding: data, as: UTF8.self)]
-            )
-        }
     }
 }
 

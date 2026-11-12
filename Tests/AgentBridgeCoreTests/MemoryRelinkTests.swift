@@ -77,12 +77,12 @@ final class MemoryRelinkTests: XCTestCase {
         let root = try temporaryDirectory()
         let source = root.appendingPathComponent("source", isDirectory: true)
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
-        try git(["init", "-q", source.path])
-        try git(["-C", source.path, "config", "user.name", "AgentBridge Test"])
-        try git(["-C", source.path, "config", "user.email", "agentbridge@example.invalid"])
+        try FixtureGit.run(["init", "-q", source.path])
+        try FixtureGit.run(["-C", source.path, "config", "user.name", "AgentBridge Test"])
+        try FixtureGit.run(["-C", source.path, "config", "user.email", "agentbridge@example.invalid"])
         try Data("committed\n".utf8).write(to: source.appendingPathComponent("tracked.txt"))
-        try git(["-C", source.path, "add", "tracked.txt"])
-        try git(["-C", source.path, "commit", "-q", "-m", "snapshot"])
+        try FixtureGit.run(["-C", source.path, "add", "tracked.txt"])
+        try FixtureGit.run(["-C", source.path, "commit", "-q", "-m", "snapshot"])
         let store = try AuditStore(rootURL: root.appendingPathComponent("state", isDirectory: true))
         let service = try BridgeService(store: store, baseEnvironment: ["HOME": root.path, "USER": "fixture"])
         let session = try await service.createSession(sourcePath: source.path, provider: .codex)
@@ -102,27 +102,5 @@ final class MemoryRelinkTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("MemoryRelinkTests-\(UUID().uuidString.lowercased())", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
-    }
-
-    @discardableResult
-    private func git(_ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.environment = [
-            "HOME": FileManager.default.temporaryDirectory.path,
-            "PATH": "/usr/bin:/bin",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_TERMINAL_PROMPT": "0"
-        ]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        XCTAssertEqual(process.terminationStatus, 0, String(decoding: data, as: UTF8.self))
-        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

@@ -398,7 +398,7 @@ final class DiscussionWorkflowTests: XCTestCase {
             destination.resolvingSymlinksInPath().path
         )
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: destination.path), [".git"])
-        XCTAssertTrue(try gitOutput(["-C", destination.path, "ls-tree", "-r", "--name-only", "HEAD"]).isEmpty)
+        XCTAssertTrue(try FixtureGit.run(["-C", destination.path, "ls-tree", "-r", "--name-only", "HEAD"]).isEmpty)
         let scope = try SharedMemoryScope(repositoryPath: destination.path, snapshotCommit: session.snapshotCommit)
         let memory = try SharedMemoryStore(rootURL: fixture.dataRoot.appendingPathComponent("shared-memory", isDirectory: true))
             .snapshot(scope: scope)
@@ -617,8 +617,8 @@ final class DiscussionWorkflowTests: XCTestCase {
         try makeGitRepository(at: repository, fileName: "README.txt", contents: "existing content")
         let discussion = try fixture.service.createDiscussion(provider: .codex)
         _ = try await fixture.service.sendDiscussionMessage(id: discussion.id, prompt: "carry this decision", isShareable: true)
-        let reviewedHead = try gitOutput(["-C", repository.path, "rev-parse", "HEAD"])
-        let reviewedStatus = try gitOutput(["-C", repository.path, "status", "--porcelain=v1"])
+        let reviewedHead = try FixtureGit.run(["-C", repository.path, "rev-parse", "HEAD"])
+        let reviewedStatus = try FixtureGit.run(["-C", repository.path, "status", "--porcelain=v1"])
         let handoff = try await fixture.service.prepareDiscussionProjectHandoff(
             discussionID: discussion.id,
             destinationPath: repository.path,
@@ -634,8 +634,8 @@ final class DiscussionWorkflowTests: XCTestCase {
             explicitConfirmation: true
         )
         XCTAssertEqual(session.sourceRepositoryPath, repository.path)
-        XCTAssertEqual(try gitOutput(["-C", repository.path, "rev-parse", "HEAD"]), reviewedHead)
-        XCTAssertEqual(try gitOutput(["-C", repository.path, "status", "--porcelain=v1"]), reviewedStatus)
+        XCTAssertEqual(try FixtureGit.run(["-C", repository.path, "rev-parse", "HEAD"]), reviewedHead)
+        XCTAssertEqual(try FixtureGit.run(["-C", repository.path, "status", "--porcelain=v1"]), reviewedStatus)
 
         let staleDiscussion = try fixture.service.createDiscussion(provider: .codex)
         _ = try await fixture.service.sendDiscussionMessage(id: staleDiscussion.id, prompt: "stale context", isShareable: true)
@@ -649,13 +649,8 @@ final class DiscussionWorkflowTests: XCTestCase {
         )
         let newFile = repository.appendingPathComponent("change.txt")
         try Data("changed after preview".utf8).write(to: newFile)
-        _ = try gitOutput(["-C", repository.path, "add", "change.txt"])
-        _ = try gitOutput([
-            "-C", repository.path,
-            "-c", "user.name=Fixture",
-            "-c", "user.email=fixture@example.invalid",
-            "commit", "-m", "move reviewed head"
-        ])
+        try FixtureGit.run(["-C", repository.path, "add", "change.txt"])
+        try FixtureGit.run(["-C", repository.path, "commit", "-m", "move reviewed head"])
         let sessionCountBefore = try fixture.service.sessions().count
         do {
             _ = try await fixture.service.createOrAttachProjectFromDiscussion(
@@ -799,47 +794,9 @@ final class DiscussionWorkflowTests: XCTestCase {
 
     private func makeGitRepository(at url: URL, fileName: String, contents: String) throws {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        try runGit(["-c", "init.defaultBranch=main", "init", "--quiet", "--", url.path])
+        try FixtureGit.run(["-c", "init.defaultBranch=main", "init", "--quiet", "--", url.path])
         try Data(contents.utf8).write(to: url.appendingPathComponent(fileName))
-        _ = try gitOutput(["-C", url.path, "add", fileName])
-        _ = try gitOutput([
-            "-C", url.path,
-            "-c", "user.name=Fixture",
-            "-c", "user.email=fixture@example.invalid",
-            "-c", "core.hooksPath=/dev/null",
-            "commit", "-m", "initial"
-        ])
-    }
-
-    private func gitOutput(_ arguments: [String]) throws -> String {
-        let process = Process()
-        let output = Pipe()
-        let errors = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.environment = [
-            "HOME": NSTemporaryDirectory(),
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_TERMINAL_PROMPT": "0"
-        ]
-        process.standardOutput = output
-        process.standardError = errors
-        try process.run()
-        let stdout = output.fileHandleForReading.readDataToEndOfFile()
-        let stderr = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0,
-              let value = String(data: stdout, encoding: .utf8) else {
-            throw NSError(domain: "DiscussionWorkflowTests.Git", code: Int(process.terminationStatus), userInfo: [
-                NSLocalizedDescriptionKey: String(data: stderr, encoding: .utf8) ?? "Git failed."
-            ])
-        }
-        return value.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func runGit(_ arguments: [String]) throws {
-        _ = try gitOutput(arguments)
+        try FixtureGit.run(["-C", url.path, "add", fileName])
+        try FixtureGit.run(["-C", url.path, "commit", "-m", "initial"])
     }
 }

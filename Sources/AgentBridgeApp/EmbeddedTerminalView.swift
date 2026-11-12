@@ -306,7 +306,24 @@ final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewD
         terminationReported = true
         disableUsageScreenCapture()
         guard let onTermination else { return }
+        let exitCode = exitCode.flatMap(Self.exitCode(fromWaitStatus:))
         Task { @MainActor in onTermination(exitCode) }
+    }
+
+    /// SwiftTerm 1.20.0 starts every process with forkpty (its Subprocess path is
+    /// compiled out) and passes the raw `waitpid` status word as `exitCode`, so
+    /// `exit 1` arrives as 256. This turns it into the child's exit code, once,
+    /// here, so nothing downstream sees a status word. A child ended by a signal
+    /// gets nil, as for any end with no exit code: the app itself ends processes
+    /// with SIGTERM/SIGKILL when a terminal is closed or cancelled, and that must
+    /// not read as a failure. If a SwiftTerm upgrade starts passing decoded codes
+    /// (as its Subprocess path does), drop this, or codes would be decoded twice.
+    static func exitCode(fromWaitStatus status: Int32) -> Int32? {
+        // Swift does not import the W* macros. The low 7 bits are the
+        // terminating signal (WTERMSIG), 0 for a normal exit (WIFEXITED), and
+        // 0x7f for a stopped child; bits 8-15 hold the exit code (WEXITSTATUS).
+        guard status & 0x7f == 0 else { return nil }
+        return (status >> 8) & 0xff
     }
 
     func dataReceived(slice: ArraySlice<UInt8>) {
