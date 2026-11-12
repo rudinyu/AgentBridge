@@ -149,9 +149,9 @@ To return to subscription login, run `"$CLI" settings usage subscription`, then 
 
 #### Removing a session
 
-To remove a session you no longer need, right-click it in either session list and choose **Remove Session…**. AgentBridge first checks the session's isolated workspace and shows what removal would delete: files that differ from what the source repository has, and branches or stashes whose commits exist only in the workspace. If it cannot complete that check, it says so instead of calling the workspace clean. Removal deletes the workspace and cannot be undone; the session's audit events and usage records are kept, so usage statistics still count its runs. A running session, one with a terminal open in its workspace, or a Claude session with an unreconciled API call cannot be removed. If the workspace changes after you review it, nothing is deleted and you are asked to review it again.
+To remove a session you no longer need, right-click it in either session list and choose **Remove Session…**. AgentBridge first checks the session's isolated workspace and shows what removal would delete: files that differ from what the source repository has; ignored files and folders, such as `.env` files, which Git does not keep; and branches, tags, notes or stash entries whose commits exist only in the workspace. If it cannot complete that check, it says so instead of calling the workspace clean. Removal deletes the workspace and cannot be undone; the session's audit events and usage records are kept, so usage statistics still count its runs. A running session, one with a terminal open in its workspace, or a Claude session with an unreconciled API call cannot be removed. If the workspace changes after you review it, nothing is deleted and you are asked to review it again.
 
-From the CLI, `"$CLI" session remove SESSION-ID` shows the same check without removing anything, and `"$CLI" session remove SESSION-ID --confirm` checks again and removes the session.
+From the CLI, `"$CLI" session remove SESSION-ID` shows the same check without removing anything, and `"$CLI" session remove SESSION-ID --confirm` checks again and removes the session. If the check finds work that would be lost, or could not finish, `--confirm` alone removes nothing; add `--discard-unsaved-work` to delete it.
 
 ### 9. Safe changes, activity, memory handoff, and extensions
 

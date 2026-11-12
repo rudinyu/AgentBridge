@@ -104,10 +104,17 @@ extension AgentBridgeCLI {
     }
 
     /// Shows what removing the session deletes; with `--confirm`, removes it.
+    /// When removal may lose work, `--discard-unsaved-work` is needed as well, so
+    /// a script that passes `--confirm` cannot delete work nobody reviewed.
     static func removeSessionCommand(_ arguments: [String], service: BridgeService) async throws {
-        guard let first = arguments.first, let sessionID = UUID(uuidString: first),
-              arguments.count == 1 || (arguments.count == 2 && arguments[1] == "--confirm") else {
-            throw AgentBridgeError.invalidInput("Usage: agentbridge session remove SESSION-ID [--confirm]")
+        let usage = "Usage: agentbridge session remove SESSION-ID [--confirm [--discard-unsaved-work]]"
+        guard let first = arguments.first, let sessionID = UUID(uuidString: first) else {
+            throw AgentBridgeError.invalidInput(usage)
+        }
+        let options = Set(arguments.dropFirst())
+        guard options.isSubset(of: ["--confirm", "--discard-unsaved-work"]), options.count == arguments.count - 1,
+              !options.contains("--discard-unsaved-work") || options.contains("--confirm") else {
+            throw AgentBridgeError.invalidInput(usage)
         }
         let preview = try await service.sessionRemovalPreview(sessionID: sessionID)
         print("Workspace to delete: \(preview.workspacePath)")
@@ -116,18 +123,23 @@ extension AgentBridgeCLI {
         if !preview.unsavedReferences.isEmpty {
             print("Branches or stashes whose commits exist only in this workspace: \(preview.unsavedReferences.joined(separator: ", "))")
         }
-        if preview.changedPathCount > 0 {
-            print("Files that differ from what the source repository has (\(preview.changedPathCount)):")
-            for path in preview.changedPaths { print("  \(path)") }
-            if preview.changedPathCount > preview.changedPaths.count {
-                print("  …and \(preview.changedPathCount - preview.changedPaths.count) more.")
-            }
+        func list(_ title: String, _ paths: [String], total: Int) {
+            guard total > 0 else { return }
+            print("\(title) (\(total)):")
+            for path in paths { print("  \(path)") }
+            if total > paths.count { print("  …and \(total - paths.count) more.") }
         }
+        list("Files that differ from what the source repository has", preview.changedPaths, total: preview.changedPathCount)
+        list("Ignored files and folders, which Git does not keep", preview.ignoredPaths, total: preview.ignoredPathCount)
         print(preview.mayLoseWork
             ? "Anything listed here is lost. Removal cannot be undone."
             : "Nothing in the workspace is missing from the source repository.")
-        guard arguments.count == 2 else {
+        guard options.contains("--confirm") else {
             print("Nothing was removed. Run again with --confirm to remove the session.")
+            return
+        }
+        guard !preview.mayLoseWork || options.contains("--discard-unsaved-work") else {
+            print("Nothing was removed. To delete the work listed above, add --discard-unsaved-work.")
             return
         }
         try await service.removeSession(sessionID: sessionID, reviewed: preview)

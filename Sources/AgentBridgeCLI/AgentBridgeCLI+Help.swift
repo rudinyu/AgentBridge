@@ -25,7 +25,7 @@ extension AgentBridgeCLI {
           agentbridge profiles memory PROFILE-ID on|off
           agentbridge profile-login PROFILE-ID
           agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes]
-          agentbridge session remove SESSION-ID [--confirm]
+          agentbridge session remove SESSION-ID [--confirm [--discard-unsaved-work]]
           agentbridge sessions
           agentbridge run SESSION-ID [--api-budget USD --confirm-api-spend --api-key-env ANTHROPIC_API_KEY]
           agentbridge changes plan SESSION-ID --title TITLE --summary SUMMARY --step STEP [--step STEP ...] [--with-memory]

@@ -12,9 +12,10 @@ extension BridgeService {
     /// statistics still count its runs.
     ///
     /// Holding the session's run lease, it checks the workspace again and stops
-    /// if anything changed since the review, so nothing the user did not see is
-    /// deleted. A session that is running, or has a paid API call not yet
-    /// reconciled, cannot be removed.
+    /// if what it would delete is no longer what the review showed: other files,
+    /// counts, or refs. Edits to files the review already listed are not
+    /// detected; those files were shown as lost either way. A session that is
+    /// running, or has a paid API call not yet reconciled, cannot be removed.
     public func removeSession(sessionID: UUID, reviewed: SessionRemovalPreview) async throws {
         guard reviewed.sessionID == sessionID else {
             throw AgentBridgeError.sessionMismatch("The reviewed removal is for a different session.")

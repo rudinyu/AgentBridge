@@ -1753,3 +1753,4 @@
 "AgentBridge could not compare the workspace with the source repository, so it cannot tell whether the workspace holds work that exists nowhere else." = "AgentBridge could not compare the workspace with the source repository, so it cannot tell whether the workspace holds work that exists nowhere else.";
 "The session was removed and its isolated workspace deleted." = "The session was removed and its isolated workspace deleted.";
 "The session was removed and its isolated workspace deleted, after the user confirmed it held work that might exist nowhere else." = "The session was removed and its isolated workspace deleted, after the user confirmed it held work that might exist nowhere else.";
+"Ignored files and folders, which Git does not keep (%@):" = "Ignored files and folders, which Git does not keep (%@):";

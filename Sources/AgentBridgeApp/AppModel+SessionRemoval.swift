@@ -71,6 +71,16 @@ extension AppModel {
         }
     }
 
+    /// How many paths of each list the confirmation shows.
+    private static let listedRemovalPaths = 12
+
+    private func listedPaths(_ paths: [String], total: Int) -> String {
+        var text = paths.prefix(Self.listedRemovalPaths).map { "• \($0)" }.joined(separator: "\n")
+        let more = total - min(paths.count, Self.listedRemovalPaths)
+        if more > 0 { text += "\n" + localizedFormat("…and %@ more.", String(more)) }
+        return text
+    }
+
     /// The confirmation text for `preview`, in the app language.
     func sessionRemovalMessage(_ preview: SessionRemovalPreview) -> String {
         var parts = [localizedFormat("AgentBridge deletes this session's isolated workspace: %@", preview.workspacePath)]
@@ -87,13 +97,16 @@ extension AppModel {
             ))
         }
         if preview.changedPathCount > 0 {
-            var files = preview.changedPaths.prefix(12).map { "• \($0)" }.joined(separator: "\n")
-            let more = preview.changedPathCount - min(preview.changedPaths.count, 12)
-            if more > 0 { files += "\n" + localizedFormat("…and %@ more.", String(more)) }
             parts.append(localizedFormat(
                 "Files that differ from what the source repository has (%@):",
                 String(preview.changedPathCount)
-            ) + "\n" + files)
+            ) + "\n" + listedPaths(preview.changedPaths, total: preview.changedPathCount))
+        }
+        if preview.ignoredPathCount > 0 {
+            parts.append(localizedFormat(
+                "Ignored files and folders, which Git does not keep (%@):",
+                String(preview.ignoredPathCount)
+            ) + "\n" + listedPaths(preview.ignoredPaths, total: preview.ignoredPathCount))
         }
         parts.append(localized(preview.mayLoseWork
             ? "Anything listed here is lost. Removal cannot be undone."

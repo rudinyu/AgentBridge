@@ -96,6 +96,89 @@ final class SessionRemovalTests: XCTestCase {
         XCTAssertEqual(preview.changedPaths.sorted(), [".gitattributes", "source.txt"])
     }
 
+    func testIgnoredFilesAreListedEvenWhenTheWorkspaceIgnoresThemItself() async throws {
+        let fixture = try await makeFixture()
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
+        // A local secret, and a rule the workspace added to hide another file.
+        try Data(".env\n".utf8).write(to: workspace.appendingPathComponent(".git/info/exclude"))
+        try Data("KEY=1\n".utf8).write(to: workspace.appendingPathComponent(".env"))
+        try Data("hidden.txt\n".utf8).write(to: workspace.appendingPathComponent(".gitignore"))
+        try Data("hidden\n".utf8).write(to: workspace.appendingPathComponent("hidden.txt"))
+
+        let preview = try await fixture.service.sessionRemovalPreview(sessionID: fixture.session.id)
+        // `.git/info/exclude` is the workspace's own and is not read, so `.env`
+        // counts as untracked; the work tree's `.gitignore` only moves a file to
+        // the ignored list. Neither is left out.
+        XCTAssertEqual(preview.changedPaths.sorted(), [".env", ".gitignore"])
+        XCTAssertEqual(preview.ignoredPaths, ["hidden.txt"])
+        XCTAssertEqual(preview.ignoredPathCount, 1)
+        XCTAssertTrue(preview.mayLoseWork)
+    }
+
+    func testTagsOlderStashesAndADetachedHeadTheSourceLacksAreUnsaved() async throws {
+        let fixture = try await makeFixture()
+        let workspace = fixture.session.workspacePath
+        let file = URL(fileURLWithPath: workspace).appendingPathComponent("source.txt")
+        // A tagged commit no branch holds.
+        try FixtureGit.run(["-C", workspace, "commit", "-q", "--allow-empty", "-m", "tagged"])
+        try FixtureGit.run(["-C", workspace, "tag", "v1"])
+        try FixtureGit.run(["-C", workspace, "reset", "-q", "--hard", "HEAD~1"])
+        // Two stashes: `refs/stash` and the older `stash@{1}`.
+        try Data("first\n".utf8).write(to: file)
+        try FixtureGit.run(["-C", workspace, "stash", "-q"])
+        try Data("second\n".utf8).write(to: file)
+        try FixtureGit.run(["-C", workspace, "stash", "-q"])
+        // A commit on a detached HEAD.
+        try FixtureGit.run(["-C", workspace, "switch", "-q", "--detach"])
+        try FixtureGit.run(["-C", workspace, "commit", "-q", "--allow-empty", "-m", "detached"])
+
+        let preview = try await fixture.service.sessionRemovalPreview(sessionID: fixture.session.id)
+        XCTAssertEqual(preview.unsavedReferences, ["HEAD", "stash", "stash@{1}", "tags/v1"])
+    }
+
+    func testControlCharactersInNamesAreNotShown() async throws {
+        let fixture = try await makeFixture()
+        let workspace = URL(fileURLWithPath: fixture.session.workspacePath, isDirectory: true)
+        try Data("x\n".utf8).write(to: workspace.appendingPathComponent("evil\u{1B}[2Jname.txt"))
+
+        let preview = try await fixture.service.sessionRemovalPreview(sessionID: fixture.session.id)
+        XCTAssertEqual(preview.changedPaths, ["evil?[2Jname.txt"])
+    }
+
+    func testAClaudeSessionWithAnUnreconciledAPICallCannotBeRemoved() async throws {
+        let fixture = try await makeFixture()
+        let profile = try fixture.service.createAccountProfile(name: "Claude billing", provider: .claude)
+        let session = try await fixture.service.createSession(
+            sourcePath: fixture.sourceURL.path,
+            provider: .claude,
+            accessMode: .interactiveManualApproval,
+            accountProfileID: profile.id
+        )
+        let ledger = try APISpendLedger(
+            rootURL: fixture.store.rootURL.appendingPathComponent("api-spend", isDirectory: true)
+                .appendingPathComponent(profile.id.uuidString.lowercased(), isDirectory: true)
+        )
+        _ = try ledger.reserve(
+            sessionID: session.id,
+            requestedUSD: 1,
+            explicitlyAuthorized: true,
+            limits: APISpendLimits(monthlyUSD: 25, dailyUSD: 10, sessionUSD: 10)
+        )
+        let preview = try await fixture.service.sessionRemovalPreview(sessionID: session.id)
+
+        await XCTAssertThrowsErrorAsync(try await fixture.service.removeSession(sessionID: session.id, reviewed: preview)) {
+            XCTAssertEqual($0 as? AgentBridgeError, .sessionMismatch("This session has a paid API call that is not reconciled yet. Reconcile it before removing the session."))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.workspacePath))
+    }
+
+    func testAReviewOfAnotherSessionIsRejected() async throws {
+        let fixture = try await makeFixture()
+        let preview = try await fixture.service.sessionRemovalPreview(sessionID: fixture.session.id)
+        await XCTAssertThrowsErrorAsync(try await fixture.service.removeSession(sessionID: UUID(), reviewed: preview))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.session.workspacePath))
+    }
+
     func testAMissingWorkspaceCanStillBeRemoved() async throws {
         let fixture = try await makeFixture()
         try FileManager.default.removeItem(atPath: fixture.session.workspacePath)

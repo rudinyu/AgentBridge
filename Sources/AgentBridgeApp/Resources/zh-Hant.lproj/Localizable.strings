@@ -1753,3 +1753,4 @@
 "AgentBridge could not compare the workspace with the source repository, so it cannot tell whether the workspace holds work that exists nowhere else." = "AgentBridge 無法比對工作區與來源儲存庫，因此無法判斷工作區是否有只存在那裡的內容。";
 "The session was removed and its isolated workspace deleted." = "已移除工作階段並刪除其隔離工作區。";
 "The session was removed and its isolated workspace deleted, after the user confirmed it held work that might exist nowhere else." = "已移除工作階段並刪除其隔離工作區；使用者已確認工作區內可能有只存在那裡的內容。";
+"Ignored files and folders, which Git does not keep (%@):" = "被忽略的檔案與資料夾，Git 不會保存（%@ 個）：";

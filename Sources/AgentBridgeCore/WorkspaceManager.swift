@@ -860,9 +860,11 @@ public final class WorkspaceManager: @unchecked Sendable {
     /// What deleting `session`'s workspace would lose. Nothing is changed.
     ///
     /// Work is safe when the source repository has it. So this lists the
-    /// workspace's branches and stashes (and a detached HEAD) whose commits the
-    /// source lacks, and the files that differ from the newest commit the source
-    /// has: the workspace HEAD if the source has it, else the pinned commit.
+    /// workspace's branches, tags, notes, stash entries and detached HEAD whose
+    /// commits the source lacks; the files that differ from the newest commit the
+    /// source has (the workspace HEAD if the source has it, else the pinned
+    /// commit); and the ignored files and folders, which Git keeps nowhere but
+    /// which removal deletes too, such as `.env` files and local settings.
     ///
     /// The workspace's `.git` can be edited by a provider or a terminal command,
     /// so it is only read for refs and commit IDs. File contents are compared
@@ -890,14 +892,30 @@ public final class WorkspaceManager: @unchecked Sendable {
             var unsaved: [String] = []
             var headIsSaved = false
             let head = try await workspaceCommit(workspace, "HEAD")
+            // Remote-tracking refs are left out: what they point at is on a remote.
             let refs = try await runGit(arguments: [
-                "-C", workspace.path, "for-each-ref", "--format=%(objectname) %(refname)", "refs/heads", "refs/stash"
+                "-C", workspace.path, "for-each-ref", "--format=%(objectname) %(refname)",
+                "refs/heads", "refs/tags", "refs/notes", "refs/stash"
             ], workingDirectory: nil, outputLimit: 1_000_000)
             for line in String(decoding: refs.standardOutput, as: UTF8.self).split(separator: "\n") {
                 let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
                 guard parts.count == 2 else { continue }
                 if try await !sourceHasCommit(source, parts[0]) {
-                    unsaved.append(parts[1].replacingOccurrences(of: "refs/heads/", with: ""))
+                    let name = parts[1].hasPrefix("refs/heads/") ? String(parts[1].dropFirst("refs/heads/".count)) : String(parts[1].dropFirst("refs/".count))
+                    unsaved.append(name)
+                }
+            }
+            // `refs/stash` names only the newest stash; older ones are in its reflog.
+            let stashes = try await runGit(
+                arguments: ["-C", workspace.path, "log", "--walk-reflogs", "--format=%H", "refs/stash", "--"],
+                workingDirectory: nil,
+                allowedExitCodes: [0, 128],
+                outputLimit: 1_000_000
+            )
+            if stashes.exitCode == 0 {
+                let commits = String(decoding: stashes.standardOutput, as: UTF8.self).split(separator: "\n").map(String.init)
+                for (index, commit) in commits.enumerated() where index > 0 {
+                    if try await !sourceHasCommit(source, commit) { unsaved.append("stash@{\(index)}") }
                 }
             }
             if let head {
@@ -917,6 +935,8 @@ public final class WorkspaceManager: @unchecked Sendable {
                 workspaceExists: true,
                 changedPaths: changed.paths,
                 changedPathCount: changed.paths.count,
+                ignoredPaths: changed.ignored,
+                ignoredPathCount: changed.ignored.count,
                 unsavedReferences: unsaved.sorted(),
                 inspectionProblem: changed.complete ? nil : "The workspace has too many changed files to check them all."
             )
@@ -967,9 +987,11 @@ public final class WorkspaceManager: @unchecked Sendable {
         ).exitCode == 0
     }
 
-    /// Paths in `workTree` that differ from `commit`, read with a private copy of
-    /// that commit fetched from `source`, so the work tree's `.git` is not used.
-    private func changedPaths(in workTree: URL, against commit: String, from source: URL) async throws -> (paths: [String], complete: Bool) {
+    /// Paths in `workTree` that differ from `commit`, and its ignored files and
+    /// folders, read with a private copy of that commit fetched from `source`, so
+    /// the work tree's `.git` is not used. Ignore rules in the work tree only sort
+    /// files into the two lists; none is left out.
+    private func changedPaths(in workTree: URL, against commit: String, from source: URL) async throws -> (paths: [String], ignored: [String], complete: Bool) {
         let directory = store.rootURL.appendingPathComponent("tmp/git", isDirectory: true)
         try AuditStore.createPrivateDirectory(directory, fileManager: fileManager)
         let base = directory.appendingPathComponent("removal-\(UUID().uuidString.lowercased()).git", isDirectory: true)
@@ -991,19 +1013,21 @@ public final class WorkspaceManager: @unchecked Sendable {
         let repository = ["--git-dir", base.path, "--work-tree", workTree.path, "-C", workTree.path]
         _ = try await runGit(arguments: repository + ["read-tree", commit], workingDirectory: nil, indexFile: index)
         let status = try await runGit(
-            arguments: repository + ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"],
+            arguments: repository + [
+                "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching", "--no-renames"
+            ],
             workingDirectory: nil,
             outputLimit: 4_000_000,
             indexFile: index,
             timeout: 300
         )
-        let paths = status.standardOutput
-            .split(separator: 0, omittingEmptySubsequences: true)
-            .compactMap { entry -> String? in
-                guard entry.count > 3 else { return nil }
-                return String(decoding: entry.dropFirst(3), as: UTF8.self)
-            }
-        return (paths, !status.outputWasTruncated)
+        var paths: [String] = []
+        var ignored: [String] = []
+        for entry in status.standardOutput.split(separator: 0, omittingEmptySubsequences: true) where entry.count > 3 {
+            let path = String(decoding: entry.dropFirst(3), as: UTF8.self)
+            if entry.starts(with: Array("!! ".utf8)) { ignored.append(path) } else { paths.append(path) }
+        }
+        return (paths, ignored, !status.outputWasTruncated)
     }
 
     private func isWithinManagedWorkspaces(_ url: URL) -> Bool {

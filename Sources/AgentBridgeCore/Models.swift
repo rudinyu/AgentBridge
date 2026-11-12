@@ -264,7 +264,12 @@ public struct SessionRemovalPreview: Equatable, Sendable {
     /// uncommitted edits and untracked files. At most `maximumListedPaths`.
     public let changedPaths: [String]
     public let changedPathCount: Int
-    /// Branches and stashes whose commits exist only in the workspace.
+    /// Ignored files and folders. Git does not keep them, so they exist only in
+    /// the workspace. At most `maximumListedPaths`.
+    public let ignoredPaths: [String]
+    public let ignoredPathCount: Int
+    /// Branches, tags, notes and stash entries whose commits exist only in the
+    /// workspace.
     public let unsavedReferences: [String]
     /// Why the workspace could not be fully checked, if it could not.
     public let inspectionProblem: String?
@@ -275,21 +280,34 @@ public struct SessionRemovalPreview: Equatable, Sendable {
         workspaceExists: Bool,
         changedPaths: [String] = [],
         changedPathCount: Int? = nil,
+        ignoredPaths: [String] = [],
+        ignoredPathCount: Int? = nil,
         unsavedReferences: [String] = [],
         inspectionProblem: String? = nil
     ) {
         self.sessionID = sessionID
         self.workspacePath = workspacePath
         self.workspaceExists = workspaceExists
-        self.changedPaths = Array(changedPaths.prefix(Self.maximumListedPaths))
+        self.changedPaths = changedPaths.prefix(Self.maximumListedPaths).map(Self.displayable)
         self.changedPathCount = changedPathCount ?? changedPaths.count
-        self.unsavedReferences = unsavedReferences
+        self.ignoredPaths = ignoredPaths.prefix(Self.maximumListedPaths).map(Self.displayable)
+        self.ignoredPathCount = ignoredPathCount ?? ignoredPaths.count
+        self.unsavedReferences = unsavedReferences.map(Self.displayable)
         self.inspectionProblem = inspectionProblem
     }
 
     /// Whether removal may lose work, or AgentBridge could not rule that out.
     public var mayLoseWork: Bool {
-        changedPathCount > 0 || !unsavedReferences.isEmpty || inspectionProblem != nil
+        changedPathCount > 0 || ignoredPathCount > 0 || !unsavedReferences.isEmpty || inspectionProblem != nil
+    }
+
+    /// File and ref names come from a workspace anything may have written, so
+    /// control characters, which could rewrite a terminal or dialog, are shown
+    /// as "?".
+    private static func displayable(_ name: String) -> String {
+        String(String.UnicodeScalarView(name.unicodeScalars.map { scalar in
+            scalar.properties.generalCategory == .control || scalar.properties.generalCategory == .format ? "?" : scalar
+        }))
     }
 }
 
