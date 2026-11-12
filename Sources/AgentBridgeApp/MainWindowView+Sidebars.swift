@@ -88,6 +88,7 @@ extension MainWindowView {
                                     projectSessionRow(session)
                                 }
                                 .buttonStyle(.plain)
+                                .contextMenu { removeSessionMenuItem(session) }
                             }
                         }
                     }
@@ -361,6 +362,14 @@ extension MainWindowView {
         .disabled(model.hasActiveAutonomousWorkflow || model.chats.hasActiveDiscussionOperation)
     }
 
+    /// Removes the session after showing what that deletes.
+    func removeSessionMenuItem(_ session: SessionRecord) -> some View {
+        Button(model.localized("Remove Session…"), role: .destructive) {
+            model.reviewSessionRemoval(session.id)
+        }
+        .disabled(model.isRemovingSession)
+    }
+
     var sessionList: some View {
         GroupBox("Sessions") {
             if model.sessions.isEmpty {
@@ -389,6 +398,7 @@ extension MainWindowView {
                     }
                     .padding(.vertical, 3)
                     .tag(session.id)
+                    .contextMenu { removeSessionMenuItem(session) }
                 }
                 .frame(minHeight: 120, maxHeight: 280)
             }

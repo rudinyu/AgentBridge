@@ -201,6 +201,10 @@ public struct SessionRecord: Codable, Equatable, Identifiable, Sendable {
     public var verificationDiffDigest: String?
     public var verificationCompletedAt: Date?
     public var changesAcceptedAt: Date?
+    /// When the session was removed. A removed session is left out of the session
+    /// list and cannot be loaded or run; its record and audit events are kept so
+    /// usage statistics still count its runs.
+    public var removedAt: Date?
 
     public init(
         id: UUID = UUID(),
@@ -221,7 +225,8 @@ public struct SessionRecord: Codable, Equatable, Identifiable, Sendable {
         verificationPassed: Bool? = nil,
         verificationDiffDigest: String? = nil,
         verificationCompletedAt: Date? = nil,
-        changesAcceptedAt: Date? = nil
+        changesAcceptedAt: Date? = nil,
+        removedAt: Date? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -242,6 +247,49 @@ public struct SessionRecord: Codable, Equatable, Identifiable, Sendable {
         self.verificationDiffDigest = verificationDiffDigest
         self.verificationCompletedAt = verificationCompletedAt
         self.changesAcceptedAt = changesAcceptedAt
+        self.removedAt = removedAt
+    }
+}
+
+/// What removing a session would delete, found before anything is deleted.
+/// Removal deletes the session's isolated workspace, so anything that exists
+/// only there is lost.
+public struct SessionRemovalPreview: Equatable, Sendable {
+    public static let maximumListedPaths = 50
+
+    public let sessionID: UUID
+    public let workspacePath: String
+    public let workspaceExists: Bool
+    /// Files that differ from the newest commit the source repository also has:
+    /// uncommitted edits and untracked files. At most `maximumListedPaths`.
+    public let changedPaths: [String]
+    public let changedPathCount: Int
+    /// Branches and stashes whose commits exist only in the workspace.
+    public let unsavedReferences: [String]
+    /// Why the workspace could not be fully checked, if it could not.
+    public let inspectionProblem: String?
+
+    public init(
+        sessionID: UUID,
+        workspacePath: String,
+        workspaceExists: Bool,
+        changedPaths: [String] = [],
+        changedPathCount: Int? = nil,
+        unsavedReferences: [String] = [],
+        inspectionProblem: String? = nil
+    ) {
+        self.sessionID = sessionID
+        self.workspacePath = workspacePath
+        self.workspaceExists = workspaceExists
+        self.changedPaths = Array(changedPaths.prefix(Self.maximumListedPaths))
+        self.changedPathCount = changedPathCount ?? changedPaths.count
+        self.unsavedReferences = unsavedReferences
+        self.inspectionProblem = inspectionProblem
+    }
+
+    /// Whether removal may lose work, or AgentBridge could not rule that out.
+    public var mayLoseWork: Bool {
+        changedPathCount > 0 || !unsavedReferences.isEmpty || inspectionProblem != nil
     }
 }
 

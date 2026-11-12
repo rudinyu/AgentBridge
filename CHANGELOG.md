@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Sessions can be removed. Right-click a session in either list and choose Remove Session…, or run `agentbridge session remove SESSION-ID`. AgentBridge first shows what removal deletes: files in the isolated workspace that differ from what the source repository has, and branches or stashes whose commits exist only there. Removal deletes the workspace and cannot be undone; the session's audit events and usage records are kept, so usage statistics still count it. Running sessions, sessions with a terminal open in their workspace and Claude sessions with an unreconciled API call cannot be removed, and nothing is deleted if the workspace changed after it was reviewed. The check reads the workspace with AgentBridge's own Git settings, so settings in the workspace's `.git` cannot make it run a program.
+
 ### Fixed
 
 - The in-app terminal can no longer get stuck with a spinner, an empty panel and a locked close button (reported after reopening Local Terminal following `exit`). A process that fails to start now ends the launch with a clear message. If an earlier terminal process is still running, AgentBridge shows that terminal again instead of a new one that cannot start; it never stops that process for you. The terminal view is moved back into the panel when SwiftUI replaces the panel's container. The close button waits for Control-C only while a started process is really running, so a launch with no process can always be closed.

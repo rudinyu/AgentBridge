@@ -52,7 +52,10 @@ extension AgentBridgeCLI {
     }
 
     static func sessionCommand(_ arguments: [String], service: BridgeService) async throws {
-        guard arguments.first == "create" else { throw AgentBridgeError.invalidInput("Usage: agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes]") }
+        if arguments.first == "remove" { return try await removeSessionCommand(Array(arguments.dropFirst()), service: service) }
+        guard arguments.first == "create" else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes]\n       agentbridge session remove SESSION-ID [--confirm]")
+        }
         var provider: AgentProvider?
         var repoPath: String?
         var interactive = false
@@ -98,6 +101,37 @@ extension AgentBridgeCLI {
         if isolatedChanges {
             print("Created an isolated changes session. Read-only remains the default; nothing is written until you create and explicitly approve a work plan.")
         }
+    }
+
+    /// Shows what removing the session deletes; with `--confirm`, removes it.
+    static func removeSessionCommand(_ arguments: [String], service: BridgeService) async throws {
+        guard let first = arguments.first, let sessionID = UUID(uuidString: first),
+              arguments.count == 1 || (arguments.count == 2 && arguments[1] == "--confirm") else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge session remove SESSION-ID [--confirm]")
+        }
+        let preview = try await service.sessionRemovalPreview(sessionID: sessionID)
+        print("Workspace to delete: \(preview.workspacePath)")
+        if !preview.workspaceExists { print("The workspace folder no longer exists.") }
+        if let problem = preview.inspectionProblem { print(problem) }
+        if !preview.unsavedReferences.isEmpty {
+            print("Branches or stashes whose commits exist only in this workspace: \(preview.unsavedReferences.joined(separator: ", "))")
+        }
+        if preview.changedPathCount > 0 {
+            print("Files that differ from what the source repository has (\(preview.changedPathCount)):")
+            for path in preview.changedPaths { print("  \(path)") }
+            if preview.changedPathCount > preview.changedPaths.count {
+                print("  …and \(preview.changedPathCount - preview.changedPaths.count) more.")
+            }
+        }
+        print(preview.mayLoseWork
+            ? "Anything listed here is lost. Removal cannot be undone."
+            : "Nothing in the workspace is missing from the source repository.")
+        guard arguments.count == 2 else {
+            print("Nothing was removed. Run again with --confirm to remove the session.")
+            return
+        }
+        try await service.removeSession(sessionID: sessionID, reviewed: preview)
+        print("Removed the session and deleted its isolated workspace. Its audit events and usage records are kept.")
     }
 
     static func runCommand(_ arguments: [String], service: BridgeService) async throws {

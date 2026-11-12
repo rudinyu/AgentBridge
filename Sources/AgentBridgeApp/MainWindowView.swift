@@ -68,6 +68,16 @@ struct MainWindowView: View {
         } message: {
             Text(model.localized(model.errorMessage ?? ""))
         }
+        .alert(
+            model.localized("Remove this session?"),
+            isPresented: Binding(get: { model.sessionRemovalPreview != nil }, set: { if !$0 { model.cancelSessionRemoval() } }),
+            presenting: model.sessionRemovalPreview
+        ) { _ in
+            Button(model.localized("Remove Session"), role: .destructive) { model.confirmSessionRemoval() }
+            Button(model.localized("Cancel"), role: .cancel) { model.cancelSessionRemoval() }
+        } message: { preview in
+            Text(model.sessionRemovalMessage(preview))
+        }
         .alert(model.localized("Clear shared memory and same-commit handoff for this project?"), isPresented: $model.confirmClearMemory) {
             Button(model.localized("Clear Memory and Handoff"), role: .destructive) { model.clearSharedMemory() }
             Button(model.localized("Cancel"), role: .cancel) { model.confirmClearMemory = false }

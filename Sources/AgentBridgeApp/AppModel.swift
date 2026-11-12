@@ -95,6 +95,12 @@ final class AppModel {
     @ObservationIgnored private var changeDiffReloadsRequested: Set<UUID> = []
     /// How many change-diff loads have started, for tests.
     @ObservationIgnored private(set) var changeDiffLoadCount = 0
+    /// What removing a session would delete, while the user decides.
+    var sessionRemovalPreview: SessionRemovalPreview?
+    var isRemovingSession = false
+
+    /// Whether this app is running `sessionID` right now.
+    func hasActiveRun(for sessionID: UUID) -> Bool { activeRunFlags[sessionID] != nil }
     private var activeRunSessionID: UUID?
     private var savedLocalModelSettings: LocalModelSettings?
 

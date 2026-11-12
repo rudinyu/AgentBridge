@@ -149,6 +149,12 @@ printf '%s' 'Summarize the repository architecture.' | \
 
 回到訂閱模式時執行 `"$CLI" settings usage subscription`，再建立或切回訂閱工作階段。API 模式不能續用已有 provider session 的訂閱工作階段。帳本只計算 AgentBridge API 呼叫；供應商實際費用及 Anthropic Console 的限制為準。
 
+#### 移除工作階段
+
+不再需要的工作階段，可在任一個工作階段列表上按右鍵，選「移除工作階段…」。AgentBridge 會先檢查該工作階段的隔離工作區，列出移除後會刪掉的內容：與來源儲存庫不同的檔案，以及只存在這個工作區、來源儲存庫沒有其 commit 的分支或 stash。若無法完成檢查，會直接說明，而不會當成工作區沒有內容。移除會刪除工作區且無法復原；工作階段的稽核事件與用量紀錄會保留，用量統計仍會計入它的執行。正在執行的工作階段、工作區內開著終端機的工作階段，以及有尚未對帳 API 呼叫的 Claude 工作階段，都不能移除。檢視之後工作區若有變動，不會刪除任何東西，並請你重新檢視。
+
+在 CLI 中，`"$CLI" session remove SESSION-ID` 只顯示同樣的檢查結果、不會移除；`"$CLI" session remove SESSION-ID --confirm` 會再檢查一次並移除工作階段。
+
 ### 9. 安全修改、活動紀錄、記憶交接與擴充權限
 
 唯讀仍是預設。若要隔離修改，請在 **Access mode** 選取 **Isolated Changes**，並在訂閱模式建立新工作階段。它會依來源 Repository 已提交的 `HEAD` 建立新工作區；來源未提交檔案不會複製。原生互動 TUI 是獨立模式。

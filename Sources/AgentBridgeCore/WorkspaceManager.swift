@@ -855,6 +855,157 @@ public final class WorkspaceManager: @unchecked Sendable {
         return result
     }
 
+    // MARK: Session removal
+
+    /// What deleting `session`'s workspace would lose. Nothing is changed.
+    ///
+    /// Work is safe when the source repository has it. So this lists the
+    /// workspace's branches and stashes (and a detached HEAD) whose commits the
+    /// source lacks, and the files that differ from the newest commit the source
+    /// has: the workspace HEAD if the source has it, else the pinned commit.
+    ///
+    /// The workspace's `.git` can be edited by a provider or a terminal command,
+    /// so it is only read for refs and commit IDs. File contents are compared
+    /// against a private copy of that commit with AgentBridge's own Git settings,
+    /// as change review does, so the workspace's config cannot make Git run a
+    /// program. When something cannot be checked, the preview says so instead of
+    /// claiming the workspace is clean.
+    func removalPreview(for session: SessionRecord) async -> SessionRemovalPreview {
+        let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
+        guard fileManager.fileExists(atPath: workspace.path) else {
+            return SessionRemovalPreview(sessionID: session.id, workspacePath: workspace.path, workspaceExists: false)
+        }
+        func problem(_ message: String) -> SessionRemovalPreview {
+            SessionRemovalPreview(sessionID: session.id, workspacePath: workspace.path, workspaceExists: true, inspectionProblem: message)
+        }
+        guard isWithinManagedWorkspaces(workspace), isDirectory(workspace), !isSymbolicLink(workspace),
+              workspace.lastPathComponent == session.id.uuidString.lowercased() else {
+            return problem("The session workspace is outside AgentBridge's managed isolated directory.")
+        }
+        let source = URL(fileURLWithPath: session.sourceRepositoryPath, isDirectory: true).standardizedFileURL
+        guard isDirectory(source) else {
+            return problem("The source repository could not be found, so AgentBridge cannot tell which work in the workspace exists only there.")
+        }
+        do {
+            var unsaved: [String] = []
+            var headIsSaved = false
+            let head = try await workspaceCommit(workspace, "HEAD")
+            let refs = try await runGit(arguments: [
+                "-C", workspace.path, "for-each-ref", "--format=%(objectname) %(refname)", "refs/heads", "refs/stash"
+            ], workingDirectory: nil, outputLimit: 1_000_000)
+            for line in String(decoding: refs.standardOutput, as: UTF8.self).split(separator: "\n") {
+                let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
+                guard parts.count == 2 else { continue }
+                if try await !sourceHasCommit(source, parts[0]) {
+                    unsaved.append(parts[1].replacingOccurrences(of: "refs/heads/", with: ""))
+                }
+            }
+            if let head {
+                headIsSaved = try await sourceHasCommit(source, head)
+                let detached = try await runGit(
+                    arguments: ["-C", workspace.path, "symbolic-ref", "--quiet", "HEAD"],
+                    workingDirectory: nil,
+                    allowedExitCodes: [0, 1]
+                ).exitCode == 1
+                if detached && !headIsSaved { unsaved.append("HEAD") }
+            }
+            let reference = headIsSaved ? (head ?? session.snapshotCommit) : session.snapshotCommit
+            let changed = try await changedPaths(in: workspace, against: reference, from: source)
+            return SessionRemovalPreview(
+                sessionID: session.id,
+                workspacePath: workspace.path,
+                workspaceExists: true,
+                changedPaths: changed.paths,
+                changedPathCount: changed.paths.count,
+                unsavedReferences: unsaved.sorted(),
+                inspectionProblem: changed.complete ? nil : "The workspace has too many changed files to check them all."
+            )
+        } catch {
+            return problem("AgentBridge could not compare the workspace with the source repository, so it cannot tell whether the workspace holds work that exists nowhere else.")
+        }
+    }
+
+    /// Deletes `session`'s isolated workspace and its private copy of the pinned
+    /// commit. The workspace must be the session's own folder in a managed root.
+    func deleteWorkspace(for session: SessionRecord) throws {
+        let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
+        if fileManager.fileExists(atPath: workspace.path) || isSymbolicLink(workspace) {
+            guard isWithinManagedWorkspaces(workspace), isDirectory(workspace), !isSymbolicLink(workspace),
+                  workspace.lastPathComponent == session.id.uuidString.lowercased() else {
+                throw AgentBridgeError.sessionMismatch("The session workspace is outside AgentBridge's managed isolated directory, so it was not deleted.")
+            }
+            do {
+                try fileManager.removeItem(at: workspace)
+            } catch {
+                throw AgentBridgeError.sessionMismatch("Could not delete the isolated workspace at \(workspace.path).")
+            }
+        }
+        let base = store.rootURL
+            .appendingPathComponent("base-repositories", isDirectory: true)
+            .appendingPathComponent("\(session.id.uuidString.lowercased()).git", isDirectory: true)
+        if isDirectory(base), !isSymbolicLink(base) { try? fileManager.removeItem(at: base) }
+    }
+
+    /// The commit `revision` names in the workspace, or nil if it names none.
+    private func workspaceCommit(_ workspace: URL, _ revision: String) async throws -> String? {
+        let result = try await runGit(
+            arguments: ["-C", workspace.path, "rev-parse", "--verify", "--quiet", "\(revision)^{commit}"],
+            workingDirectory: nil,
+            allowedExitCodes: [0, 1, 128]
+        )
+        guard result.exitCode == 0 else { return nil }
+        let commit = String(decoding: result.standardOutput, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return commit.isEmpty ? nil : commit
+    }
+
+    private func sourceHasCommit(_ source: URL, _ commit: String) async throws -> Bool {
+        guard commit.count == 40 || commit.count == 64, commit.allSatisfy(\.isHexDigit) else { return false }
+        return try await runGit(
+            arguments: ["-C", source.path, "cat-file", "-e", "\(commit)^{commit}"],
+            workingDirectory: nil,
+            allowedExitCodes: [0, 1, 128]
+        ).exitCode == 0
+    }
+
+    /// Paths in `workTree` that differ from `commit`, read with a private copy of
+    /// that commit fetched from `source`, so the work tree's `.git` is not used.
+    private func changedPaths(in workTree: URL, against commit: String, from source: URL) async throws -> (paths: [String], complete: Bool) {
+        let directory = store.rootURL.appendingPathComponent("tmp/git", isDirectory: true)
+        try AuditStore.createPrivateDirectory(directory, fileManager: fileManager)
+        let base = directory.appendingPathComponent("removal-\(UUID().uuidString.lowercased()).git", isDirectory: true)
+        let index = directory.appendingPathComponent("index-\(UUID().uuidString.lowercased())")
+        defer {
+            try? fileManager.removeItem(at: base)
+            try? fileManager.removeItem(at: index)
+            try? fileManager.removeItem(at: index.appendingPathExtension("lock"))
+        }
+        _ = try await runGit(arguments: ["init", "--quiet", "--bare", "--template=", "--", base.path], workingDirectory: nil)
+        _ = try await runGit(arguments: [
+            "--git-dir", base.path, "-c", "protocol.version=2", "-c", "transfer.fsckObjects=true",
+            "fetch", "--quiet", "--depth", "1", "--no-tags", source.path, "\(commit):refs/heads/agentbridge-removal-check"
+        ], workingDirectory: nil, timeout: 300)
+        // Status compares the index with HEAD too, so HEAD must be the commit.
+        _ = try await runGit(arguments: [
+            "--git-dir", base.path, "symbolic-ref", "HEAD", "refs/heads/agentbridge-removal-check"
+        ], workingDirectory: nil)
+        let repository = ["--git-dir", base.path, "--work-tree", workTree.path, "-C", workTree.path]
+        _ = try await runGit(arguments: repository + ["read-tree", commit], workingDirectory: nil, indexFile: index)
+        let status = try await runGit(
+            arguments: repository + ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"],
+            workingDirectory: nil,
+            outputLimit: 4_000_000,
+            indexFile: index,
+            timeout: 300
+        )
+        let paths = status.standardOutput
+            .split(separator: 0, omittingEmptySubsequences: true)
+            .compactMap { entry -> String? in
+                guard entry.count > 3 else { return nil }
+                return String(decoding: entry.dropFirst(3), as: UTF8.self)
+            }
+        return (paths, !status.outputWasTruncated)
+    }
+
     private func isWithinManagedWorkspaces(_ url: URL) -> Bool {
         let candidate = url.standardizedFileURL.path
         return store.managedWorkspaceRootURLs.contains { root in

@@ -53,4 +53,34 @@ extension XCTestCase {
             wait(for: [queueBlockRan, mainActorTaskRan], timeout: 5)
         }
     }
+
+    /// Git for the fixture source repository only: no inherited Git variables, no
+    /// system or global config, templates or hooks, and a fixed identity. The core
+    /// tests' `FixtureGit` is in a test target this one cannot import.
+    func runFixtureGit(_ arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["-c", "core.hooksPath=/dev/null"] + arguments
+        process.environment = [
+            "HOME": NSTemporaryDirectory(),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_TEMPLATE_DIR": "",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_AUTHOR_NAME": "AgentBridge Fixture",
+            "GIT_AUTHOR_EMAIL": "agentbridge-fixture@example.invalid",
+            "GIT_COMMITTER_NAME": "AgentBridge Fixture",
+            "GIT_COMMITTER_EMAIL": "agentbridge-fixture@example.invalid"
+        ]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw NSError(domain: "git", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: "git \(arguments.joined(separator: " ")): \(text)"])
+        }
+    }
 }

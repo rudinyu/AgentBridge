@@ -132,14 +132,22 @@ public final class AuditStore: @unchecked Sendable {
         }
     }
 
-    public func loadSessions() throws -> [SessionRecord] {
+    /// The sessions, newest first. Removed sessions are left out unless
+    /// `includingRemoved`, which only usage statistics need.
+    public func loadSessions(includingRemoved: Bool = false) throws -> [SessionRecord] {
         try withStoreLock(exclusive: false) {
-            try sessionIndex().values.sorted { $0.updatedAt > $1.updatedAt }
+            try sessionIndex().values
+                .filter { includingRemoved || $0.removedAt == nil }
+                .sorted { $0.updatedAt > $1.updatedAt }
         }
     }
 
+    /// The session, or nil if there is none or it was removed.
     public func session(id: UUID) throws -> SessionRecord? {
-        try withStoreLock(exclusive: false) { try sessionIndex()[id] }
+        try withStoreLock(exclusive: false) {
+            guard let session = try sessionIndex()[id], session.removedAt == nil else { return nil }
+            return session
+        }
     }
 
     /// The newest record of each session. The decoded index is reused until the

@@ -70,7 +70,8 @@ extension BridgeService {
     ) throws -> UsageStatisticsSnapshot {
         let profile = try profileID.map(accountProfile(id:)) ?? accountProfileStore.selected(provider: provider)
         guard profile.provider == provider else { throw AccountProfileError.providerMismatch(profile.id, provider) }
-        let matchingSessions = try store.loadSessions().filter { session in
+        // Removed sessions still count: their runs used the account's quota.
+        let matchingSessions = try store.loadSessions(includingRemoved: true).filter { session in
             session.provider == provider
                 && (session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)) == profile.id
         }
