@@ -86,12 +86,15 @@ final class AppModel {
     private var store: AuditStore?
     @ObservationIgnored private var activeRunFlags: [UUID: CancellationFlag] = [:]
     @ObservationIgnored private var autonomousCancellationFlags: [UUID: CancellationFlag] = [:]
-    /// Sessions whose change diff is loading. Loading holds the session's run
-    /// lease, so a second load started meanwhile would find it taken.
+    /// Sessions with a change-diff loader running: loading, or pausing before a
+    /// requested reload. Loading holds the session's run lease, so a second load
+    /// started meanwhile would find it taken.
     @ObservationIgnored private(set) var changeDiffLoadsInFlight: Set<UUID> = []
-    /// Sessions asked to reload their diff while a load was in flight; each gets
-    /// one more load when the current one ends, so the shown diff is not stale.
+    /// Sessions asked for their diff while their loader was running; the loader
+    /// loads once more for them, so the shown diff is not stale.
     @ObservationIgnored private var changeDiffReloadsRequested: Set<UUID> = []
+    /// How many change-diff loads have started, for tests.
+    @ObservationIgnored private(set) var changeDiffLoadCount = 0
     private var activeRunSessionID: UUID?
     private var savedLocalModelSettings: LocalModelSettings?
 
@@ -473,11 +476,15 @@ final class AppModel {
     /// served by one more load afterwards. A lease held by anything else, such as
     /// a CLI run of the same session, keeps the current diff without an alert;
     /// the next refresh tries again.
+    ///
+    /// Before a requested reload the loader pauses as long as the last load
+    /// took, at least half a second. A slow diff then holds the lease at most
+    /// about half the time, instead of back to back as every refresh asks again,
+    /// which would leave other work on the session little chance to start.
     private func refreshChangeDiffIfNeeded(for selectedSessionID: UUID) {
-        guard selectedSession?.policy.accessMode == .isolatedChanges,
-              activeRunFlags[selectedSessionID] == nil,
-              selectedSession?.status != .running else {
+        guard changeDiffIsWanted(for: selectedSessionID) else {
             changes.changeDiff = nil
+            changeDiffReloadsRequested.remove(selectedSessionID)
             return
         }
         guard !changeDiffLoadsInFlight.contains(selectedSessionID) else {
@@ -486,8 +493,10 @@ final class AppModel {
         }
         changeDiffLoadsInFlight.insert(selectedSessionID)
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            if let service = self.service {
+            defer { self?.changeDiffLoadsInFlight.remove(selectedSessionID) }
+            while let self, let service = self.service, self.changeDiffIsWanted(for: selectedSessionID) {
+                self.changeDiffLoadCount += 1
+                let started = Date()
                 do {
                     let diff = try await service.changesDiff(sessionID: selectedSessionID)
                     if self.selectedSessionID == selectedSessionID { self.changes.changeDiff = diff }
@@ -496,13 +505,22 @@ final class AppModel {
                 } catch {
                     if self.selectedSessionID == selectedSessionID { self.errorMessage = error.localizedDescription }
                 }
-            }
-            self.changeDiffLoadsInFlight.remove(selectedSessionID)
-            if self.changeDiffReloadsRequested.remove(selectedSessionID) != nil,
-               self.selectedSessionID == selectedSessionID {
-                self.refreshChangeDiffIfNeeded(for: selectedSessionID)
+                guard self.changeDiffReloadsRequested.remove(selectedSessionID) != nil else { return }
+                let pause = max(Self.minimumChangeDiffReloadPause, Date().timeIntervalSince(started))
+                try? await Task.sleep(nanoseconds: UInt64(pause * 1_000_000_000))
             }
         }
+    }
+
+    private static let minimumChangeDiffReloadPause: TimeInterval = 0.5
+
+    /// Whether `sessionID` is selected and its diff can be loaded now: an
+    /// isolated-changes session that is not running.
+    private func changeDiffIsWanted(for sessionID: UUID) -> Bool {
+        selectedSessionID == sessionID
+            && selectedSession?.policy.accessMode == .isolatedChanges
+            && activeRunFlags[sessionID] == nil
+            && selectedSession?.status != .running
     }
 
     func selectedSessionDidChange() {

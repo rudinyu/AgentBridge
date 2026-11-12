@@ -386,7 +386,11 @@ final class UsageStatisticsTests: XCTestCase {
             sessionID: fixture.session.id,
             actualUSD: 1.25,
             explicitlyConfirmed: true
-        )) { XCTAssertEqual($0 as? AgentBridgeError, .sessionMismatch("This session is already running in another window or terminal.")) }
+        )) {
+            XCTAssertEqual($0 as? AgentBridgeError, .sessionMismatch("This session is already running in another window or terminal."))
+            // The app tells a held lease from other errors by this; keep it true for what the lease throws.
+            XCTAssertEqual(($0 as? AgentBridgeError)?.isSessionBusy, true)
+        }
         XCTAssertEqual(try fixture.budget().reservedUSD, 4)
         XCTAssertTrue(try fixture.window().hasUnresolvedCall)
         withExtendedLifetime(activeRunLease) {}
