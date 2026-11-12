@@ -759,7 +759,7 @@
 "Use a numeric loopback address on this Mac." = "請使用此 Mac 的數字格式本機迴路位址。";
 "This folder is inside %@. Discussion transcripts, shared memory and workspace copies will leave this Mac, and file locks only protect this Mac. Choose a local folder that doesn't sync." = "此資料夾位於 %@ 同步位置。討論逐字稿、共享記憶與工作區副本會離開這台 Mac，且檔案鎖只保護本機。建議選擇不同步的本機資料夾。";
 " (content truncated)" = "（內容已截短）";
-" (exit code \($0))" = "（代碼 \($0)）";
+" (exit code %@)" = "（結束代碼 %@）";
 " · showing recent content" = " · 顯示最近內容";
 "%@  CLI returned an output format that could not be confirmed as successful." = "%@ CLI 回傳無法確認成功的輸出格式。";
 "%@  has no confirmed subscription sign-in: %@" = "%@ 沒有可確認的訂閱登入：%@";

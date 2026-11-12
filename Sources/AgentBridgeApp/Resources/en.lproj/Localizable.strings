@@ -759,7 +759,7 @@
 "Use a numeric loopback address on this Mac." = "Use a numeric loopback address on this Mac.";
 "This folder is inside %@. Discussion transcripts, shared memory and workspace copies will leave this Mac, and file locks only protect this Mac. Choose a local folder that doesn't sync." = "This folder is inside %@. Discussion transcripts, shared memory and workspace copies will leave this Mac, and file locks only protect this Mac. Choose a local folder that doesn't sync.";
 " (content truncated)" = " (content truncated)";
-" (exit code \($0))" = " (exit code \($0))";
+" (exit code %@)" = " (exit code %@)";
 " · showing recent content" = " · showing recent content";
 "%@  CLI returned an output format that could not be confirmed as successful." = "%@  CLI returned an output format that could not be confirmed as successful.";
 "%@  has no confirmed subscription sign-in: %@" = "%@  has no confirmed subscription sign-in: %@";

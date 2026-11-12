@@ -174,11 +174,11 @@ final class TerminalModelTests: XCTestCase {
     }
 
     func testTheStatusLineSaysHowTheTerminalTaskEnded() throws {
-        let expectations: [(exitCode: Int32?, status: String)] = [
-            (0, "The terminal task completed."),
-            (1, "Terminal task ended (exit code 1)."),
-            (134, "Terminal task ended (exit code 134)."), // A crash: 128 + SIGABRT.
-            (nil, "Terminal task ended.") // Ended on purpose, or no code known.
+        let expectations: [(exitCode: Int32?, status: String, chinese: String)] = [
+            (0, "The terminal task completed.", "終端機工作已完成。"),
+            (1, "Terminal task ended (exit code 1).", "終端機工作已結束（結束代碼 1）。"),
+            (134, "Terminal task ended (exit code 134).", "終端機工作已結束（結束代碼 134）。"), // A crash: 128 + SIGABRT.
+            (nil, "Terminal task ended.", "終端機工作已結束。") // Ended on purpose, or no code known.
         ]
         for expected in expectations {
             let model = try makeModel()
@@ -187,6 +187,9 @@ final class TerminalModelTests: XCTestCase {
             model.terminal.terminalDidTerminate(launchID: launch.id, exitCode: expected.exitCode)
             XCTAssertFalse(model.terminal.terminalRunning)
             XCTAssertEqual(model.status, expected.status, "Exit code \(String(describing: expected.exitCode)).")
+            let shown = AppLocalization.display(model.status, language: .traditionalChinese)
+            XCTAssertEqual(shown, expected.chinese, "Exit code \(String(describing: expected.exitCode)).")
+            XCTAssertNil(shown.range(of: "[A-Za-z()]", options: .regularExpression), "Untranslated English in \(shown)")
         }
     }
 
