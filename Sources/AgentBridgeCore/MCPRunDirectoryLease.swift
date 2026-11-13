@@ -3,7 +3,10 @@ import Foundation
 
 /// Private control-plane storage for one provider invocation's MCP tickets,
 /// receipts, and proxy homes. It lives outside the provider workspace and its
-/// temporary directory so model-controlled tools cannot forge proxy evidence.
+/// temporary directory, so a sandboxed provider cannot replace the tickets.
+/// A sandboxed Claude change run can still read this directory and write the
+/// receipts and proxy homes in it, because the proxy it starts records them
+/// from inside that sandbox.
 final class MCPRunDirectoryLease {
     let directoryURL: URL
 

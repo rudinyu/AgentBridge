@@ -372,8 +372,12 @@ public enum MCPProxyTicketFile {
     private static func openDirectory(_ components: [String]) throws -> Int32 {
         var descriptor = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
         guard descriptor >= 0 else { throw AgentBridgeError.persistence("MCP proxy ticket path is unavailable.") }
-        for component in components {
-            let child = component.withCString { openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW) }
+        for (index, component) in components.enumerated() {
+            // Only the file's own folder is opened for reading.
+            let flags = index == components.count - 1
+                ? O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+                : MCPExecutableValidation.searchOnlyDirectoryFlags
+            let child = component.withCString { openat(descriptor, $0, flags) }
             guard child >= 0 else {
                 _ = Darwin.close(descriptor)
                 throw AgentBridgeError.persistence("MCP proxy ticket path contains a symlink or missing directory.")

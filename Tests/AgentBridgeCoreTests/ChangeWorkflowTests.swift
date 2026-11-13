@@ -512,6 +512,261 @@ final class ChangeWorkflowTests: XCTestCase {
         XCTAssertEqual(diff.files.map(\.path), ["source.txt"])
     }
 
+    func testClaudeChangeRunWithAnMCPServerStaysSandboxedAndTheProxyStillWorks() async throws {
+        try skipInsideVerificationSandbox()
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else {
+            throw XCTSkip("Python 3 is needed for the mock Claude and MCP server.")
+        }
+        // The proxy is the CLI built next to these tests.
+        let proxy = Bundle(for: Self.self).bundleURL.deletingLastPathComponent().appendingPathComponent("agentbridge")
+        guard FileManager.default.isExecutableFile(atPath: proxy.path) else {
+            throw XCTSkip("The built AgentBridge CLI was not found next to the test bundle.")
+        }
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let service = try BridgeService(store: fixture.store, runtimeProxyExecutableURL: proxy)
+        let secret = fixture.store.rootURL.appendingPathComponent("planted-secret")
+        try Data("secret\n".utf8).write(to: secret)
+        let homeSecret = fixture.rootURL.appendingPathComponent("planted-home-secret")
+        try Data("secret\n".utf8).write(to: homeSecret)
+        let grants = fixture.store.rootURL.appendingPathComponent("extension-runtime/active-extensions.json")
+
+        // The server's own folder is readable to it; the rest of the home folder is not.
+        let serverScript = fixture.rootURL.appendingPathComponent("mcp-server/server.py")
+        try FileManager.default.createDirectory(at: serverScript.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"""
+        import json, sys
+        for line in sys.stdin:
+            message = json.loads(line)
+            if "id" not in message:
+                continue
+            method = message["method"]
+            if method == "initialize":
+                result = {"protocolVersion": "2025-03-26", "capabilities": {"tools": {}}, "serverInfo": {"name": "probe", "version": "1"}}
+            elif method == "tools/list":
+                result = {"tools": [{"name": "probe", "description": "Try to read a file", "inputSchema": {"type": "object"}}]}
+            else:
+                try:
+                    open(message["params"]["arguments"]["path"]).read()
+                    text = "server-read-secret"
+                except OSError:
+                    text = "server-read-denied"
+                result = {"content": [{"type": "text", "text": text}], "isError": False}
+            print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+        """#.utf8).write(to: serverScript)
+
+        let claude = fixture.rootURL.appendingPathComponent("mock-bin/claude")
+        try FileManager.default.createDirectory(at: claude.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("""
+        #!/usr/bin/python3 -I
+        import json, os, subprocess, sys
+        args = sys.argv[1:]
+        if "auth" in args and "status" in args:
+            print(json.dumps({"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max"}))
+            sys.exit(0)
+        sys.stdin.read()
+        found = []
+        def attempt(label, action):
+            try:
+                action()
+                found.append(label + "-allowed")
+            except OSError:
+                found.append(label + "-denied")
+        (server,) = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"].values()
+        environment = dict(os.environ, **server["env"])
+        proxy = subprocess.Popen([server["command"]] + server["args"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, env=environment, cwd=server["cwd"])
+        def send(message):
+            proxy.stdin.write((json.dumps(message) + "\\n").encode())
+            proxy.stdin.flush()
+            return json.loads(proxy.stdout.readline()) if "id" in message else None
+        try:
+            send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                  "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "mock", "version": "1"}}})
+            send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+            called = send({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                           "params": {"name": "probe", "arguments": {"path": "\(homeSecret.path)"}}})
+            found.append(called["result"]["content"][0]["text"])
+            proxy.stdin.close()
+            proxy.wait(timeout=30)
+        except Exception:
+            proxy.kill()
+            found.append("proxy-failed:" + proxy.stderr.read().decode(errors="replace").strip())
+        ticket = server["args"][server["args"].index("--ticket") + 1]
+        attempt("ticket-write", lambda: open(ticket, "a").close())
+        attempt("grant-write", lambda: open("\(grants.path)", "a").close())
+        attempt("grant-create", lambda: open(os.path.join(os.path.dirname("\(grants.path)"), "planted"), "w").close())
+        attempt("secret-read", lambda: open("\(secret.path)").read())
+        attempt("home-read", lambda: open("\(homeSecret.path)").read())
+        print(json.dumps({"type": "result", "subtype": "success", "result": " ".join(found)}))
+        """.utf8).write(to: claude)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: claude.path)
+        var settings = try service.settings()
+        settings.claudeBinaryPath = claude.path
+        settings.usageMode = .subscription
+        try service.saveSettings(settings)
+        let session = try await service.createSession(
+            sourcePath: fixture.sourceURL.path,
+            provider: .claude,
+            accessMode: .isolatedChanges
+        )
+        let server = try service.importMCPRuntimeManifest(MCPRuntimeImportManifest(
+            id: "local.probe",
+            name: "Probe",
+            version: "1",
+            summary: "Reads a file it is asked to.",
+            command: "/usr/bin/python3",
+            args: ["-u", serverScript.path],
+            allowedTools: ["probe"]
+        ), sourceReference: "test fixture")
+        XCTAssertEqual(server.entrypointPins.map(\.path), [serverScript.path])
+        _ = try await service.testMCPRuntime(extensionID: server.extensionID)
+        let review = try service.previewExtensionActivation(extensionID: server.extensionID, sessionID: session.id)
+        try service.enableExtensionRuntime(
+            extensionID: server.extensionID,
+            sessionID: session.id,
+            reviewedDigest: review.reviewedDigest,
+            explicitExecutionConsent: true
+        )
+        let plan = try service.createChangePlan(
+            sessionID: session.id,
+            title: "Use the probe",
+            summary: "Call the MCP server.",
+            steps: ["Call probe."]
+        )
+        _ = try service.approveChangePlan(sessionID: session.id, planID: plan.id, reviewedDigest: plan.reviewDigest)
+
+        let output = try await service.runChanges(
+            sessionID: session.id,
+            prompt: "Call probe.",
+            planID: plan.id,
+            reviewedDigest: plan.reviewDigest,
+            extensionIDs: [server.extensionID]
+        )
+        let homeIsProtected = fixture.rootURL.path.hasPrefix(ProcessSandbox.canonicalPath(URL(fileURLWithPath: NSHomeDirectory())) + "/")
+        XCTAssertEqual(output.text.split(separator: " ").map(String.init), [
+            homeIsProtected ? "server-read-denied" : "server-read-secret",
+            "ticket-write-denied",
+            "grant-write-denied",
+            "grant-create-denied",
+            "secret-read-denied",
+            homeIsProtected ? "home-read-denied" : "home-read-allowed"
+        ])
+        let events = try fixture.store.events(sessionID: session.id).map(\.kind)
+        XCTAssertTrue(events.contains("mcp.proxy.used"), "\(events)")
+    }
+
+    func testClaudeChangeRunWithMacControlIsNotSandboxed() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let session = try await fixture.service.createSession(
+            sourcePath: fixture.sourceURL.path,
+            provider: .claude,
+            accessMode: .isolatedChanges
+        )
+        let executable = try MCPExecutableValidation.resolveAndDigest("/usr/bin/true")
+        let stdio = try ActiveMCPConfiguration(
+            manifest: MCPRuntimeImportManifest(
+                id: "local.true",
+                name: "True",
+                version: "1",
+                summary: "Plain stdio server",
+                command: executable.path,
+                args: [],
+                allowedTools: ["noop"]
+            ),
+            sourceReference: "test fixture",
+            resolvedExecutablePath: executable.path,
+            executableDigest: executable.digest
+        )
+        let macControl = try ActiveMCPConfiguration(
+            macControlTargetBundleID: "com.example.editor",
+            accessMode: .control,
+            helperPath: executable.path,
+            helperDigest: executable.digest,
+            proxyExecutablePath: executable.path,
+            proxyExecutableDigest: executable.digest,
+            version: "1"
+        )
+        func sandbox(_ servers: [ActiveMCPConfiguration]) throws -> Any? {
+            try fixture.service.claudeChangeSandbox(
+                session: session,
+                environment: [:],
+                temporaryDirectory: fixture.rootURL,
+                mcpServers: servers,
+                mcpControlPlane: fixture.store.rootURL.appendingPathComponent("mcp-runs/test")
+            )
+        }
+        XCTAssertNotNil(try sandbox([]))
+        XCTAssertNotNil(try sandbox([stdio]))
+        // Mac Control needs the Apple events and app launches the sandbox blocks.
+        XCTAssertNil(try sandbox([stdio, macControl]))
+    }
+
+    func testAnMCPExecutableBesideAProtectedRootOpensUpOnlyItself() async throws {
+        try skipInsideVerificationSandbox()
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let session = try await fixture.service.createSession(
+            sourcePath: fixture.sourceURL.path,
+            provider: .claude,
+            accessMode: .isolatedChanges
+        )
+        // The fixture root holds the private data root, so its folder must stay closed.
+        XCTAssertEqual(fixture.store.rootURL.deletingLastPathComponent().path, fixture.rootURL.path)
+        let serverURL = fixture.rootURL.appendingPathComponent("server")
+        try FileManager.default.copyItem(atPath: "/usr/bin/true", toPath: serverURL.path)
+        let sibling = fixture.rootURL.appendingPathComponent("sibling-secret")
+        try Data("secret\n".utf8).write(to: sibling)
+        let rootSecret = fixture.store.rootURL.appendingPathComponent("planted-secret")
+        try Data("secret\n".utf8).write(to: rootSecret)
+        let server = try MCPExecutableValidation.resolveAndDigest(serverURL.path)
+        let stdio = try ActiveMCPConfiguration(
+            manifest: MCPRuntimeImportManifest(
+                id: "local.beside",
+                name: "Beside",
+                version: "1",
+                summary: "Server next to the data root",
+                command: server.path,
+                args: [],
+                allowedTools: ["noop"]
+            ),
+            sourceReference: "test fixture",
+            resolvedExecutablePath: server.path,
+            executableDigest: server.digest
+        )
+        let probe = fixture.rootURL.appendingPathComponent("mock-bin/probe")
+        try FileManager.default.createDirectory(at: probe.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("""
+        #!/bin/sh
+        /bin/cat '\(server.path)' >/dev/null 2>&1 && printf 'server-readable '
+        /bin/cat '\(sibling.path)' >/dev/null 2>&1 && printf 'sibling-readable '
+        /bin/cat '\(rootSecret.path)' >/dev/null 2>&1 && printf 'root-readable '
+        printf 'done\\n'
+        """.utf8).write(to: probe)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: probe.path)
+        let temporary = try ProcessSandbox.makeWritableRoot(label: "mcp-beside-test")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let wrap = try XCTUnwrap(fixture.service.claudeChangeSandbox(
+            session: session,
+            environment: [:],
+            temporaryDirectory: temporary,
+            mcpServers: [stdio],
+            mcpControlPlane: fixture.store.rootURL.appendingPathComponent("mcp-runs/test")
+        ))
+        let (executable, arguments) = try wrap(probe, [])
+        let readable = arguments.filter { $0.hasPrefix("READABLE") }
+        XCTAssertTrue(readable.contains { $0.hasSuffix("=\(server.path)") }, "\(readable)")
+        XCTAssertFalse(readable.contains { $0.hasSuffix("=\(fixture.rootURL.path)") }, "\(readable)")
+        let result = try await SafeProcessRunner().run(ProcessSpec(
+            executableURL: executable,
+            arguments: arguments,
+            environment: ["PATH": "/usr/bin:/bin"]
+        ))
+        XCTAssertEqual(String(decoding: result.standardOutput, as: UTF8.self), "server-readable done\n")
+    }
+
     func testKeychainToolRunsOnlyWhenTheSandboxAllowsTheKeychain() async throws {
         try skipInsideVerificationSandbox()
         let root = try ProcessSandbox.makeWritableRoot(label: "keychain-test")
