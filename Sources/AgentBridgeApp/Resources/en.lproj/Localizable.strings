@@ -1755,3 +1755,5 @@
 "The session was removed and its isolated workspace deleted, after the user confirmed it held work that might exist nowhere else." = "The session was removed and its isolated workspace deleted, after the user confirmed it held work that might exist nowhere else.";
 "Ignored files and folders, which Git does not keep (%@):" = "Ignored files and folders, which Git does not keep (%@):";
 "AgentBridge could not read the older stash entries, so it cannot tell whether they exist only in the workspace." = "AgentBridge could not read the older stash entries, so it cannot tell whether they exist only in the workspace.";
+"The CLI ended. This shell runs in the session's isolated workspace; type exit to close it." = "The CLI ended. This shell runs in the session's isolated workspace; type exit to close it.";
+"The CLI ended. A shell opened in the same isolated workspace." = "The CLI ended. A shell opened in the same isolated workspace.";

@@ -13,6 +13,10 @@ struct TerminalLaunchSpec: Equatable, Sendable, Identifiable {
     let arguments: [String]
     let environment: [String: String]
     let workingDirectory: String
+    /// For a provider CLI that hands over to a shell when it ends normally: the
+    /// terminal title, unique to this launch, that the wrapper sets at that
+    /// point. Nothing else in the terminal knows it.
+    let shellHandoffMarker: String?
 
     init(
         id: UUID = UUID(),
@@ -20,7 +24,8 @@ struct TerminalLaunchSpec: Equatable, Sendable, Identifiable {
         executablePath: String,
         arguments: [String],
         environment: [String: String],
-        workingDirectory: String
+        workingDirectory: String,
+        shellHandoffMarker: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -28,6 +33,7 @@ struct TerminalLaunchSpec: Equatable, Sendable, Identifiable {
         self.arguments = arguments
         self.environment = environment
         self.workingDirectory = workingDirectory
+        self.shellHandoffMarker = shellHandoffMarker
     }
 }
 
@@ -75,6 +81,7 @@ final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewD
     private var terminationReported = false
     var onTermination: (@MainActor (Int32?) -> Void)?
     var onUsageScreenSnapshot: (@MainActor (String, Date) -> Bool)?
+    var onTitleChange: (@MainActor (String) -> Void)?
     var allowsUsageScreenCapture = false
 
     override init(frame: CGRect, font: NSFont? = nil, options: TerminalOptions) {
@@ -291,7 +298,9 @@ final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewD
         updatePseudoTerminalSize()
     }
 
-    func setTerminalTitle(source: TerminalView, title: String) {}
+    func setTerminalTitle(source: TerminalView, title: String) {
+        onTitleChange?(title)
+    }
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func send(source: TerminalView, data: ArraySlice<UInt8>) { process?.send(data: data) }
     func scrolled(source: TerminalView, position: Double) {}
@@ -602,6 +611,12 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
         terminal.onTermination = { [weak self] exitCode in
             guard let self, self.terminalLaunchID == launch.id else { return }
             self.terminalModel?.terminalDidTerminate(launchID: launch.id, exitCode: exitCode)
+        }
+        if let marker = launch.shellHandoffMarker {
+            terminal.onTitleChange = { [weak self] title in
+                guard let self, self.terminalLaunchID == launch.id, title == marker else { return }
+                self.terminalModel?.interactiveCLIDidHandOverToShell(launchID: launch.id)
+            }
         }
         terminal.onUsageScreenSnapshot = { [weak self] screenText, capturedAt in
             guard let self, self.terminalLaunchID == launch.id else { return false }

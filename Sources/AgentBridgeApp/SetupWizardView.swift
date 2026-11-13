@@ -582,7 +582,7 @@ struct EmbeddedTerminalPanel: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "terminal")
-                Text(model.localized(launch.title)).font(.subheadline.weight(.semibold))
+                Text(model.localized(model.terminal.terminalTitle.isEmpty ? launch.title : model.terminal.terminalTitle)).font(.subheadline.weight(.semibold))
                 if model.terminal.terminalRunning { ProgressView().controlSize(.small) }
                 if isCompact {
                     Text(model.localized("This terminal is open in a separate window."))

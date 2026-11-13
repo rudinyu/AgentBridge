@@ -107,7 +107,7 @@ To use the native interactive Codex or Claude interface:
 
 1. Make sure subscription login is selected. Claude API mode does not support the interactive terminal.
 2. Keep **New session access mode** at **Native interactive terminal (default)** and click **Create a New Session for This Project**.
-3. Click **Open Embedded Terminal** and enter prompts and control the next steps in the provider TUI. Commands such as `/status` are handled by the official CLI. Use **Open in Window** to resize the live terminal in its own window, or **Return to Conversation** to move that same session back. In **Project Conversations**, hide the sidebar to give the working area more room.
+3. Click **Open Embedded Terminal** and enter prompts and control the next steps in the provider TUI. Commands such as `/status` are handled by the official CLI. Use **Open in Window** to resize the live terminal in its own window, or **Return to Conversation** to move that same session back. When you quit the CLI normally (for example with `/quit` or `/exit`), the panel stays open as a shell in the same isolated workspace, with the CLI's last screen above it, so you can run `git` or tests there; type `exit` to close it. If the CLI fails or you cancel it, the panel ends as before and keeps the error on screen. In **Project Conversations**, hide the sidebar to give the working area more room.
 
 This differs from the read-only chat on the right. Codex interactive sessions keep the read-only sandbox. Claude uses its native Manual permission flow; a user-approved action may change the isolated clone, read files outside the workspace, or access the network. Terminal transcripts stay in the current screen and are not written to AgentBridge memory or audit logs.
 

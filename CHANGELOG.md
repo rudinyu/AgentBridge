@@ -4,6 +4,7 @@
 
 ### Changed
 
+- In the native interactive terminal, quitting the provider CLI normally now leaves a shell in the same isolated workspace instead of ending the panel, with the CLI's last screen still above it. A failed or cancelled run ends the panel as before. The CLI runs inside a small `/bin/sh` wrapper that tells the app it has ended by setting a terminal title unique to that launch.
 - New sessions default to the native interactive terminal instead of read-only. Local models and Claude API mode still allow only read-only; when you switch away from them, the default comes back unless you chose a mode yourself.
 - The local shell's title reads "Local Terminal · isolated copy of" the repository name, since it opens in the session's isolated copy rather than the source repository.
 

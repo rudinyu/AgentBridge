@@ -89,6 +89,56 @@ final class TerminalWindowControllerTests: XCTestCase {
         XCTAssertTrue(terminal(in: new) === view)
     }
 
+    // MARK: Handing an interactive CLI over to a shell
+
+    /// Mounts an interactive launch that runs `command` as its CLI and returns
+    /// the model, controller and view once the wrapper has started.
+    private func startInteractive(_ command: [String]) throws -> (AppModel, TerminalWindowController, TerminalLaunchSpec, AgentBridgeTerminalView) {
+        let model = try makeTestAppModel()
+        let controller = model.terminal.windowController
+        let spec = TerminalModel.interactiveLaunchSpec(
+            title: "Codex · Test",
+            command: command,
+            shellNotice: "The CLI ended.",
+            environment: ["PATH": "/usr/bin:/bin"],
+            workingDirectory: "/"
+        )
+        model.terminal.terminalLaunch = spec
+        model.terminal.terminalRunning = true
+        let container = NSView()
+        mount(controller, in: container, spec)
+        let view = try XCTUnwrap(terminal(in: container))
+        addTeardownBlock { @MainActor in view.terminateWithEscalation() }
+        drainMainQueue()
+        return (model, controller, spec, view)
+    }
+
+    func testACLIThatEndsNormallyLeavesAShellThatMustBeEndedByTheUser() throws {
+        let (model, controller, spec, _) = try startInteractive(["/usr/bin/true"])
+        XCTAssertTrue(runMainLoop { model.terminal.terminalNeedsManualStop }, "The wrapper did not hand over to a shell.")
+        XCTAssertTrue(controller.hasRunningProcess(for: spec.id), "The shell should keep the terminal running.")
+        XCTAssertTrue(model.terminal.terminalRunning)
+        XCTAssertTrue(model.terminal.closeRequiresManualStop)
+        XCTAssertNil(model.terminal.terminalSessionIDForView, "No run is active any more, so closing cancels nothing.")
+        XCTAssertEqual(model.status, "The CLI ended. A shell opened in the same isolated workspace.")
+    }
+
+    func testACLIThatFailsOrIsCancelledEndsTheTerminalWithItsOutput() throws {
+        let (model, controller, spec, _) = try startInteractive(["/usr/bin/false"])
+        XCTAssertTrue(runMainLoop { !controller.hasRunningProcess(for: spec.id) && !model.terminal.terminalRunning })
+        XCTAssertFalse(model.terminal.terminalNeedsManualStop)
+        XCTAssertEqual(model.status, "Terminal task ended (exit code 1).")
+    }
+
+    func testOnlyTheLaunchsOwnMarkerHandsOverToTheShell() throws {
+        // A CLI that sets a title like the marker, but not this launch's.
+        let (model, controller, spec, _) = try startInteractive([
+            "/bin/sh", "-c", "printf '\\033]0;agentbridge-shell-forged\\007'; exit 1"
+        ])
+        XCTAssertTrue(runMainLoop { !controller.hasRunningProcess(for: spec.id) && !model.terminal.terminalRunning })
+        XCTAssertFalse(model.terminal.terminalNeedsManualStop)
+    }
+
     // MARK: Running process and refusal
 
     private struct RunningTerminal {

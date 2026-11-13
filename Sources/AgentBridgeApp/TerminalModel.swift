@@ -75,14 +75,17 @@ final class TerminalModel {
             return
         }
         let profileID = session.accountProfileID ?? AccountProfile.defaultID(for: session.provider)
-        guard let spec = terminalLaunchSpec(
-            title: "\(session.provider.rawValue.capitalized) · \(app.selectedSessionProfileName)",
-            arguments: ["interactive", session.id.uuidString.lowercased(), "--profile", profileID.uuidString.lowercased()],
-            workingDirectory: session.workspacePath
-        ) else {
+        guard let cli = interactiveCLIURL() else {
             app.errorMessage = "The AgentBridge command-line helper was not found. Run scripts/package-app.sh to build the .app first."
             return
         }
+        let spec = Self.interactiveLaunchSpec(
+            title: "\(session.provider.rawValue.capitalized) · \(app.selectedSessionProfileName)",
+            command: [cli.path, "interactive", session.id.uuidString.lowercased(), "--profile", profileID.uuidString.lowercased()],
+            shellNotice: app.localized("The CLI ended. This shell runs in the session's isolated workspace; type exit to close it."),
+            environment: sanitizedTerminalEnvironment(),
+            workingDirectory: session.workspacePath
+        )
         terminalIsProfileLogin = false
         terminalIsUsageTUI = false
         activeUsageProvider = nil
@@ -413,6 +416,57 @@ final class TerminalModel {
             activeTerminalSessionID = nil
             conversationReturnSessionID = nil
         }
+    }
+
+    /// Runs `command`, the provider CLI through the AgentBridge helper, and when
+    /// it ends normally keeps the terminal open as a shell in the same workspace,
+    /// with the CLI's last screen still above it. Before the shell starts, the
+    /// wrapper sets the terminal title to a marker made for this launch, which
+    /// tells the app the CLI has ended. A cancelled or failed run (non-zero exit)
+    /// ends the terminal as before, so its error stays on screen and a cancelling
+    /// close still closes.
+    ///
+    /// Everything reaches the shell as positional arguments, never inside the
+    /// script, so paths need no quoting.
+    static func interactiveLaunchSpec(
+        title: String,
+        command: [String],
+        shellNotice: String,
+        environment: [String: String],
+        workingDirectory: String
+    ) -> TerminalLaunchSpec {
+        let marker = "agentbridge-shell-\(UUID().uuidString.lowercased())"
+        let script = """
+        marker=$1; notice=$2; shift 2
+        "$@" || exit $?
+        printf '\\033]0;%s\\007\\n%s\\n\\n' "$marker" "$notice"
+        exec /bin/sh -f
+        """
+        return TerminalLaunchSpec(
+            title: title,
+            executablePath: "/bin/sh",
+            arguments: ["-c", script, "agentbridge-terminal", marker, shellNotice] + command,
+            environment: environment,
+            workingDirectory: workingDirectory,
+            shellHandoffMarker: marker
+        )
+    }
+
+    /// The provider CLI of `launchID` ended normally and its terminal is now a
+    /// shell. Closing it is then like closing the local shell: the user ends the
+    /// shell first, and nothing is cancelled, because no run is active.
+    func interactiveCLIDidHandOverToShell(launchID: UUID) {
+        guard terminalLaunch?.id == launchID, terminalRunning else { return }
+        if let sessionID = activeTerminalSessionID,
+           let session = app.sessions.first(where: { $0.id == sessionID }) {
+            terminalTitle = "Local Terminal · isolated copy of \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)"
+        }
+        activeTerminalSessionID = nil
+        activeTerminalProfileID = nil
+        terminalNeedsManualStop = true
+        closeTerminalAfterCancellation = false
+        app.status = "The CLI ended. A shell opened in the same isolated workspace."
+        app.refresh(forceUsageStatistics: true)
     }
 
     private func terminalLaunchSpec(title: String, arguments: [String], workingDirectory: String) -> TerminalLaunchSpec? {
