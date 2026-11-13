@@ -72,7 +72,7 @@ extension MainWindowView {
                                     Button(model.localized("Remove Chat…"), role: .destructive) {
                                         model.chats.reviewDiscussionRemoval(discussion.id)
                                     }
-                                    .disabled(model.chats.isDiscussionRunning(id: discussion.id) || discussion.status.isInFlight)
+                                    .disabled(!model.chats.canRemoveDiscussion(discussion))
                                 }
                             }
                         }

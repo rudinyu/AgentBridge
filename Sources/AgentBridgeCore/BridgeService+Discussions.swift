@@ -331,6 +331,7 @@ extension BridgeService {
         do {
             lease = try store.acquireRunLease(for: id)
         } catch let error as AgentBridgeError {
+            // A held run lease (`sessionMismatch`) means a turn is running.
             guard case .sessionMismatch = error else { throw error }
             throw AgentBridgeError.sessionMismatch("This chat is running. Stop it before removing it.")
         }
@@ -343,7 +344,9 @@ extension BridgeService {
         guard try discussionStore.remove(id: id) else {
             throw AgentBridgeError.sessionMismatch("Could not find this discussion.")
         }
-        try store.appendEvent(AuditEvent(
+        // The chat is already gone, so a failed audit write does not report the
+        // removal as failed.
+        try? store.appendEvent(AuditEvent(
             sessionID: id,
             kind: "discussion.removed",
             message: "The chat and its transcript were removed. Project sessions made from it and their shared memory are kept."

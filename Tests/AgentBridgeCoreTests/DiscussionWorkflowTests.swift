@@ -517,9 +517,25 @@ final class DiscussionWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let discussion = try fixture.service.createDiscussion(provider: .codex, accountProfileID: AccountProfile.defaultID(for: .codex))
         let lease = try fixture.store.acquireRunLease(for: discussion.id)
-        XCTAssertThrowsError(try fixture.service.removeDiscussion(id: discussion.id))
+        XCTAssertThrowsError(try fixture.service.removeDiscussion(id: discussion.id)) { error in
+            XCTAssertEqual(error as? AgentBridgeError, .sessionMismatch("This chat is running. Stop it before removing it."))
+        }
         withExtendedLifetime(lease) {}
         XCTAssertNoThrow(try fixture.service.discussion(id: discussion.id))
+    }
+
+    func testAChatLeftMarkedRunningByAnEndedProcessCanBeRemoved() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let discussion = try fixture.service.createDiscussion(provider: .codex, accountProfileID: AccountProfile.defaultID(for: .codex))
+        let discussionStore = try DiscussionStore(rootURL: fixture.dataRoot.appendingPathComponent("discussions", isDirectory: true))
+        var stale = try XCTUnwrap(discussionStore.record(id: discussion.id))
+        stale.status = .running
+        try discussionStore.save(stale)
+
+        try fixture.service.removeDiscussion(id: discussion.id)
+        XCTAssertNil(try discussionStore.record(id: discussion.id))
+        XCTAssertFalse(try discussionStore.remove(id: discussion.id), "A missing record reports false.")
     }
 
     func testFullSharedMemoryRefusalHappensBeforeCreatingProjectRepository() async throws {

@@ -346,10 +346,15 @@ final class DiscussionModel {
         return session
     }
 
+    /// A chat can be removed unless a turn or handoff of it is in progress.
+    func canRemoveDiscussion(_ discussion: DiscussionRecord) -> Bool {
+        !isDiscussionRunning(id: discussion.id) && !discussion.status.isInFlight
+    }
+
     /// Asks to confirm removing the chat, unless it is running.
     func reviewDiscussionRemoval(_ id: UUID) {
         guard let discussion = discussions.first(where: { $0.id == id }) else { return }
-        guard !isDiscussionRunning(id: id), !discussion.status.isInFlight else {
+        guard canRemoveDiscussion(discussion) else {
             app.errorMessage = "This chat is running. Stop it before removing it."
             return
         }
@@ -360,13 +365,16 @@ final class DiscussionModel {
         discussionPendingRemoval = nil
     }
 
-    func confirmDiscussionRemoval() {
-        guard let discussion = discussionPendingRemoval, let service = app.service else { return }
+    /// Removes `discussion`, the chat the confirmation was shown for. It is
+    /// passed in rather than read back, since dismissing the alert clears it.
+    func confirmDiscussionRemoval(_ discussion: DiscussionRecord) {
+        guard let service = app.service else { return }
         discussionPendingRemoval = nil
         do {
             try service.removeDiscussion(id: discussion.id)
             if selectedDiscussionID == discussion.id { selectedDiscussionID = nil }
             discussionProgress[discussion.id] = nil
+            discussionCancellationFlags[discussion.id] = nil
             app.status = "Removed the chat. Project sessions made from it are kept."
         } catch {
             app.errorMessage = error.localizedDescription
@@ -376,14 +384,17 @@ final class DiscussionModel {
 
     /// What the confirmation says removing `discussion` does.
     func chatRemovalMessage(for discussion: DiscussionRecord) -> String {
-        var message = app.localizedFormat(
-            "This deletes the chat and its %@ turns. It cannot be undone.",
-            String(discussion.turns.count)
-        )
-        if !discussion.linkedSessionIDs.isEmpty {
+        var message = discussion.turns.count == 1
+            ? app.localized("This deletes the chat and its 1 turn. It cannot be undone.")
+            : app.localizedFormat("This deletes the chat and its %@ turns. It cannot be undone.", String(discussion.turns.count))
+        switch discussion.linkedSessionIDs.count {
+        case 0: break
+        case 1:
+            message += "\n\n" + app.localized("The project session made from it, and the turns already copied into its shared memory, are kept.")
+        case let count:
             message += "\n\n" + app.localizedFormat(
                 "The %@ project sessions made from it, and the turns already copied into their shared memory, are kept.",
-                String(discussion.linkedSessionIDs.count)
+                String(count)
             )
         }
         return message

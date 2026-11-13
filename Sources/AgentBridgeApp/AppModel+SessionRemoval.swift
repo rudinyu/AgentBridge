@@ -11,8 +11,10 @@ extension AppModel {
             return "Stop the session before removing it."
         }
         let workspace = URL(fileURLWithPath: session.workspacePath).standardizedFileURL.path
-        if let launch = terminal.terminalLaunch,
-           URL(fileURLWithPath: launch.workingDirectory).standardizedFileURL.path == workspace {
+        // The running process counts too: it may belong to a launch the panel
+        // no longer shows.
+        let launches = [terminal.terminalLaunch, terminal.windowController.runningLaunch].compactMap { $0 }
+        if launches.contains(where: { URL(fileURLWithPath: $0.workingDirectory).standardizedFileURL.path == workspace }) {
             return "Close the terminal for this session before removing it."
         }
         return nil

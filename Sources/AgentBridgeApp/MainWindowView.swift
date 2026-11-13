@@ -82,8 +82,8 @@ struct MainWindowView: View {
             model.localized("Remove this chat?"),
             isPresented: Binding(get: { model.chats.discussionPendingRemoval != nil }, set: { if !$0 { model.chats.cancelDiscussionRemoval() } }),
             presenting: model.chats.discussionPendingRemoval
-        ) { _ in
-            Button(model.localized("Remove Chat"), role: .destructive) { model.chats.confirmDiscussionRemoval() }
+        ) { discussion in
+            Button(model.localized("Remove Chat"), role: .destructive) { model.chats.confirmDiscussionRemoval(discussion) }
             Button(model.localized("Cancel"), role: .cancel) { model.chats.cancelDiscussionRemoval() }
         } message: { discussion in
             Text(model.chats.chatRemovalMessage(for: discussion))

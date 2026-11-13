@@ -1768,3 +1768,5 @@
 "Removed the chat. Project sessions made from it are kept." = "Removed the chat. Project sessions made from it are kept.";
 "The chat and its transcript were removed. Project sessions made from it and their shared memory are kept." = "The chat and its transcript were removed. Project sessions made from it and their shared memory are kept.";
 "Could not remove the discussion record." = "Could not remove the discussion record.";
+"This deletes the chat and its 1 turn. It cannot be undone." = "This deletes the chat and its 1 turn. It cannot be undone.";
+"The project session made from it, and the turns already copied into its shared memory, are kept." = "The project session made from it, and the turns already copied into its shared memory, are kept.";

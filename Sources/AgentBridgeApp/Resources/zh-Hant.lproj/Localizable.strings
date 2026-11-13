@@ -1768,3 +1768,5 @@
 "Removed the chat. Project sessions made from it are kept." = "已移除聊天；由它建立的專案工作階段仍保留。";
 "The chat and its transcript were removed. Project sessions made from it and their shared memory are kept." = "已移除聊天和對話紀錄；由它建立的專案工作階段及其共用記憶仍保留。";
 "Could not remove the discussion record." = "無法移除聊天紀錄。";
+"This deletes the chat and its 1 turn. It cannot be undone." = "這會刪除這個聊天和其中的 1 個回合，無法復原。";
+"The project session made from it, and the turns already copied into its shared memory, are kept." = "由它建立的專案工作階段，以及已複製到其共用記憶的回合，都會保留。";

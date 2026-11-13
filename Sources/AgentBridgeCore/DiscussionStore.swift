@@ -146,7 +146,9 @@ public final class DiscussionStore: @unchecked Sendable {
             guard unlinkat(directoryDescriptor, name, 0) == 0 else {
                 throw AgentBridgeError.persistence("Could not remove the discussion record.")
             }
-            guard fsync(directoryDescriptor) == 0 else { throw AgentBridgeError.persistence("Could not sync discussion storage.") }
+            // The record is gone once unlinked; a failed directory sync only
+            // makes that less durable, so it does not report the removal failed.
+            _ = fsync(directoryDescriptor)
             return true
         }
     }

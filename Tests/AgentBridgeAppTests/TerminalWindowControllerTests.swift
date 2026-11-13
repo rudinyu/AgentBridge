@@ -139,7 +139,7 @@ final class TerminalWindowControllerTests: XCTestCase {
         XCTAssertFalse(runMainLoop(timeout: 1) { model.terminal.terminalNeedsManualStop }, "A forged title handed over.")
         XCTAssertTrue(controller.hasRunningProcess(for: spec.id))
 
-        // The right marker for another launch does not hand over either.
+        // A handover reported for another launch does not apply either.
         model.terminal.interactiveCLIDidHandOverToShell(launchID: UUID())
         XCTAssertFalse(model.terminal.terminalNeedsManualStop)
     }
@@ -149,7 +149,47 @@ final class TerminalWindowControllerTests: XCTestCase {
             title: "Codex · Test", command: ["/usr/bin/true"], shellNotice: "", environment: [:], workingDirectory: "/"
         )
         let script = spec.arguments[1]
-        XCTAssertTrue(script.hasSuffix("exec /bin/sh"), "The shell must not run with -f (noglob).")
+        XCTAssertTrue(script.contains("exec /bin/sh\n") || script.hasSuffix("exec /bin/sh"), script)
+        XCTAssertFalse(script.contains("/bin/sh -f"), "-f turns off filename expansion.")
+    }
+
+    func testTerminalsGetNoShellStartupFile() {
+        let environment = TerminalModel.terminalEnvironment(from: [
+            "ENV": "/tmp/rc", "BASH_ENV": "/tmp/rc", "LANG": "zh_TW.UTF-8", "SECRET": "x"
+        ])
+        XCTAssertNil(environment["ENV"])
+        XCTAssertNil(environment["BASH_ENV"])
+        XCTAssertNil(environment["SECRET"])
+        XCTAssertEqual(environment["LANG"], "zh_TW.UTF-8")
+    }
+
+    func testTheHandoverHappensOnceAndUsesTheLocalShellTitle() throws {
+        let (model, _, spec, _) = try startInteractive(["/usr/bin/true"])
+        XCTAssertTrue(runMainLoop { model.terminal.terminalNeedsManualStop })
+        model.terminal.terminalTitle = "Changed later"
+        model.status = "Something else"
+        model.terminal.interactiveCLIDidHandOverToShell(launchID: spec.id)
+        XCTAssertEqual(model.terminal.terminalTitle, "Changed later", "A second handover reset the panel.")
+        XCTAssertEqual(model.status, "Something else")
+    }
+
+    func testAHiddenRunningTerminalIsShownAgainInsteadOfRefusingToOpen() throws {
+        let running = try startRunningTerminal()
+        defer { stop(running) }
+        // The panel lost its launch while the process still runs.
+        running.model.terminal.terminalLaunch = nil
+        running.model.terminal.terminalRunning = false
+        XCTAssertTrue(running.model.terminal.recoverHiddenTerminal())
+        XCTAssertEqual(running.model.terminal.terminalLaunch?.id, running.launch.id)
+        XCTAssertTrue(running.model.terminal.terminalRunning)
+        XCTAssertTrue(running.model.terminal.closeRequiresManualStop)
+    }
+
+    func testAStaleRunningFlagWithNothingRunningIsCleared() throws {
+        let model = try makeTestAppModel()
+        model.terminal.terminalRunning = true
+        XCTAssertFalse(model.terminal.recoverHiddenTerminal())
+        XCTAssertFalse(model.terminal.terminalRunning)
     }
 
     func testACLIThatEndsNormallyWhileClosingClosesThePanelInsteadOfOpeningAShell() throws {

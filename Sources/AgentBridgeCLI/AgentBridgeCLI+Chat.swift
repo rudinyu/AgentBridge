@@ -26,21 +26,7 @@ extension AgentBridgeCLI {
         case "send":
             try await chatSend(arguments, service: service)
         case "remove":
-            guard arguments.count >= 2, let discussionID = UUID(uuidString: arguments[1]),
-                  arguments.count == 2 || (arguments.count == 3 && arguments[2] == "--confirm") else {
-                throw AgentBridgeError.invalidInput("Usage: agentbridge chat remove CHAT-ID [--confirm]")
-            }
-            let discussion = try service.discussion(id: discussionID)
-            guard arguments.count == 3 else {
-                print("Removing chat \(discussionID.uuidString.lowercased()) deletes it and its \(discussion.turns.count) turns. It cannot be undone.")
-                if !discussion.linkedSessionIDs.isEmpty {
-                    print("The \(discussion.linkedSessionIDs.count) project sessions made from it, and their shared memory, are kept.")
-                }
-                print("Run again with --confirm to remove it.")
-                return
-            }
-            try service.removeDiscussion(id: discussionID)
-            print("Chat removed: \(discussionID.uuidString.lowercased())")
+            print(try chatRemove(Array(arguments.dropFirst()), service: service))
         case "cancel":
             guard arguments.count == 2, let discussionID = UUID(uuidString: arguments[1]) else {
                 throw AgentBridgeError.invalidInput("Usage: agentbridge chat cancel CHAT-ID")
@@ -66,6 +52,35 @@ extension AgentBridgeCLI {
         default:
             throw AgentBridgeError.invalidInput("Unknown chat project subcommand \(action). Run `agentbridge chat help` for usage.")
         }
+    }
+
+    /// `chat remove CHAT-ID [--confirm]`: without `--confirm` it only says what
+    /// removal deletes. Returns the text to print.
+    static func chatRemove(_ arguments: [String], service: BridgeService) throws -> String {
+        let usage = "Usage: agentbridge chat remove CHAT-ID [--confirm]"
+        guard let first = arguments.first, let discussionID = UUID(uuidString: first) else {
+            throw AgentBridgeError.invalidInput(usage)
+        }
+        let options = arguments.dropFirst()
+        if let unknown = options.first(where: { $0 != "--confirm" }) {
+            throw AgentBridgeError.invalidInput("Unknown option \(unknown). \(usage)")
+        }
+        guard options.count <= 1 else { throw AgentBridgeError.invalidInput("--confirm cannot be repeated.") }
+        let id = discussionID.uuidString.lowercased()
+        let discussion = try service.discussion(id: discussionID)
+        guard options.isEmpty else {
+            try service.removeDiscussion(id: discussionID)
+            return "Chat removed: \(id)"
+        }
+        let turns = discussion.turns.count == 1 ? "1 turn" : "\(discussion.turns.count) turns"
+        var lines = ["Removing chat \(id) deletes it and its \(turns). It cannot be undone."]
+        switch discussion.linkedSessionIDs.count {
+        case 0: break
+        case 1: lines.append("The project session made from it, and its shared memory, are kept.")
+        case let count: lines.append("The \(count) project sessions made from it, and their shared memory, are kept.")
+        }
+        lines.append("Run again with --confirm to remove it.")
+        return lines.joined(separator: "\n")
     }
 
     static func printChatHelp() {

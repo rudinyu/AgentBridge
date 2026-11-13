@@ -25,6 +25,11 @@ final class TerminalModel {
     /// for this rather than for `terminalRunning` alone.
     private(set) var terminalProcessLaunchID: UUID?
     @ObservationIgnored let windowController = TerminalWindowController()
+    /// The launch whose CLI already handed over to a shell, so a repeated
+    /// marker does not reset the panel again. The controller also stops
+    /// watching titles after the first marker; this guard keeps the model
+    /// correct on its own.
+    @ObservationIgnored private var shellHandoffLaunchID: UUID?
     private var activeTerminalProfileID: UUID?
     private var activeTerminalSessionID: UUID?
     private var activeUsageProvider: AgentProvider?
@@ -54,6 +59,24 @@ final class TerminalModel {
         terminalRunning || windowController.hasRunningProcess
     }
 
+    /// Run by every open action before it checks `terminalIsBusy`. A process
+    /// that still runs while the panel shows nothing would otherwise make every
+    /// open refuse with "close the terminal" and nothing to close, so it is
+    /// shown again (returns true: the caller stops). A running flag left with no
+    /// launch and no process is cleared.
+    func recoverHiddenTerminal() -> Bool {
+        guard terminalLaunch == nil else { return false }
+        if let running = windowController.runningLaunch {
+            showRunningLaunch(running)
+            return true
+        }
+        if terminalRunning, !windowController.hasRunningProcess {
+            terminalRunning = false
+            terminalProcessLaunchID = nil
+        }
+        return false
+    }
+
     var canSendUsageCommand: Bool {
         terminalIsUsageTUI
             && terminalRunning
@@ -70,6 +93,7 @@ final class TerminalModel {
             app.errorMessage = "Create a session with interactive manual approval first."
             return
         }
+        if recoverHiddenTerminal() { return }
         guard !terminalIsBusy else {
             app.errorMessage = "Close the current app terminal first."
             return
@@ -109,6 +133,7 @@ final class TerminalModel {
             app.errorMessage = "The official usage TUI supports subscription sign-in only."
             return
         }
+        if recoverHiddenTerminal() { return }
         guard terminalLaunch == nil, !terminalIsBusy else {
             app.errorMessage = "Close the current app terminal first."
             return
@@ -209,6 +234,7 @@ final class TerminalModel {
             app.reportOperationError(app.localized("The terminal is locked while an autonomous workflow is active."))
             return
         }
+        if recoverHiddenTerminal() { return }
         guard !terminalIsBusy else {
             app.reportOperationError(app.localized("Close the current terminal before opening sign-in."))
             return
@@ -242,6 +268,7 @@ final class TerminalModel {
 
     func openLocalShell() {
         guard let session = app.selectedSession else { app.errorMessage = "Select a session first."; return }
+        if recoverHiddenTerminal() { return }
         guard terminalLaunch == nil, !terminalIsBusy else { app.errorMessage = "Close the current app terminal first."; return }
         let spec = TerminalLaunchSpec(
             title: Self.localShellTitle(for: session),
@@ -395,6 +422,7 @@ final class TerminalModel {
     func terminalDidTerminate(launchID: UUID, exitCode: Int32?) {
         guard terminalLaunch?.id == launchID else { return }
         terminalRunning = false
+        if shellHandoffLaunchID == launchID { shellHandoffLaunchID = nil }
         terminalProcessLaunchID = nil
         terminalIsUsageTUI = false
         activeUsageProvider = nil
@@ -496,10 +524,6 @@ final class TerminalModel {
         "Local Terminal · isolated copy of \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)"
     }
 
-    /// The launch whose CLI already handed over to a shell, so a repeated
-    /// marker does not reset the panel again.
-    @ObservationIgnored private var shellHandoffLaunchID: UUID?
-
     private func terminalLaunchSpec(title: String, arguments: [String], workingDirectory: String) -> TerminalLaunchSpec? {
         guard let cli = interactiveCLIURL() else { return nil }
         return TerminalLaunchSpec(
@@ -512,7 +536,12 @@ final class TerminalModel {
     }
 
     private func sanitizedTerminalEnvironment() -> [String: String] {
-        let environment = ProcessInfo.processInfo.environment
+        Self.terminalEnvironment(from: ProcessInfo.processInfo.environment)
+    }
+
+    /// The only variables a terminal gets. `ENV` and `BASH_ENV` are never among
+    /// them, so the shells (`/bin/sh`, bash in POSIX mode) run no startup file.
+    static func terminalEnvironment(from environment: [String: String]) -> [String: String] {
         var safeEnvironment = [
             "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
             "USER": NSUserName(),

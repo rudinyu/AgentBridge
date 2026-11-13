@@ -18,12 +18,27 @@ final class ChatRemovalFlowTests: XCTestCase {
         XCTAssertTrue(model.chats.discussions.contains(where: { $0.id == discussion.id }))
 
         model.chats.reviewDiscussionRemoval(discussion.id)
-        model.chats.confirmDiscussionRemoval()
+        let pending = try XCTUnwrap(model.chats.discussionPendingRemoval)
+        model.chats.cancelDiscussionRemoval() // as dismissing the alert does before the action runs
+        model.chats.confirmDiscussionRemoval(pending)
         XCTAssertNil(model.errorMessage)
         XCTAssertNil(model.chats.discussionPendingRemoval)
         XCTAssertNil(model.chats.selectedDiscussionID)
         XCTAssertFalse(model.chats.discussions.contains(where: { $0.id == discussion.id }))
         XCTAssertEqual(model.status, "Removed the chat. Project sessions made from it are kept.")
+    }
+
+    func testARunningChatIsNotOfferedForRemoval() throws {
+        let model = try makeTestAppModel()
+        let service = try XCTUnwrap(model.service)
+        let discussion = try service.createDiscussion(provider: .codex, accountProfileID: AccountProfile.defaultID(for: .codex))
+        var running = discussion
+        running.status = .running
+        model.chats.discussions = [running]
+        XCTAssertFalse(model.chats.canRemoveDiscussion(running))
+        model.chats.reviewDiscussionRemoval(discussion.id)
+        XCTAssertNil(model.chats.discussionPendingRemoval)
+        XCTAssertEqual(model.errorMessage, "This chat is running. Stop it before removing it.")
     }
 
     func testTheConfirmationIsInTheAppLanguage() throws {
