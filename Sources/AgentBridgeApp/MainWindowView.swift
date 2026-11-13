@@ -78,6 +78,16 @@ struct MainWindowView: View {
         } message: { preview in
             Text(model.sessionRemovalMessage(preview))
         }
+        .alert(
+            model.localized("Remove this chat?"),
+            isPresented: Binding(get: { model.chats.discussionPendingRemoval != nil }, set: { if !$0 { model.chats.cancelDiscussionRemoval() } }),
+            presenting: model.chats.discussionPendingRemoval
+        ) { _ in
+            Button(model.localized("Remove Chat"), role: .destructive) { model.chats.confirmDiscussionRemoval() }
+            Button(model.localized("Cancel"), role: .cancel) { model.chats.cancelDiscussionRemoval() }
+        } message: { discussion in
+            Text(model.chats.chatRemovalMessage(for: discussion))
+        }
         .alert(model.localized("Clear shared memory and same-commit handoff for this project?"), isPresented: $model.confirmClearMemory) {
             Button(model.localized("Clear Memory and Handoff"), role: .destructive) { model.clearSharedMemory() }
             Button(model.localized("Cancel"), role: .cancel) { model.confirmClearMemory = false }

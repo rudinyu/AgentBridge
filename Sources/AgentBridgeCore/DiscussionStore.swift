@@ -130,6 +130,27 @@ public final class DiscussionStore: @unchecked Sendable {
         return normalized
     }
 
+    /// Deletes the record of `id`. Returns false when there is none.
+    @discardableResult
+    public func remove(id: UUID) throws -> Bool {
+        try withLockedDirectory(exclusive: true) { directoryDescriptor in
+            let name = Self.filename(for: id)
+            var info = stat()
+            guard fstatat(directoryDescriptor, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else {
+                guard errno == ENOENT else { throw AgentBridgeError.persistence("Could not inspect discussion record.") }
+                return false
+            }
+            guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), info.st_uid == getuid() else {
+                throw AgentBridgeError.persistence("Discussion record is not a private regular file.")
+            }
+            guard unlinkat(directoryDescriptor, name, 0) == 0 else {
+                throw AgentBridgeError.persistence("Could not remove the discussion record.")
+            }
+            guard fsync(directoryDescriptor) == 0 else { throw AgentBridgeError.persistence("Could not sync discussion storage.") }
+            return true
+        }
+    }
+
     /// Leaves room for the bounded assistant response before provider I/O, so
     /// a successful response cannot force old transcript text out of storage.
     func ensureRunCompletionFits(_ record: DiscussionRecord) throws {

@@ -153,6 +153,10 @@ To remove a session you no longer need, right-click it in either session list an
 
 From the CLI, `"$CLI" session remove SESSION-ID` shows the same check without removing anything, and `"$CLI" session remove SESSION-ID --confirm` checks again and removes the session. If the check finds work that would be lost, or could not finish, `--confirm` alone removes nothing; add `--discard-unsaved-work` to delete it.
 
+#### Removing a chat
+
+To remove a chat, right-click it in the Chats list and choose **Remove Chat…**, then confirm. This deletes the chat and its transcript and cannot be undone. Project sessions made from the chat are kept, with the turns already copied into their shared memory. A running chat cannot be removed. From the CLI, `"$CLI" chat remove CHAT-ID` shows what removal deletes, and `"$CLI" chat remove CHAT-ID --confirm` removes it.
+
 ### 9. Safe changes, activity, memory handoff, and extensions
 
 The native interactive terminal is the default access mode. For an isolated change, choose **Isolated changes** under **New session access mode** and create a new session while subscription mode is selected. It uses a fresh workspace based on the source repository's committed `HEAD`; uncommitted source files are not copied. Native interactive TUI mode is separate.

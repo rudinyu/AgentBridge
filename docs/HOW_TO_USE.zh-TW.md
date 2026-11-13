@@ -155,6 +155,10 @@ printf '%s' 'Summarize the repository architecture.' | \
 
 在 CLI 中，`"$CLI" session remove SESSION-ID` 只顯示同樣的檢查結果、不會移除；`"$CLI" session remove SESSION-ID --confirm` 會再檢查一次並移除工作階段。若檢查發現會遺失的內容，或無法完成檢查，只加 `--confirm` 不會移除任何東西；要刪除這些內容需再加上 `--discard-unsaved-work`。
 
+#### 移除聊天
+
+要移除聊天，請在「聊天」列表上按右鍵，選「移除聊天…」，再確認。這會刪除聊天和其對話紀錄，無法復原。由這個聊天建立的專案工作階段會保留，已複製到其共用記憶的回合也會保留。正在執行的聊天不能移除。在 CLI 中，`"$CLI" chat remove CHAT-ID` 只顯示移除會刪除什麼，`"$CLI" chat remove CHAT-ID --confirm` 才會移除。
+
 ### 9. 安全修改、活動紀錄、記憶交接與擴充權限
 
 預設的存取模式是原生互動終端。若要隔離修改，請在「新工作階段存取模式」選「隔離變更」，並在訂閱模式建立新工作階段。它會依來源 Repository 已提交的 `HEAD` 建立新工作區；來源未提交檔案不會複製。原生互動 TUI 是獨立模式。

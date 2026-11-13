@@ -12,8 +12,9 @@ enum SwiftLabelScanner {
     }
 
     /// Calls whose result is already in the app language. `sessionRemovalMessage`
-    /// builds its text only from `localized` and `localizedFormat` parts.
-    private static let translatingCalls: Set<String> = ["localized", "localizedFormat", "sessionRemovalMessage"]
+    /// and `chatRemovalMessage` build their text only from `localized` and
+    /// `localizedFormat` parts.
+    private static let translatingCalls: Set<String> = ["localized", "localizedFormat", "sessionRemovalMessage", "chatRemovalMessage"]
     private static let swiftUILabelCalls: Set<String> = [
         "Text", "Button", "Label", "Picker", "Toggle", "Stepper", "TextField", "SecureField", "Section", "Menu",
         "DisclosureGroup", "GroupBox", "LabeledContent", "help", "navigationTitle", "accessibilityLabel"

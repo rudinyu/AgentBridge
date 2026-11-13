@@ -25,6 +25,22 @@ extension AgentBridgeCLI {
             try await chatTarget(arguments, service: service)
         case "send":
             try await chatSend(arguments, service: service)
+        case "remove":
+            guard arguments.count >= 2, let discussionID = UUID(uuidString: arguments[1]),
+                  arguments.count == 2 || (arguments.count == 3 && arguments[2] == "--confirm") else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge chat remove CHAT-ID [--confirm]")
+            }
+            let discussion = try service.discussion(id: discussionID)
+            guard arguments.count == 3 else {
+                print("Removing chat \(discussionID.uuidString.lowercased()) deletes it and its \(discussion.turns.count) turns. It cannot be undone.")
+                if !discussion.linkedSessionIDs.isEmpty {
+                    print("The \(discussion.linkedSessionIDs.count) project sessions made from it, and their shared memory, are kept.")
+                }
+                print("Run again with --confirm to remove it.")
+                return
+            }
+            try service.removeDiscussion(id: discussionID)
+            print("Chat removed: \(discussionID.uuidString.lowercased())")
         case "cancel":
             guard arguments.count == 2, let discussionID = UUID(uuidString: arguments[1]) else {
                 throw AgentBridgeError.invalidInput("Usage: agentbridge chat cancel CHAT-ID")
@@ -62,6 +78,7 @@ extension AgentBridgeCLI {
           agentbridge chat target CHAT-ID --provider codex|claude|local --profile PROFILE-ID
           agentbridge chat send CHAT-ID [--share|--no-share] < prompt.txt
           agentbridge chat cancel CHAT-ID
+          agentbridge chat remove CHAT-ID [--confirm]
           agentbridge chat project preview CHAT-ID --mode new|existing --path /absolute/path --provider codex|claude|local --profile PROFILE-ID [--access read-only|changes|interactive] [--turn TURN-ID ... | --no-context]
           agentbridge chat project apply HANDOFF-ID --digest REVIEW-DIGEST --confirm
 

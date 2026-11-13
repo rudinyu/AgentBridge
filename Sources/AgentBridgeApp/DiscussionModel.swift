@@ -17,6 +17,8 @@ final class DiscussionModel {
     var newDiscussionProvider: AgentProvider = .codex
     var newDiscussionProfileID: UUID?
     var discussionProfilePreferences: [AgentProvider: UUID] = [:]
+    /// The chat the user asked to remove, waiting for confirmation.
+    var discussionPendingRemoval: DiscussionRecord?
     @ObservationIgnored private var discussionCancellationFlags: [UUID: CancellationFlag] = [:]
     @ObservationIgnored private var hasInitializedNewDiscussionTarget = false
 
@@ -342,6 +344,49 @@ final class DiscussionModel {
         app.isProjectConversationActive = true
         app.selectedSessionID = session.id
         return session
+    }
+
+    /// Asks to confirm removing the chat, unless it is running.
+    func reviewDiscussionRemoval(_ id: UUID) {
+        guard let discussion = discussions.first(where: { $0.id == id }) else { return }
+        guard !isDiscussionRunning(id: id), !discussion.status.isInFlight else {
+            app.errorMessage = "This chat is running. Stop it before removing it."
+            return
+        }
+        discussionPendingRemoval = discussion
+    }
+
+    func cancelDiscussionRemoval() {
+        discussionPendingRemoval = nil
+    }
+
+    func confirmDiscussionRemoval() {
+        guard let discussion = discussionPendingRemoval, let service = app.service else { return }
+        discussionPendingRemoval = nil
+        do {
+            try service.removeDiscussion(id: discussion.id)
+            if selectedDiscussionID == discussion.id { selectedDiscussionID = nil }
+            discussionProgress[discussion.id] = nil
+            app.status = "Removed the chat. Project sessions made from it are kept."
+        } catch {
+            app.errorMessage = error.localizedDescription
+        }
+        refreshDiscussions()
+    }
+
+    /// What the confirmation says removing `discussion` does.
+    func chatRemovalMessage(for discussion: DiscussionRecord) -> String {
+        var message = app.localizedFormat(
+            "This deletes the chat and its %@ turns. It cannot be undone.",
+            String(discussion.turns.count)
+        )
+        if !discussion.linkedSessionIDs.isEmpty {
+            message += "\n\n" + app.localizedFormat(
+                "The %@ project sessions made from it, and the turns already copied into their shared memory, are kept.",
+                String(discussion.linkedSessionIDs.count)
+            )
+        }
+        return message
     }
 
     private func replaceDiscussion(_ discussion: DiscussionRecord) {

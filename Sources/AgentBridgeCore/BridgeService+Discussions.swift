@@ -323,6 +323,33 @@ extension BridgeService {
         }
     }
 
+    /// Deletes a chat and its transcript. Project sessions made from it, and the
+    /// turns already copied into their shared memory, are kept. A running chat
+    /// cannot be removed. The audit events stay, with a removal event added.
+    public func removeDiscussion(id: UUID) throws {
+        let lease: SessionRunLease
+        do {
+            lease = try store.acquireRunLease(for: id)
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch = error else { throw error }
+            throw AgentBridgeError.sessionMismatch("This chat is running. Stop it before removing it.")
+        }
+        defer { withExtendedLifetime(lease) {} }
+        var record = try rawDiscussion(id: id)
+        try recoverStaleDiscussionRun(&record)
+        guard !record.status.isInFlight else {
+            throw AgentBridgeError.sessionMismatch("This chat is running. Stop it before removing it.")
+        }
+        guard try discussionStore.remove(id: id) else {
+            throw AgentBridgeError.sessionMismatch("Could not find this discussion.")
+        }
+        try store.appendEvent(AuditEvent(
+            sessionID: id,
+            kind: "discussion.removed",
+            message: "The chat and its transcript were removed. Project sessions made from it and their shared memory are kept."
+        ))
+    }
+
     public func cancelDiscussion(id: UUID) throws {
         let record = try discussion(id: id)
         guard record.status == .running else {

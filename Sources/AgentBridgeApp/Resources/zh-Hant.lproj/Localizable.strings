@@ -1759,3 +1759,12 @@
 "The CLI ended. A shell opened in the same isolated workspace." = "CLI 已結束，已在同一個隔離工作區開啟 shell。";
 "The native interactive terminal uses subscription sign-in only. Choose read-only or isolated changes, or switch to subscription sign-in mode; no handoff preview was created." = "原生互動終端只使用訂閱登入模式。請改選唯讀或隔離變更，或切換到訂閱登入模式；未建立交接預覽。";
 "The session opens the provider's own CLI in the embedded terminal, where it asks before each change. No autonomous workflow is started." = "工作階段會在內嵌終端機開啟提供者自己的 CLI，每次變更前都會先詢問你。不會啟動自主工作流程。";
+"Remove Chat…" = "移除聊天…";
+"Remove Chat" = "移除聊天";
+"Remove this chat?" = "要移除這個聊天嗎？";
+"This deletes the chat and its %@ turns. It cannot be undone." = "這會刪除這個聊天和其中的 %@ 個回合，無法復原。";
+"The %@ project sessions made from it, and the turns already copied into their shared memory, are kept." = "由它建立的 %@ 個專案工作階段，以及已複製到其共用記憶的回合，都會保留。";
+"This chat is running. Stop it before removing it." = "這個聊天正在執行，請先停止再移除。";
+"Removed the chat. Project sessions made from it are kept." = "已移除聊天；由它建立的專案工作階段仍保留。";
+"The chat and its transcript were removed. Project sessions made from it and their shared memory are kept." = "已移除聊天和對話紀錄；由它建立的專案工作階段及其共用記憶仍保留。";
+"Could not remove the discussion record." = "無法移除聊天紀錄。";

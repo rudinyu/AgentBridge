@@ -1759,3 +1759,12 @@
 "The CLI ended. A shell opened in the same isolated workspace." = "The CLI ended. A shell opened in the same isolated workspace.";
 "The native interactive terminal uses subscription sign-in only. Choose read-only or isolated changes, or switch to subscription sign-in mode; no handoff preview was created." = "The native interactive terminal uses subscription sign-in only. Choose read-only or isolated changes, or switch to subscription sign-in mode; no handoff preview was created.";
 "The session opens the provider's own CLI in the embedded terminal, where it asks before each change. No autonomous workflow is started." = "The session opens the provider's own CLI in the embedded terminal, where it asks before each change. No autonomous workflow is started.";
+"Remove Chat…" = "Remove Chat…";
+"Remove Chat" = "Remove Chat";
+"Remove this chat?" = "Remove this chat?";
+"This deletes the chat and its %@ turns. It cannot be undone." = "This deletes the chat and its %@ turns. It cannot be undone.";
+"The %@ project sessions made from it, and the turns already copied into their shared memory, are kept." = "The %@ project sessions made from it, and the turns already copied into their shared memory, are kept.";
+"This chat is running. Stop it before removing it." = "This chat is running. Stop it before removing it.";
+"Removed the chat. Project sessions made from it are kept." = "Removed the chat. Project sessions made from it are kept.";
+"The chat and its transcript were removed. Project sessions made from it and their shared memory are kept." = "The chat and its transcript were removed. Project sessions made from it and their shared memory are kept.";
+"Could not remove the discussion record." = "Could not remove the discussion record.";

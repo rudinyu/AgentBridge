@@ -487,6 +487,41 @@ final class DiscussionWorkflowTests: XCTestCase {
         XCTAssertEqual(session.policy.accessMode, .interactiveManualApproval)
     }
 
+    func testRemovingAChatDeletesItButKeepsTheProjectSessionMadeFromIt() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let destination = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+            .appendingPathComponent("AgentBridge-Discussion-Remove-\(UUID().uuidString.lowercased())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let profileID = AccountProfile.defaultID(for: .codex)
+        let discussion = try fixture.service.createDiscussion(provider: .codex, accountProfileID: profileID)
+        let handoff = try await fixture.service.prepareDiscussionProjectHandoff(
+            discussionID: discussion.id, destinationPath: destination.path, mode: .createNew,
+            targetProvider: .codex, targetProfileID: profileID, selectedTurnIDs: []
+        )
+        let session = try await fixture.service.createOrAttachProjectFromDiscussion(
+            handoffID: handoff.id, reviewedDigest: handoff.reviewedDigest, explicitConfirmation: true
+        )
+
+        try fixture.service.removeDiscussion(id: discussion.id)
+
+        XCTAssertFalse(try fixture.service.discussions().contains(where: { $0.id == discussion.id }))
+        XCTAssertThrowsError(try fixture.service.discussion(id: discussion.id))
+        XCTAssertTrue(try fixture.service.sessions().contains(where: { $0.id == session.id }))
+        XCTAssertTrue(try fixture.store.events(sessionID: discussion.id).contains(where: { $0.kind == "discussion.removed" }))
+        XCTAssertThrowsError(try fixture.service.removeDiscussion(id: discussion.id), "A removed chat cannot be removed again.")
+    }
+
+    func testARunningChatCannotBeRemoved() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let discussion = try fixture.service.createDiscussion(provider: .codex, accountProfileID: AccountProfile.defaultID(for: .codex))
+        let lease = try fixture.store.acquireRunLease(for: discussion.id)
+        XCTAssertThrowsError(try fixture.service.removeDiscussion(id: discussion.id))
+        withExtendedLifetime(lease) {}
+        XCTAssertNoThrow(try fixture.service.discussion(id: discussion.id))
+    }
+
     func testFullSharedMemoryRefusalHappensBeforeCreatingProjectRepository() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
