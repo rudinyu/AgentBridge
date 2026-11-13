@@ -327,59 +327,6 @@ extension MainWindowView {
         }
     }
 
-    var extensionPolicyPanel: some View {
-        GroupBox("Skills / MCP policy metadata") {
-            VStack(alignment: .leading, spacing: 7) {
-                Text("Imports are inert descriptors. Grants are narrow per-project policy metadata only; they do not activate or execute provider extensions. Import never runs scripts.")
-                    .font(.caption2).foregroundStyle(.orange)
-                Button("Import descriptor JSON…") { model.extensions.isImportingExtensionDescriptor = true }
-                if model.extensions.extensionDescriptors.isEmpty {
-                    Text("No descriptors imported.").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Picker(model.localized("value.descriptor"), selection: Bindable(model.extensions).selectedExtensionID) {
-                        Text("Select descriptor").tag("")
-                        ForEach(model.extensions.extensionDescriptors) { descriptor in
-                            Text("\(descriptor.kind.rawValue.uppercased()) · \(descriptor.name)").tag(descriptor.id)
-                        }
-                    }
-                    if let descriptor = model.extensions.selectedExtensionDescriptor {
-                        Text(verbatim: "\(descriptor.id) · v\(descriptor.version)\n\(descriptor.summary)")
-                            .font(.caption2).textSelection(.enabled)
-                        Text("Requested: \(descriptor.requestedPermissions.map(\.rawValue).joined(separator: ", "))")
-                            .font(.system(size: 8, design: .monospaced)).foregroundStyle(.secondary)
-                        if let grant = model.extensions.selectedExtensionGrant {
-                            Text("Current project grant: \(grant.permissions.map(\.rawValue).joined(separator: ", "))")
-                                .font(.caption2).foregroundStyle(.green)
-                        } else {
-                            Text("No grant for this project.").font(.caption2).foregroundStyle(.secondary)
-                        }
-                        ForEach(ExtensionPermission.allCases, id: \.self) { permission in
-                            Toggle(permission.rawValue, isOn: Binding(
-                                get: { model.extensions.selectedExtensionPermissions.contains(permission) },
-                                set: { enabled in
-                                    if enabled { model.extensions.selectedExtensionPermissions.insert(permission) }
-                                    else { model.extensions.selectedExtensionPermissions.remove(permission) }
-                                }
-                            ))
-                            .font(.caption2)
-                            .disabled(!descriptor.requestedPermissions.contains(permission))
-                        }
-                        Text("Allowed relative paths · one normalized path per line")
-                            .font(.caption2)
-                        TextEditor(text: Bindable(model.extensions).extensionPathScopesText).frame(minHeight: 38, maxHeight: 70)
-                        Text("Allowed exact hostnames · one per line")
-                            .font(.caption2)
-                        TextEditor(text: Bindable(model.extensions).extensionHostScopesText).frame(minHeight: 38, maxHeight: 70)
-                        HStack {
-                            Button("Grant selected scopes") { model.extensions.grantSelectedExtension() }
-                            Button("Revoke for this project", role: .destructive) { model.extensions.revokeSelectedExtension() }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     var chatTimeline: some View {
         ScrollViewReader { proxy in
             ScrollView {

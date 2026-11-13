@@ -94,17 +94,10 @@ struct MainWindowView: View {
         } message: {
             Text(model.localized("This clears chat turns, notes, and the saved same-commit provider handoff Markdown for this canonical repository and pinned commit. It does not change provider sessions or separate cross-commit handoff records."))
         }
-        .fileImporter(
-            isPresented: Bindable(model.extensions).isImportingExtensionDescriptor,
-            allowedContentTypes: [.json],
-            allowsMultipleSelection: false,
-            onCompletion: model.extensions.importExtensionDescriptor
-        )
         .onChange(of: model.selectedSessionID) { _, _ in model.selectedSessionDidChange() }
         .onChange(of: model.isLocalProviderContext) { _, isLocal in
             if isLocal && (mainArea == .autonomous || mainArea == .extensions) { mainArea = .chats }
         }
-        .onChange(of: model.extensions.selectedExtensionID) { _, _ in model.extensions.selectedExtensionDidChange() }
         .onChange(of: model.setupWizard.isPresented) { _, isPresented in
             if !isPresented { model.errorMessage = nil }
         }
@@ -266,12 +259,9 @@ struct MainWindowView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ActiveExtensionsView(model: model)
-                        extensionPolicyPanel
-                    }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    ActiveExtensionsView(model: model)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }

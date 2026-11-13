@@ -2,8 +2,8 @@ import AgentBridgeCore
 import Foundation
 import Observation
 
-/// Extension descriptors and per-project grants, active Skill and MCP runtimes,
-/// and the Mac Control preset. Every call goes through `BridgeService`, which
+/// Active Skill and MCP runtimes and the Mac Control preset. Legacy descriptor
+/// metadata is managed from the CLI (`extensions import/grant/revoke`) only. Every call goes through `BridgeService`, which
 /// enforces consent; this model only holds what the extension screens show.
 @MainActor
 @Observable
@@ -16,16 +16,6 @@ final class ExtensionsModel {
     var macControlPermissionReadiness: MacControlPermissionReadiness?
     var macControlStatusError: String?
     var isCheckingMacControlPermissions = false
-    var extensionDescriptors: [ExtensionDescriptor] = []
-    var selectedExtensionID = ""
-    var selectedExtensionPermissions = Set<ExtensionPermission>()
-    var extensionPathScopesText = ""
-    var extensionHostScopesText = ""
-    var isImportingExtensionDescriptor = false
-
-    var selectedExtensionDescriptor: ExtensionDescriptor? {
-        extensionDescriptors.first(where: { $0.id == selectedExtensionID })
-    }
 
     func refreshActiveExtensionConfigurations() {
         guard let service = app.service else { return }
@@ -61,6 +51,28 @@ final class ExtensionsModel {
         isTestingMCPRuntime = true
         defer { isTestingMCPRuntime = false }
         return try await service.testMCPRuntime(extensionID: extensionID)
+    }
+
+    /// The last Test Connection result for this exact configuration, or nil
+    /// when it has not been tested since it was imported or changed.
+    func activeExtensionInspection(extensionID: String) throws -> MCPServerInspection? {
+        guard let service = app.service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
+        return try service.activeExtensionInspection(extensionID: extensionID)
+    }
+
+    /// Tests a configuration and refuses the result when the configuration was
+    /// replaced while the test ran, so a result is never shown for a digest it
+    /// did not test.
+    func testRuntimeConnection(_ configuration: ActiveExtensionConfigurationSummary) async throws -> MCPServerInspection {
+        let result = try await testMCPRuntime(extensionID: configuration.id)
+        refreshActiveExtensionConfigurations()
+        let current = activeExtensionConfigurations.first(where: { $0.id == configuration.id })
+        guard result.extensionID == configuration.id,
+              result.configurationDigest == configuration.configurationDigest,
+              current?.configurationDigest == configuration.configurationDigest else {
+            throw AgentBridgeError.invalidInput("The configuration changed during testing. Test it again.")
+        }
+        return result
     }
 
     func refreshMacControlPresetStatus(targetBundleID: String?, accessMode: MacControlAccessMode) {
@@ -163,72 +175,6 @@ final class ExtensionsModel {
     func activeExtensionsForSession(sessionID: UUID, extensionIDs: [String]? = nil) throws -> ActiveExtensionInvocation {
         guard let service = app.service else { throw AgentBridgeError.persistence("AgentBridge service is unavailable.") }
         return try service.activeExtensionsForSession(sessionID: sessionID, extensionIDs: extensionIDs)
-    }
-
-    var selectedExtensionGrant: ExtensionGrant? {
-        guard let service = app.service, let session = app.selectedSession, !selectedExtensionID.isEmpty,
-              let projectID = try? service.extensionProjectID(sessionID: session.id) else { return nil }
-        return try? service.extensionGrant(extensionID: selectedExtensionID, projectID: projectID)
-    }
-
-    func selectedExtensionDidChange() {
-        loadSelectedExtensionGrant()
-    }
-
-    func loadSelectedExtensionGrant() {
-        guard let grant = selectedExtensionGrant else {
-            selectedExtensionPermissions = []
-            extensionPathScopesText = ""
-            extensionHostScopesText = ""
-            return
-        }
-        selectedExtensionPermissions = Set(grant.permissions)
-        extensionPathScopesText = grant.allowedRelativePaths.joined(separator: "\n")
-        extensionHostScopesText = grant.allowedHosts.joined(separator: "\n")
-    }
-
-    func importExtensionDescriptor(_ result: Result<[URL], Error>) {
-        do {
-            let urls = try result.get()
-            guard let url = urls.first else { return }
-            let access = url.startAccessingSecurityScopedResource()
-            defer { if access { url.stopAccessingSecurityScopedResource() } }
-            let data = try BoundedDescriptorFileReader.read(at: url)
-            let descriptor = try JSONDecoder().decode(ExtensionDescriptor.self, from: data)
-            let source: ExtensionImportSource = descriptor.kind == .skill ? .localMetadata : .localMetadata
-            _ = try app.service?.importExtensionDescriptor(descriptor, source: source, sourceReference: url.path)
-            extensionDescriptors = try app.service?.extensionDescriptors() ?? []
-            selectedExtensionID = descriptor.id
-            app.status = "Imported inert extension metadata; no command or script was run."
-        } catch { app.errorMessage = error.localizedDescription }
-    }
-
-    func grantSelectedExtension() {
-        guard let service = app.service, let session = app.selectedSession, !selectedExtensionID.isEmpty else { return }
-        do {
-            let projectID = try service.extensionProjectID(sessionID: session.id)
-            let paths = extensionPathScopesText.split(whereSeparator: \.isNewline).map(String.init)
-            let hosts = extensionHostScopesText.split(whereSeparator: \.isNewline).map(String.init)
-            _ = try service.grantExtensionPermissions(
-                extensionID: selectedExtensionID,
-                projectID: projectID,
-                permissions: selectedExtensionPermissions.sorted { $0.rawValue < $1.rawValue },
-                allowedRelativePaths: paths,
-                allowedHosts: hosts
-            )
-            app.status = "Saved narrow-scope policy metadata for this project; the extension is still not enabled or run."
-            app.refresh()
-        } catch { app.errorMessage = error.localizedDescription }
-    }
-
-    func revokeSelectedExtension() {
-        guard let service = app.service, let session = app.selectedSession, !selectedExtensionID.isEmpty else { return }
-        do {
-            let projectID = try service.extensionProjectID(sessionID: session.id)
-            _ = try service.revokeExtensionPermissions(extensionID: selectedExtensionID, projectID: projectID)
-            app.status = "Revoked this project's extension permission policy."
-            app.refresh()
-        } catch { app.errorMessage = error.localizedDescription }
     }
 
     @ObservationIgnored private weak var owner: AppModel?

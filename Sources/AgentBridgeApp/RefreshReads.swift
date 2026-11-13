@@ -21,7 +21,6 @@ struct RefreshReads: Sendable {
     var sessions: Result<[SessionRecord], Error>
     var discussions: Result<[DiscussionRecord], Error>
     var taskRecords: Result<[ParallelTaskRecord], Error>
-    var extensionDescriptors: Result<[ExtensionDescriptor], Error>
     var autonomousRuns: Result<[AutonomousRunRecord], Error>
     var activeExtensions: Result<[ActiveExtensionConfigurationSummary], Error>
     /// The last saved `/usage` report for each provider's selected account.
@@ -57,7 +56,6 @@ struct RefreshReads: Sendable {
             sessions: sessions,
             discussions: Result { try service.discussions() },
             taskRecords: Result { try service.taskRecords() },
-            extensionDescriptors: Result { try service.extensionDescriptors() },
             autonomousRuns: Result { try service.autonomousRuns() },
             activeExtensions: Result { try service.activeExtensionConfigurations() },
             savedUsageReports: ((try? selectedProfileIDs.get()) ?? [:]).compactMap { provider, profileID in
