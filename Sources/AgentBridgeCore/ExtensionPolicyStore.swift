@@ -627,16 +627,51 @@ enum AgentBridgePrivateJSONDocument {
             throw AgentBridgeError.persistence("Coordination storage failed private-directory checks.")
         }
 
-        return try PrivateLockFile.withLock(named: lockFileName, in: directoryDescriptor, create: true, error: { failure in
-            switch failure {
-            case .unavailable: AgentBridgeError.persistence("Could not safely open the coordination lock.")
-            case .notPrivateFile: AgentBridgeError.persistence("The coordination lock is not a private regular file.")
-            case .lockFailed: AgentBridgeError.persistence("Could not lock coordination storage.")
-            }
-        }) { try operation(directoryDescriptor) }
+        return try PrivateLockFile.withLock(named: lockFileName, in: directoryDescriptor, create: true, error: lockError) {
+            try operation(directoryDescriptor)
+        }
     }
 
-    static func read(fileName: String, maximumBytes: Int, directoryDescriptor: Int32) throws -> Data? {
+    /// For a reader that cannot write here, such as the MCP proxy inside a
+    /// sandboxed change run. It shares the lock with other readers and changes
+    /// nothing, so a missing folder or lock, or loose permissions, are refused
+    /// rather than repaired.
+    static func withReadLockedRoot<T>(rootURL: URL, _ operation: (Int32) throws -> T) throws -> T {
+        let directoryDescriptor = rootURL.path.withCString {
+            open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+        }
+        guard directoryDescriptor >= 0 else {
+            throw AgentBridgeError.persistence("Coordination storage is unavailable or is a symbolic link.")
+        }
+        defer { _ = close(directoryDescriptor) }
+        var directoryInfo = stat()
+        guard fstat(directoryDescriptor, &directoryInfo) == 0,
+              (directoryInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
+              directoryInfo.st_uid == getuid(),
+              (directoryInfo.st_mode & 0o077) == 0 else {
+            throw AgentBridgeError.persistence("Coordination storage failed private-directory checks.")
+        }
+        return try PrivateLockFile.withLock(
+            named: lockFileName,
+            in: directoryDescriptor,
+            create: false,
+            exclusive: false,
+            securePermissions: false,
+            error: lockError
+        ) { try operation(directoryDescriptor) }
+    }
+
+    private static func lockError(_ failure: PrivateLockFile.Failure) -> Error {
+        switch failure {
+        case .unavailable: AgentBridgeError.persistence("Could not safely open the coordination lock.")
+        case .notPrivateFile: AgentBridgeError.persistence("The coordination lock is not a private regular file.")
+        case .lockFailed: AgentBridgeError.persistence("Could not lock coordination storage.")
+        }
+    }
+
+    /// Without `securePermissions` the file is checked instead of made private,
+    /// for a reader that cannot change it.
+    static func read(fileName: String, maximumBytes: Int, directoryDescriptor: Int32, securePermissions: Bool = true) throws -> Data? {
         let descriptor = fileName.withCString { openat(directoryDescriptor, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW) }
         guard descriptor >= 0 else {
             if errno == ENOENT { return nil }
@@ -648,7 +683,7 @@ enum AgentBridgePrivateJSONDocument {
               (metadata.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
               metadata.st_uid == getuid(), metadata.st_nlink == 1,
               metadata.st_size >= 0, metadata.st_size <= maximumBytes,
-              fchmod(descriptor, mode_t(0o600)) == 0 else {
+              securePermissions ? fchmod(descriptor, mode_t(0o600)) == 0 : (metadata.st_mode & 0o077) == 0 else {
             throw AgentBridgeError.persistence("A coordination document is not a bounded private regular file.")
         }
         var data = Data()

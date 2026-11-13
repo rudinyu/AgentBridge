@@ -309,13 +309,14 @@ public struct ActiveExtensionRuntimeStore: Sendable {
     }
 
     /// Revalidates a proxy ticket against current configuration, grant, scope,
-    /// and the exact extension set pinned to its provider session.
+    /// and the exact extension set pinned to its provider session. Read-only,
+    /// because the proxy may run inside a change run's sandbox.
     public func validateProxyTicket(_ ticket: MCPProxyTicket) throws {
         try ticket.validate()
         guard ticket.runtimeStoreRootPath == rootURL.path else {
             throw ActiveExtensionRuntimeError.grantMissing(ticket.extensionID)
         }
-        try withDocument { document in
+        try withReadOnlyDocument { document in
             guard let binding = document.sessionBindings.first(where: { $0.sessionID == ticket.sessionID }),
                   binding.projectID == ticket.projectID,
                   binding.provider == ticket.provider,
@@ -379,6 +380,12 @@ public struct ActiveExtensionRuntimeStore: Sendable {
                 try AgentBridgePrivateJSONDocument.write(updatedData, fileName: Self.fileName, maximumBytes: Self.maximumStoredBytes, directoryDescriptor: directoryDescriptor)
             }
             return result
+        }
+    }
+
+    private func withReadOnlyDocument<T>(_ operation: (ActiveExtensionRuntimeDocument) throws -> T) throws -> T {
+        try AgentBridgePrivateJSONDocument.withReadLockedRoot(rootURL: rootURL) { directoryDescriptor in
+            try operation(Self.readDocument(directoryDescriptor: directoryDescriptor, securePermissions: false))
         }
     }
 
@@ -593,8 +600,13 @@ public struct ActiveExtensionRuntimeStore: Sendable {
         }
     }
 
-    private static func readDocument(directoryDescriptor: Int32) throws -> ActiveExtensionRuntimeDocument {
-        guard let data = try AgentBridgePrivateJSONDocument.read(fileName: Self.fileName, maximumBytes: Self.maximumStoredBytes, directoryDescriptor: directoryDescriptor) else {
+    private static func readDocument(directoryDescriptor: Int32, securePermissions: Bool = true) throws -> ActiveExtensionRuntimeDocument {
+        guard let data = try AgentBridgePrivateJSONDocument.read(
+            fileName: Self.fileName,
+            maximumBytes: Self.maximumStoredBytes,
+            directoryDescriptor: directoryDescriptor,
+            securePermissions: securePermissions
+        ) else {
             return ActiveExtensionRuntimeDocument()
         }
         do {

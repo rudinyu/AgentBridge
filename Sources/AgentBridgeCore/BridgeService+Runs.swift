@@ -589,7 +589,6 @@ extension BridgeService {
         let temp = try makePrivateTemporaryDirectory(label: "change-\(sessionID.uuidString.lowercased())")
         defer { try? FileManager.default.removeItem(at: temp) }
         let environment = try providerEnvironment(profile: profile, privateTemporaryDirectory: temp)
-        let commandWrapper = try claudeChangeSandbox(session: session, environment: environment, temporaryDirectory: temp)
         let extensionInvocation = try activeExtensionRuntimeStore.invocation(
             projectID: extensionProjectID(for: session),
             provider: session.provider,
@@ -626,6 +625,16 @@ extension BridgeService {
                 session: session,
                 ticketDirectory: mcpControlPlane?.directoryURL,
                 maximumToolCallsPerServer: maximumMCPToolCallsPerServer
+            )
+            // Built once the MCP servers are known, because their proxy needs a few
+            // exceptions in the sandbox.
+            let commandWrapper = try claudeChangeSandbox(
+                session: session,
+                environment: environment,
+                temporaryDirectory: temp,
+                mcpServers: extensionInvocation.mcpServers,
+                mcpCommands: mcpServerCommands,
+                mcpControlPlane: mcpControlPlane?.directoryURL
             )
             let startedTaskID = try beginTrackedRun(
                 sessionID: sessionID,
@@ -667,7 +676,7 @@ extension BridgeService {
                 environment: environment,
                 cancellationRequestURL: store.cancellationRequestURL(for: sessionID),
                 mcpServerCommands: mcpServerCommands,
-                wrapCommand: mcpServerCommands.isEmpty ? commandWrapper : nil,
+                wrapCommand: commandWrapper,
                 onProgress: { [weak self] message in
                     emitter.emit(message)
                     _ = try? self?.parallelTaskBoard.updateProgress(taskID: startedTaskID, summary: OutputRedactor.redact(message))
@@ -1256,22 +1265,49 @@ extension BridgeService {
     /// Claude's change tools run in its own process and decide for themselves which
     /// paths they may edit. This confines them to the workspace at the OS level, and
     /// keeps `.git` read-only; a change run has no shell to work around that. Codex
-    /// runs its own Seatbelt sandbox, which cannot be nested. Runs with MCP servers
-    /// are left out, because the AgentBridge MCP proxy reads the private data root.
+    /// runs its own Seatbelt sandbox, which cannot be nested.
+    ///
+    /// MCP servers run inside the same sandbox, behind the AgentBridge proxy. The
+    /// proxy may read its ticket and the grants, and write its receipt and a private
+    /// home beside the ticket; the tickets and grants stay read-only. A server can
+    /// read only its own folder and pinned scripts in the home folder, so one that
+    /// needs other files there fails to start. An executable's folder that holds the
+    /// home folder or a protected root is never opened up; only the file itself is.
+    /// Runs with Mac Control are left out,
+    /// because the sandbox blocks the Apple events and app launches it needs.
     func claudeChangeSandbox(
         session: SessionRecord,
         environment: [String: String],
-        temporaryDirectory: URL
+        temporaryDirectory: URL,
+        mcpServers: [ActiveMCPConfiguration] = [],
+        mcpCommands: [MCPServerCommandConfiguration] = [],
+        mcpControlPlane: URL? = nil
     ) throws -> (@Sendable (URL, [String]) throws -> (URL, [String]))? {
         guard session.provider == .claude else { return nil }
+        guard !mcpServers.contains(where: {
+            if case .macControlProxy = $0.launchConfiguration { return true }
+            return false
+        }) else { return nil }
         let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true)
         // A custom profile keeps `.claude.json` inside its configuration folder.
         let configuration = environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
         let writableRoots = [workspace, temporaryDirectory, configuration ?? home.appendingPathComponent(".claude", isDirectory: true)]
-        let writablePrefixes = configuration == nil ? [home.appendingPathComponent(".claude.json")] : []
+        var writablePrefixes = configuration == nil ? [home.appendingPathComponent(".claude.json")] : []
         let protectedRoots = sandboxProtectedRoots(for: session)
-        return { executable, arguments in
+        let fencedPaths = ([home] + protectedRoots).map(ProcessSandbox.canonicalPath)
+        var mcpReadableRoots = mcpServers.flatMap { server in
+            [Self.readableLocation(of: URL(fileURLWithPath: server.executablePath), fencedPaths: fencedPaths)]
+                + server.entrypointPins.map { URL(fileURLWithPath: $0.path) }
+        } + mcpCommands.map { Self.readableLocation(of: URL(fileURLWithPath: $0.commandPath), fencedPaths: fencedPaths) }
+        if !mcpServers.isEmpty, let mcpControlPlane {
+            mcpReadableRoots += [activeExtensionRuntimeStore.rootURL, mcpControlPlane]
+            // The receipt, its temporary file before the rename, and the proxy home.
+            writablePrefixes += ["mcp-proxy-receipt-", ".mcp-receipt-", "proxy-home-"].map {
+                mcpControlPlane.appendingPathComponent($0)
+            }
+        }
+        return { [writablePrefixes, mcpReadableRoots] executable, arguments in
             // Claude keeps its sign-in in the login keychain, read through this file.
             let sandbox = ProcessSandbox(
                 writableRoots: writableRoots,
@@ -1279,14 +1315,24 @@ extension BridgeService {
                 writablePrefixes: writablePrefixes,
                 readableRoots: [
                     home.appendingPathComponent("Library/Keychains/login.keychain-db"),
-                    URL(fileURLWithPath: ProcessSandbox.canonicalPath(executable)).deletingLastPathComponent()
-                ],
+                    Self.readableLocation(of: executable, fencedPaths: fencedPaths)
+                ] + mcpReadableRoots,
                 readOnlyRoots: [workspace.appendingPathComponent(".git", isDirectory: true)],
                 allowsKeychain: true
             )
             let command = try sandbox.command(executable: executable, arguments: arguments)
             return (command.executable, command.arguments)
         }
+    }
+
+    /// An executable's folder, so it can load files beside it, or only the file when
+    /// that folder is or holds one of `fencedPaths`, which a readable folder would
+    /// open up again.
+    static func readableLocation(of executable: URL, fencedPaths: [String]) -> URL {
+        let file = URL(fileURLWithPath: ProcessSandbox.canonicalPath(executable))
+        let folder = file.deletingLastPathComponent().path
+        let prefix = folder.hasSuffix("/") ? folder : folder + "/"
+        return fencedPaths.contains { $0 == folder || $0.hasPrefix(prefix) } ? file : file.deletingLastPathComponent()
     }
 
     func memoryScope(for session: SessionRecord) throws -> SharedMemoryScope {

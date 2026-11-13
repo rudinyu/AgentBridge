@@ -4,6 +4,10 @@ import Foundation
 
 enum MCPExecutableValidation {
     static let maximumExecutableBytes: off_t = 256 * 1_024 * 1_024
+    /// Opens a folder on the way to a file only to look names up in it. A sandbox
+    /// allows that even in a folder it may not read, such as the home folder above
+    /// an MCP server or the private data root above a proxy ticket.
+    static let searchOnlyDirectoryFlags = O_SEARCH | O_CLOEXEC | O_NOFOLLOW
 
     static func resolveAndDigest(_ path: String) throws -> (path: String, digest: String) {
         let original = try ActiveExtensionValidation.absoluteExecutablePath(path)
@@ -26,7 +30,7 @@ enum MCPExecutableValidation {
         guard directory >= 0 else { throw invalidExecutable() }
         defer { _ = close(directory) }
         for component in components.dropLast() {
-            let child = component.withCString { openat(directory, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW) }
+            let child = component.withCString { openat(directory, $0, searchOnlyDirectoryFlags) }
             guard child >= 0 else { throw invalidExecutable() }
             _ = close(directory)
             directory = child

@@ -134,7 +134,7 @@ enum MCPEntrypointIntegrity {
         guard directory >= 0 else { throw invalidScript() }
         defer { _ = Darwin.close(directory) }
         for component in components.dropLast() {
-            let child = component.withCString { openat(directory, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW) }
+            let child = component.withCString { openat(directory, $0, MCPExecutableValidation.searchOnlyDirectoryFlags) }
             guard child >= 0 else { throw invalidScript() }
             _ = Darwin.close(directory)
             directory = child

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- A Claude change run with MCP servers now runs in the same Seatbelt sandbox as one without, and so do the AgentBridge MCP proxy and the servers it starts. The sandbox lets them read the proxy's tickets and the extension grants, and write only the proxy's receipts and private home beside the tickets; the tickets and grants stay read-only. A server can read its own folder and its pinned entry script, but not the rest of the home folder, so a server that needs other files there now fails to start, and the run fails with the proxy's error. A run that includes Mac Control is still not sandboxed, because the sandbox blocks the Apple events and app launches Mac Control needs.
+- The proxy now checks its ticket against the grants without writing to them: it takes a shared lock and refuses, rather than repairs, loose file permissions. Path checks for tickets, receipts, MCP executables and pinned scripts open the folders on the way only to look names up in them, so they work under a folder the sandbox cannot read.
+
 ## 0.15.1 — 2026-11-13
 
 ### Added
