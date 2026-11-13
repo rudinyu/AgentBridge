@@ -415,11 +415,12 @@ public final class SafeProcessRunner: Sendable {
             // A process that left the child's group (for example a CLI that starts
             // itself again after updating) is not ended above; list what still
             // uses this terminal so such a survivor shows in the log.
-            let others = TerminalProcessDiagnostics.related(
+            let others = TerminalProcessDiagnostics.describeRelated(
                 toTerminal: TerminalProcessDiagnostics.terminalDevice(of: STDIN_FILENO),
-                rootPID: nil
-            ).filter { $0.pid != getpid() }
-            interactiveLog.notice("Interactive child \(processID, privacy: .public) ended: exit code \(exitCode, privacy: .public), cancelled \(cancelled, privacy: .public). Other processes on this terminal: \(TerminalProcessDiagnostics.describe(others), privacy: .public)")
+                rootPID: nil,
+                excluding: [getpid()]
+            )
+            interactiveLog.notice("Interactive child \(processID, privacy: .public) ended: exit code \(exitCode, privacy: .public), cancelled \(cancelled, privacy: .public). Other processes on this terminal: \(others, privacy: .public)")
         }
         truncated = truncated || lineFramer.didOverflow
         return ProcessResult(exitCode: exitCode, standardOutput: output, standardError: errorOutput, outputWasTruncated: truncated, wasCancelled: cancelled, timedOut: timedOut)

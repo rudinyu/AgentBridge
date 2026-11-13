@@ -128,6 +128,8 @@ final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewD
     @discardableResult
     func start(_ launch: TerminalLaunchSpec) -> Bool {
         guard let process else { return false }
+        startedProcessID = nil
+        startedTerminalDevice = nil
         process.startProcess(
             executable: launch.executablePath,
             args: launch.arguments,
@@ -161,6 +163,7 @@ final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewD
     /// Called when a view is removed without the helper having exited normally.
     /// Signal the provider's foreground group and the helper, then escalate after a bounded grace.
     func terminateWithEscalation() {
+        let log = TerminalProcessDiagnostics.logger(subsystem: TerminalProcessDiagnostics.appSubsystem)
         guard let child = process, child.running else { return }
         let helperPID = child.shellPid
         nonisolated(unsafe) let escalatingChild = child
@@ -169,15 +172,40 @@ final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewD
             _ = kill(-foregroundGroup, SIGTERM)
         }
         if helperPID > 1 { _ = kill(-helperPID, SIGTERM) }
+        log.notice("Terminating process group \(helperPID, privacy: .public) (foreground group \(foregroundGroup, privacy: .public)) with SIGTERM.")
+        let reportForcedEnd: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor in self?.reportForcedTermination() }
+        }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + .milliseconds(750)) {
             guard escalatingChild.running else { return }
+            // An interactive shell, such as the one after a CLI hands over,
+            // ignores SIGTERM.
+            log.notice("Process group \(helperPID, privacy: .public) outlived SIGTERM; sending SIGKILL.")
             if foregroundGroup > 1, foregroundGroup != helperPID,
                escalatingChild.childfd >= 0, tcgetpgrp(escalatingChild.childfd) == foregroundGroup {
                 _ = kill(-foregroundGroup, SIGKILL)
             }
             if helperPID > 1, escalatingChild.shellPid == helperPID { _ = kill(-helperPID, SIGKILL) }
-            escalatingChild.terminate()
+            // SwiftTerm reports the killed process through its exit watcher.
+            // Its terminate() cancels that watcher, and an exit not yet
+            // delivered is then never reported, which left the panel waiting
+            // forever. So terminate() only runs if the process still seems to
+            // run afterwards, and the end is then reported here.
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + .milliseconds(750)) {
+                guard escalatingChild.running else { return }
+                log.error("Process group \(helperPID, privacy: .public) still reported running after SIGKILL; closing the terminal.")
+                escalatingChild.terminate()
+                reportForcedEnd()
+            }
         }
+    }
+
+    /// Reports an end SwiftTerm will not report, once.
+    private func reportForcedTermination() {
+        guard !terminationReported else { return }
+        terminationReported = true
+        disableUsageScreenCapture()
+        onTermination?(nil)
     }
 
     /// Sends only the fixed provider usage command through the active PTY.
@@ -317,6 +345,8 @@ final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewD
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
     func processTerminated(_ source: LocalProcess, exitCode waitStatus: Int32?) {
+        // Already reported by `reportForcedTermination`.
+        guard !terminationReported else { return }
         terminationReported = true
         disableUsageScreenCapture()
         guard let onTermination else { return }
@@ -452,11 +482,11 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
     /// on its terminal or below its first process. Logged only.
     func diagnosticSummary() -> String {
         guard let terminalView else { return "Controller: no terminal view." }
-        let processes = TerminalProcessDiagnostics.related(
+        let processes = TerminalProcessDiagnostics.describeRelated(
             toTerminal: terminalView.startedTerminalDevice,
             rootPID: terminalView.startedProcessID
         )
-        return "Controller: launch \(terminalLaunchID?.uuidString ?? "none"), first process \(terminalView.startedProcessID.map(String.init) ?? "none"), running \(terminalView.processIsRunning). Processes: \(TerminalProcessDiagnostics.describe(processes))"
+        return "Controller: launch \(terminalLaunchID?.uuidString ?? "none"), first process \(terminalView.startedProcessID.map(String.init) ?? "none"), running \(terminalView.processIsRunning). Processes: \(processes)"
     }
 
     /// Ends the process of `launchID`, if it is the current launch, the way a

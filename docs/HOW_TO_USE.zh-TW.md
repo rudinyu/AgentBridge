@@ -256,7 +256,7 @@ CLI 亦支援 `agentbridge cancel SESSION_ID` 取消執行、`agentbridge budget
 - **新提交看不到舊記憶：** 記憶依固定提交隔離。確認兩邊 session 使用相同 Repository 路徑和 commit。
 - **API 呼叫被拒絕或保留金額未退回：** 檢查 `agentbridge budget` 或 App 顯示的 UTC 月帳本。費用未知、失敗或取消時，保留額不會被當作零費用退回。
 - **工作區與來源 Repository 不一致：** 這是刻意的快照邊界；建立工作階段後的來源變更不會自動複製進來。
-- **「先前的終端機程序仍在執行，因此重新顯示」：** App 內終端機的程序在面板關閉後仍未結束。在顯示出來的終端機裡結束它（先退出 CLI，再輸入 `exit`），然後關閉面板。為了找出原因，AgentBridge 會記錄每個終端機的啟動、關閉、取消、交接給 shell 與結束，以及該終端機上的程序編號、程序群組與名稱。關掉訊息前，先把最近一小時的記錄存下來附在回報裡：
+- **「先前的終端機程序仍在執行，因此重新顯示」：** App 內終端機的程序在面板關閉後仍未結束。在顯示出來的終端機裡結束它（先退出 CLI，再輸入 `exit`），然後關閉面板。為了找出原因，AgentBridge 會記錄每個終端機的啟動、關閉、取消、交接給 shell 與結束，以及該終端機上的程序編號、程序群組與執行檔名稱（前 16 個字元）。關掉訊息前，先把最近一小時的記錄存下來附在回報裡：
 
   ```bash
   /usr/bin/log show --last 1h --style compact --predicate 'subsystem BEGINSWITH "org.agentbridge"' > ~/Desktop/agentbridge-terminal.log

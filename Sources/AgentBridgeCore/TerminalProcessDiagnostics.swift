@@ -33,16 +33,24 @@ public enum TerminalProcessDiagnostics {
         }
     }
 
-    /// Every process the kernel lists, or an empty list when it cannot be read.
-    public static func allProcesses() -> [Entry] {
+    /// Every process the kernel lists, or nil when the list cannot be read, so a
+    /// failed read is never mistaken for "no process left".
+    public static func allProcesses() -> [Entry]? {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
+        var processes: [kinfo_proc] = []
         var size = 0
-        guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0, size > 0 else { return [] }
-        // Processes can start between the two calls.
-        size += size / 8
-        let capacity = size / MemoryLayout<kinfo_proc>.stride
-        var processes = [kinfo_proc](repeating: kinfo_proc(), count: capacity)
-        guard sysctl(&mib, u_int(mib.count), &processes, &size, nil, 0) == 0 else { return [] }
+        var listed = false
+        // Processes can start between sizing the list and reading it; a list that
+        // grew past the room left gives ENOMEM, so size it again with more room.
+        for _ in 0..<4 {
+            size = 0
+            guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0, size > 0 else { return nil }
+            size += size / 4
+            processes = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride)
+            if sysctl(&mib, u_int(mib.count), &processes, &size, nil, 0) == 0 { listed = true; break }
+            guard errno == ENOMEM else { return nil }
+        }
+        guard listed else { return nil }
         let count = size / MemoryLayout<kinfo_proc>.stride
         return processes.prefix(count).map { info in
             var command = info.kp_proc.p_comm
@@ -66,7 +74,7 @@ public enum TerminalProcessDiagnostics {
     public static func related(
         toTerminal device: dev_t?,
         rootPID: pid_t?,
-        in processes: [Entry] = allProcesses()
+        in processes: [Entry]
     ) -> [Entry] {
         var selected = Set<pid_t>()
         if let device, device != 0, device != ~dev_t(0) {
@@ -75,10 +83,11 @@ public enum TerminalProcessDiagnostics {
         if let rootPID, rootPID > 0 {
             // Walked apart from `selected`, so a descendant already found on the
             // terminal still has its own children followed.
+            let children = Dictionary(grouping: processes, by: \.parentPID)
             var visited: Set<pid_t> = [rootPID]
             var frontier: [pid_t] = [rootPID]
             while let parent = frontier.popLast() {
-                for entry in processes where entry.parentPID == parent && !visited.contains(entry.pid) {
+                for entry in children[parent] ?? [] where !visited.contains(entry.pid) {
                     visited.insert(entry.pid)
                     frontier.append(entry.pid)
                 }
@@ -92,6 +101,13 @@ public enum TerminalProcessDiagnostics {
         entries.isEmpty ? "none" : entries.map(\.summary).joined(separator: "; ")
     }
 
+    /// `describe` of the processes `related` finds right now, or "unavailable"
+    /// when the kernel's list cannot be read.
+    public static func describeRelated(toTerminal device: dev_t?, rootPID: pid_t?, excluding excluded: Set<pid_t> = []) -> String {
+        guard let processes = allProcesses() else { return "unavailable" }
+        return describe(related(toTerminal: device, rootPID: rootPID, in: processes).filter { !excluded.contains($0.pid) })
+    }
+
     /// The device of the terminal that `descriptor` refers to, if it is one.
     public static func terminalDevice(of descriptor: Int32) -> dev_t? {
         guard descriptor >= 0 else { return nil }
@@ -103,7 +119,10 @@ public enum TerminalProcessDiagnostics {
     /// The device of the terminal whose controlling side is `masterDescriptor`;
     /// processes list that terminal, not the master, as theirs.
     public static func terminalDevice(ofPseudoTerminalMaster masterDescriptor: Int32) -> dev_t? {
-        guard masterDescriptor >= 0, let name = ptsname(masterDescriptor) else { return nil }
+        guard masterDescriptor >= 0 else { return nil }
+        // ptsname_r, not ptsname, whose static buffer other threads can overwrite.
+        var name = [CChar](repeating: 0, count: 128)
+        guard ptsname_r(masterDescriptor, &name, name.count) == 0 else { return nil }
         var information = stat()
         guard stat(name, &information) == 0 else { return nil }
         return information.st_rdev

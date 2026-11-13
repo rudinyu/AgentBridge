@@ -26,6 +26,10 @@ final class TerminalProcessDiagnosticsTests: XCTestCase {
         XCTAssertEqual(related.map(\.pid), [10, 11, 12, 13, 14])
         XCTAssertEqual(TerminalProcessDiagnostics.related(toTerminal: nil, rootPID: nil, in: processes), [])
         XCTAssertEqual(TerminalProcessDiagnostics.related(toTerminal: 0, rootPID: nil, in: processes), [])
+        XCTAssertEqual(TerminalProcessDiagnostics.related(toTerminal: ~dev_t(0), rootPID: 0, in: processes), [])
+        // A parent loop in a list read while processes change ends the walk.
+        let loop = [entry(30, parent: 31, group: 30, device: 0, name: "a"), entry(31, parent: 30, group: 30, device: 0, name: "b")]
+        XCTAssertEqual(TerminalProcessDiagnostics.related(toTerminal: nil, rootPID: 30, in: loop).map(\.pid), [30, 31])
     }
 
     func testTheSummaryHasIDsAndNamesOnly() {
@@ -40,7 +44,8 @@ final class TerminalProcessDiagnosticsTests: XCTestCase {
         child.arguments = ["30"]
         try child.run()
         defer { child.terminate(); child.waitUntilExit() }
-        let related = TerminalProcessDiagnostics.related(toTerminal: nil, rootPID: getpid())
+        let processes = try XCTUnwrap(TerminalProcessDiagnostics.allProcesses())
+        let related = TerminalProcessDiagnostics.related(toTerminal: nil, rootPID: getpid(), in: processes)
         let found = try XCTUnwrap(related.first { $0.pid == child.processIdentifier })
         XCTAssertEqual(found.parentPID, getpid())
         XCTAssertEqual(found.name, "sleep")

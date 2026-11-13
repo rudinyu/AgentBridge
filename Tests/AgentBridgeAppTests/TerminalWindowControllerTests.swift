@@ -192,6 +192,9 @@ final class TerminalWindowControllerTests: XCTestCase {
         XCTAssertTrue(summary.contains("launch \(running.launch.id.uuidString)"), summary)
         XCTAssertTrue(summary.contains("running true"), summary)
         XCTAssertFalse(summary.contains("Processes: none"), summary)
+        XCTAssertFalse(summary.contains("Processes: unavailable"), summary)
+        let firstProcess = try XCTUnwrap(summary.range(of: #"first process (\d+)"#, options: .regularExpression).map { String(summary[$0]).split(separator: " ").last.map(String.init) } ?? nil)
+        XCTAssertTrue(summary.contains("Processes: \(firstProcess)("), summary)
     }
 
     func testAStaleRunningFlagWithNothingRunningIsCleared() throws {

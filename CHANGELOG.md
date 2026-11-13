@@ -6,6 +6,10 @@
 
 - Terminal diagnostics in the macOS unified log (subsystems `org.agentbridge.app` and `org.agentbridge.cli`), to find out why a terminal process can outlive its panel after Cancel and close. The app logs each in-app terminal's start, close, cancellation, shell handover and end, and when it shows a hidden running terminal again, with the process IDs, process groups and names on that terminal or below its first process. The interactive helper logs its provider CLI's start, cancellation and end, and any other process still on the terminal then. No arguments, paths, environment, titles or terminal text are logged. The usage guides give the `log show` command.
 
+### Fixed
+
+- Cancel and close no longer leaves the panel waiting when the provider CLI ends normally just as you close. The shell it hands over to ignores SIGTERM, so AgentBridge sends SIGKILL, and it then called SwiftTerm's `terminate()` at once, which stops SwiftTerm watching for the exit; an exit not yet reported was lost and the panel never learned the terminal had ended. AgentBridge now waits for that exit report, and reports the end itself only when it has to close a terminal that still seems to run. Found with the new diagnostics, under load in about one in eight runs of the test for this case.
+
 ## 0.15.0 — 2026-11-13
 
 ### Changed
