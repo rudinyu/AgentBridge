@@ -185,7 +185,7 @@ printf '%s' '依核准計畫完成修改。' | \
 
 若要將記憶延續到另一個 commit，請選擇相同 canonical Repository、不同提交版本的來源和目標工作階段。目標工作階段綁定的帳戶必須允許共用記憶。選取來源回合與／或備註，檢查來源／目標 commit，再建立交接。目標工作階段下一次允許的提示只會收到所選內容，並以有界（16 KiB）、標明不可信的歷史 JSON envelope 傳入且保留 provenance。交接存於所選工作區資料根目錄下的 `shared-memory/project-handoffs/`。原生 provider TUI transcript 永不匯入。
 
-**Skills & MCP** 中的舊政策面板可匯入描述資料 JSON，仍只保存惰性中繼資料，授權不會執行任何內容。若要真正載入 Skill 指令或連接已安裝的 MCP，請使用下方說明的獨立擴充執行控制。
+舊版擴充描述資料只是惰性中繼資料，其授權不會執行任何內容。App 已不再顯示舊的描述資料面板；請改用下方的 `extensions import`、`extensions grant` 與 `extensions revoke` CLI 命令管理。先前匯入的描述資料會保留。若要真正載入 Skill 指令或連接已安裝的 MCP，請依第 11 節使用 **Skills & MCP**。
 
 CLI 也提供對應操作：
 
@@ -209,21 +209,37 @@ CLI 也提供對應操作：
 
 ### 10. 自主工作流程
 
-開啟 **Autonomous Workflow**，選擇來源 Repository 並填入具體目標，再選擇規劃、調查、實作與審查角色的實際供應商／帳戶。呼叫使用訂閱登入；允許相依任務或完整實作 diff 傳給其他角色前，先確認帳戶的共享同意。
+開啟 **Autonomous Workflow**。畫面頂端顯示三個步驟：**1 目標**、**2 檢視計畫**、**3 執行**。目前步驟依所選執行紀錄的狀態而定；按 **New workflow** 回到步驟 1，標題列的 **Runs** 選單可開啟先前的執行紀錄或更新清單。
 
-設定並行、審查修正輪數、時間與呼叫上限，並行數和審查輪數最多三個／三輪。選擇不驗證、專案 CI，或已檢視的自訂執行檔與獨立參數。**Generate plan** 會發出真正的規劃請求，但不會核准工作。檢視每個任務、相依、提示、來源 commit、帳戶、記憶選擇、擴充、驗證與限制；確認已檢視，核准畫面摘要後再啟動。綁定變更後必須重新核准。
+**1 目標。** 選擇來源 Repository 並填入具體目標。目標下方以三行摘要目前的角色、驗證與上限。按 **Check subscription sign-in** 確認每個角色的帳戶；呼叫只使用訂閱登入。在 **Generate plan** 上方開啟 **Share the exact implementation diff with the reviewer**：它預設關閉但為必要項目，且實作者與審查者的帳戶都必須已允許共享記憶。其餘設定都在預設收合的 **Advanced settings** 中：
 
-核准前請檢視完整凍結的專案記憶；允許共享的角色會跨供應商與帳戶取得同一快照。選擇保存最終摘要及允許共享的目標帳戶，才會把一次流程結果追加到共用記憶。相依任務輸出分享是另一項獨立選擇。
+- 規劃、調查、實作與審查角色的供應商與帳戶，以及各執行角色可使用的已啟用 Skills／MCP。
+- 並行數、審查修正輪數、時間與供應商呼叫上限；並行數和審查輪數最多三個／三輪。
+- 驗證：專案 CI、不驗證，或已檢視的自訂執行檔。只有選擇自訂時才會出現路徑與參數欄位。
+- 其他共享選擇。將任務輸出傳給相依角色預設關閉。保存最終摘要到專案記憶開啟時，才會要求選擇目標帳戶。
+- 桌面控制聲明，只在實作者選了 Control 模式的 Mac Control 預設設定時出現。
 
-查看任務進度與審查／驗證結果；取消會停止派送並要求終止程序，中斷工作不自動重跑。完成後在 **Project Conversations** 開啟實作者的隔離變更，沿用 diff、驗證、接受與套用控制，不自動 commit、push 或 merge。CLI 的 `autonomous` 提供相同規劃、核准、執行、狀態與取消操作；完整參數和 JSON 狀態輸出請查看 `agentbridge help`。
+**Generate plan** 無法使用時，原因會列在按鈕下方；若需要修改的設定在 Advanced settings 中，會附上開啟它的連結。**Generate plan** 會發出一次真正的唯讀規劃請求，不會核准或開始任何工作。
+
+**2 檢視計畫。** 頁首先摘要變更範圍、任務數、上限、驗證與共享選擇，接著是任務圖（每個任務的提示各自收在展開區塊中）。帳戶、Skills／MCP 權限、驗證細節與來源指紋收在展開區塊；計畫包含桌面控制範圍時會直接顯示。若計畫包含凍結的專案記憶，請展開 **Inspect exact frozen project memory** 並勾選其確認；允許共享的角色會跨供應商與帳戶取得同一快照。勾選檢視確認後按 **Approve and start**：它會核准畫面上的摘要，且只有核准成功時才會開始流程。若執行紀錄已在其他地方核准（例如 CLI），或核准後開始失敗，則改顯示 **Start approved workflow**。**Cancel plan** 會取消計畫。綁定變更後必須產生新計畫並重新核准。
+
+**3 執行。** 查看任務進度與審查／驗證結果。**Cancel all agents** 會停止派送並要求終止程序，中斷工作不自動重跑。完成後按 **Open final diff in Change Review**，在 **Project Conversations** 開啟實作者的隔離變更，沿用 diff、驗證、接受與套用控制。已核准的計畫保留在 **Approved plan details**，執行事件也有各自的展開區塊。不會自動 commit、push 或 merge。CLI 的 `autonomous` 提供相同規劃、核准、執行、狀態與取消操作；完整參數和 JSON 狀態輸出請查看 `agentbridge help`。
 
 ### 11. Skills、MCP 實際執行與 Mac Control
 
-選好專案工作階段後開啟 **Skills & MCP**，匯入真正 SKILL.md 快照或已安裝本機 stdio MCP 的設定。匯入不執行；先檢視 MCP 執行檔、獨立參數與精確工具清單，再明確啟動連線測試。測試會執行該程式，進行初始化與工具查詢。預覽啟用、檢視摘要、指令／工具與信任提醒，再明確同意並為指定專案／供應商／帳戶啟用；舊中繼資料授權不足以啟用。設定變更和撤銷會使綁定失效，若要求請建立新工作階段。首版不支援 Skill 腳本／hooks 或遠端 HTTP／OAuth MCP。
+開啟 **Skills & MCP**。頂端一行顯示畫面要啟用的範圍：**套用於**所選專案工作階段的 Repository、供應商與帳戶設定檔。按 **Change…** 可改選其他 Repository、供應商、設定檔或範圍工作階段，或建立唯讀範圍工作階段（不會呼叫模型）。
 
-**Mac Control** 選擇已安裝 helper 的預設整合並指定目標 bundle ID，先自行開啟目標 App，再使用 **Observe**；匯入預設整合後，先按 **Test Connection** 檢查工具清單，再預覽與啟用。權限測試只讀取就緒狀態，不授予 macOS 權限；若需要，請手動授予輔助使用及螢幕錄製。檢視畫面存取同意後才能啟用；**Control** 另須同意輸入。受保護的系統、憑證、終端及 AgentBridge 目標會遭拒絕。截圖包含整個主螢幕且可能傳給所選供應商；目標限制的是輸入，不是圖片範圍，請先關閉私人視窗。**Stop Control** 撤銷範圍並要求取消，無法撤回已送出操作。一般桌面同意不包含憑證、系統驗證、安全設定或重大交易。
+用 **Add** 匯入：
 
-產生流程計畫前，為角色選擇已啟用擴充的 ID；核准會綁定其範圍與上限。Repository 唯讀不會使另外核准的外部工具變成唯讀。詳見[設計與驗證邊界](AUTONOMY_AND_EXTENSIONS.zh-TW.md)。
+- **Skill from SKILL.md…**：選擇檔案後確認 Skill ID、名稱與摘要。這些欄位會依檔案的 front matter 或所在資料夾名稱預先填入，可以修改。只保存指令文字，永不執行腳本或 hooks。
+- **MCP server from JSON…**：已安裝本機 stdio MCP 的執行設定檔。
+- **Mac Control preset…**：見下方說明。
+
+匯入不執行任何內容。每個匯入項目是一列，顯示狀態（例如 **尚未測試**、**已測試 · 未啟用** 或 **已啟用 · 3 個工具**）和一個主要按鈕。MCP 伺服器會先顯示 **Test connection**：測試會啟動該本機程式進行初始化與工具查詢，因此會先要求確認。接著按 **Review and enable** 開啟檢視表單，內含執行檔、argv、允許與實際查得的工具、摘要、範圍與信任提醒（Skill 則顯示完整指令）。勾選同意後按 **Enable**；勾選同意即為確認。已啟用的項目提供 **Disable**，執行前會先確認。每列的選單有 **Show details** 和 **Test connection again**。舊中繼資料授權不足以啟用。設定變更和撤銷會使綁定失效，若要求請建立新工作階段。首版不支援遠端 HTTP／OAuth MCP。
+
+**Mac Control**：選擇 **Add > Mac Control preset…**，選擇目標 App 或輸入 bundle ID，先使用 **Observe**，並自行開啟目標 App。按 **Check installed helper**，可再按 **Test permission readiness**（只讀取就緒狀態，不授予 macOS 權限；若需要，請手動授予輔助使用及螢幕錄製），然後匯入。預設設定會成為一列：先測試連線，再檢視並啟用。檢視表單對執行工具與傳送整個螢幕截圖分別要求同意，**Control** 另須同意輸入。受保護的系統、憑證、終端及 AgentBridge 目標會遭拒絕。截圖包含整個主螢幕且可能傳給所選供應商；目標限制的是輸入，不是圖片範圍，請先關閉私人視窗。已啟用的 Control 預設設定會顯示 **Stop Control**，撤銷範圍並要求取消，但無法撤回已送出的操作；列選單也可停止其他範圍的 Control。一般桌面同意不包含憑證、系統驗證、安全設定或重大交易。
+
+產生流程計畫前，在 **Advanced settings** 為角色選擇已啟用擴充的 ID；核准會綁定其範圍與上限。Repository 唯讀不會使另外核准的外部工具變成唯讀。詳見[設計與驗證邊界](AUTONOMY_AND_EXTENSIONS.zh-TW.md)。
 
 ### 12. CLI 常用操作
 

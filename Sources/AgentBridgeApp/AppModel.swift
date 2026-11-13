@@ -402,7 +402,6 @@ final class AppModel {
             sessions = try reads.sessions.get()
             chats.applyDiscussions(reads.discussions)
             taskRecords = try reads.taskRecords.get()
-            extensions.extensionDescriptors = try reads.extensionDescriptors.get()
             do {
                 autonomousRuns = try reads.autonomousRuns.get().sorted { $0.plan.createdAt > $1.plan.createdAt }
                 if selectedAutonomousRunID == nil || !autonomousRuns.contains(where: { $0.id == selectedAutonomousRunID }) {
@@ -558,7 +557,6 @@ final class AppModel {
         changes.loadChangePlanDraftFromSelectedSession()
         selectedMemoryTurnIDs = []
         memoryHandoffTargetSessionID = nil
-        extensions.loadSelectedExtensionGrant()
         refreshSelectedEvents()
         if let service {
             do {
@@ -1446,17 +1444,33 @@ final class AppModel {
         }
     }
 
-    func approveAutonomousRun(id: UUID, reviewedDigest: String) {
-        guard let service else { return }
+    /// Returns whether the service recorded the approval.
+    @discardableResult
+    func approveAutonomousRun(id: UUID, reviewedDigest: String) -> Bool {
+        guard let service else { return false }
         do {
             let record = try service.approveAutonomousRun(id: id, reviewedDigest: reviewedDigest)
             selectedAutonomousRunID = record.id
             autonomousStatus = localized("The exact reviewed plan was approved.")
             autonomousError = nil
             refresh()
+            return true
         } catch {
             autonomousError = error.localizedDescription
+            return false
         }
+    }
+
+    /// The review step's one button: approve the shown digest, then start that
+    /// same digest only if the approval went through. Checks first that a
+    /// workflow can start now, so a plan is not approved only to be refused.
+    func approveAndStartAutonomousRun(id: UUID, reviewedDigest: String) {
+        guard canStartAutonomousWorkflow else {
+            autonomousError = localized("Close or cancel other provider sessions and stop the terminal before planning or running an autonomous workflow.")
+            return
+        }
+        guard approveAutonomousRun(id: id, reviewedDigest: reviewedDigest) else { return }
+        startAutonomousRun(id: id, reviewedDigest: reviewedDigest)
     }
 
     func startAutonomousRun(id: UUID, reviewedDigest: String) {
