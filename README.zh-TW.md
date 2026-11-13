@@ -4,7 +4,7 @@
 
 ![AgentBridge macOS app icon](Assets/AppIcon-1024.png)
 
-AgentBridge 0.15.0 是一個 macOS 14+ Swift 專案，提供共用核心、命令列工具 `agentbridge`，以及原生 SwiftUI App。它透過本機官方 Codex CLI 與 Claude Code CLI 工作；App 與 CLI 的唯讀聊天可依專案與固定提交版本共用記憶。「專案對話」提供不需來源模型／API 呼叫的快速接續，即使來源供應商額度已用盡也能切換。選填的已完成事項、下一步與提示詞可以留白；AgentBridge 會在本機產生保守備援文字，再儲存同 Repository/commit 的已遮蔽 Markdown 交接，並切換至允許共用記憶的目標帳戶。受管理的 AgentBridge App/CLI 聊天只會在工作階段綁定帳戶同意時載入最新交接作為不可信歷史脈絡；提示詞可檢查與修改，不會自動送出。切換工作階段不會複製來源工作區中的未提交檔案。原生 Codex/Claude TUI 逐字稿不會被讀取或自動注入；使用者可顯示交接檔，或複製最新交接後手動貼上與檢查。使用者也可另外選取記憶延續到不同提交版本。首次使用時，設定精靈會引導語言、供應商、工作區資料夾、CLI 路徑、訂閱登入、共用記憶與本機用量設定；日後可從 App 標題列的「設定精靈」重新開啟。CLI 會使用相同的已保存工作區根目錄。App 預設使用英文，也支援繁體中文。
+AgentBridge 0.15.1 是一個 macOS 14+ Swift 專案，提供共用核心、命令列工具 `agentbridge`，以及原生 SwiftUI App。它透過本機官方 Codex CLI 與 Claude Code CLI 工作；App 與 CLI 的唯讀聊天可依專案與固定提交版本共用記憶。「專案對話」提供不需來源模型／API 呼叫的快速接續，即使來源供應商額度已用盡也能切換。選填的已完成事項、下一步與提示詞可以留白；AgentBridge 會在本機產生保守備援文字，再儲存同 Repository/commit 的已遮蔽 Markdown 交接，並切換至允許共用記憶的目標帳戶。受管理的 AgentBridge App/CLI 聊天只會在工作階段綁定帳戶同意時載入最新交接作為不可信歷史脈絡；提示詞可檢查與修改，不會自動送出。切換工作階段不會複製來源工作區中的未提交檔案。原生 Codex/Claude TUI 逐字稿不會被讀取或自動注入；使用者可顯示交接檔，或複製最新交接後手動貼上與檢查。使用者也可另外選取記憶延續到不同提交版本。首次使用時，設定精靈會引導語言、供應商、工作區資料夾、CLI 路徑、訂閱登入、共用記憶與本機用量設定；日後可從 App 標題列的「設定精靈」重新開啟。CLI 會使用相同的已保存工作區根目錄。App 預設使用英文，也支援繁體中文。
 
 AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登入；Claude API 是可選的付費模式，必須逐次輸入 API key、單次預算並明確確認。每月 US$140 是 AgentBridge 本機帳本上限，不是 Anthropic 帳單的硬性限制。
 
@@ -29,11 +29,11 @@ AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登
 ```sh
 cd /path/to/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh --app-name AgentBridge-0.15.0-dev.app
-open build/AgentBridge-0.15.0-dev.app
+./scripts/package-app.sh --app-name AgentBridge-0.15.1-dev.app
+open build/AgentBridge-0.15.1-dev.app
 ```
 
-`.codex/ci.sh` 建置 CLI/App 並執行核心測試；上列封裝命令會將 icon 打入未簽署的本機 `build/AgentBridge-0.15.0-dev.app`。省略 `--app-name` 時，預設輸出仍為 `build/AgentBridge.app`。發行時需使用 Developer ID 簽署、送交 Apple 公證、staple ticket 並驗證；步驟見[使用指南](docs/HOW_TO_USE.zh-TW.md)。建置與檢查不需要登入 provider、不會呼叫模型，也不會產生 Claude API 費用。CLI 位於 `build/swiftpm/debug/agentbridge`。
+`.codex/ci.sh` 建置 CLI/App 並執行核心測試；上列封裝命令會將 icon 打入未簽署的本機 `build/AgentBridge-0.15.1-dev.app`。省略 `--app-name` 時，預設輸出仍為 `build/AgentBridge.app`。發行時需使用 Developer ID 簽署、送交 Apple 公證、staple ticket 並驗證；步驟見[使用指南](docs/HOW_TO_USE.zh-TW.md)。建置與檢查不需要登入 provider、不會呼叫模型，也不會產生 Claude API 費用。CLI 位於 `build/swiftpm/debug/agentbridge`。
 
 ### 預設安全邊界
 

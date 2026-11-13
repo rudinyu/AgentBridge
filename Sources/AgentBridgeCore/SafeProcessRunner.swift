@@ -113,6 +113,11 @@ public final class SafeProcessRunner: Sendable {
         }
     }
 
+    private static let interactiveLog = TerminalProcessDiagnostics.logger(
+        subsystem: TerminalProcessDiagnostics.helperSubsystem,
+        category: "interactive"
+    )
+
     private static func execute(
         _ spec: ProcessSpec,
         cancellation: CancellationFlag,
@@ -249,6 +254,7 @@ public final class SafeProcessRunner: Sendable {
                 throw AgentBridgeError.persistence("Could not record the interactive session startup state.")
             }
             _ = kill(processID, SIGCONT)
+            interactiveLog.notice("Interactive child \(processID, privacy: .public) started in its own process group; helper \(getpid(), privacy: .public), terminal foreground group was \(previousForegroundGroup, privacy: .public).")
         }
 
         defer {
@@ -293,6 +299,9 @@ public final class SafeProcessRunner: Sendable {
                 cancelled = true
                 cancellationSentAt = now
                 _ = kill(-processID, SIGTERM)
+                if interactive {
+                    interactiveLog.notice("Cancelling interactive child \(processID, privacy: .public): SIGTERM sent to its process group.")
+                }
                 if !inputClosed, inputPair[0] >= 0 {
                     _ = shutdown(inputPair[0], SHUT_WR)
                     _ = close(inputPair[0]); inputPair[0] = -1
@@ -308,6 +317,9 @@ public final class SafeProcessRunner: Sendable {
                 }
             }
             if let sentAt = cancellationSentAt, now - sentAt >= 750_000_000 {
+                if interactive, !groupCleanupEscalated {
+                    interactiveLog.notice("Interactive child \(processID, privacy: .public) group still alive 0.75 s after cancelling; sending SIGKILL.")
+                }
                 _ = kill(-processID, SIGKILL)
                 groupCleanupEscalated = true
             }
@@ -399,6 +411,16 @@ public final class SafeProcessRunner: Sendable {
         if terminationSignal == 0 { exitCode = (reapedStatus >> 8) & 0xff }
         else if terminationSignal != 0x7f { exitCode = 128 + terminationSignal }
         else { exitCode = 1 }
+        if interactive {
+            // A process that left the child's group (for example a CLI that starts
+            // itself again after updating) is not ended above; list what still
+            // uses this terminal so such a survivor shows in the log.
+            let others = TerminalProcessDiagnostics.related(
+                toTerminal: TerminalProcessDiagnostics.terminalDevice(of: STDIN_FILENO),
+                rootPID: nil
+            ).filter { $0.pid != getpid() }
+            interactiveLog.notice("Interactive child \(processID, privacy: .public) ended: exit code \(exitCode, privacy: .public), cancelled \(cancelled, privacy: .public). Other processes on this terminal: \(TerminalProcessDiagnostics.describe(others), privacy: .public)")
+        }
         truncated = truncated || lineFramer.didOverflow
         return ProcessResult(exitCode: exitCode, standardOutput: output, standardError: errorOutput, outputWasTruncated: truncated, wasCancelled: cancelled, timedOut: timedOut)
     }

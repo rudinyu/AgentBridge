@@ -185,6 +185,15 @@ final class TerminalWindowControllerTests: XCTestCase {
         XCTAssertTrue(running.model.terminal.closeRequiresManualStop)
     }
 
+    func testTheDiagnosticSummaryListsTheRunningProcessOnItsTerminal() throws {
+        let running = try startRunningTerminal()
+        defer { stop(running) }
+        let summary = running.model.terminal.windowController.diagnosticSummary()
+        XCTAssertTrue(summary.contains("launch \(running.launch.id.uuidString)"), summary)
+        XCTAssertTrue(summary.contains("running true"), summary)
+        XCTAssertFalse(summary.contains("Processes: none"), summary)
+    }
+
     func testAStaleRunningFlagWithNothingRunningIsCleared() throws {
         let model = try makeTestAppModel()
         model.terminal.terminalRunning = true

@@ -18,11 +18,11 @@ Run these commands from the AgentBridge repository:
 ```sh
 cd /path/to/AgentBridge
 ./.codex/ci.sh
-./scripts/package-app.sh --app-name AgentBridge-0.15.0-dev.app
-open build/AgentBridge-0.15.0-dev.app
+./scripts/package-app.sh --app-name AgentBridge-0.15.1-dev.app
+open build/AgentBridge-0.15.1-dev.app
 ```
 
-The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built this development version, open `build/AgentBridge-0.15.0-dev.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
+The CI script builds the CLI and app and runs core tests. The packaging script creates an unsigned local app. These steps do not sign in to a provider, call a model, or incur Claude API charges. If you have already built this development version, open `build/AgentBridge-0.15.1-dev.app` again. To distribute it to other Macs, complete the Developer ID signing and Apple notarization steps at the end of this guide.
 
 The first time the app opens, choose or create a folder for workspace data. AgentBridge requires this selection before it can create sessions; it does not silently choose a folder under Application Support. The app and CLI use the same saved location. The selected folder contains isolated session workspaces and shared memory:
 
@@ -254,6 +254,13 @@ If you moved or renamed a repository, its shared memory stays under the old path
 - **A new commit does not show older memory:** Memory is isolated by pinned commit. Confirm both sessions use the same repository path and commit.
 - **API run is rejected or a reservation is not returned:** Check `agentbridge budget` or the UTC monthly balance shown in the app. Unknown, failed, or cancelled charges are not treated as free and the reservation is retained.
 - **Workspace differs from the source repository:** This is the snapshot boundary. Source changes made after session creation are not copied into that workspace automatically.
+- **"An earlier terminal process is still running, so it is shown again":** A process in the in-app terminal outlived its panel. End it in the terminal that is shown (quit the CLI, then type `exit`), then close the panel. To help find the cause, AgentBridge logs each terminal's start, close, cancellation, shell handover and end, with the process IDs, process groups and names on that terminal. Before you dismiss the message, save the last hour of that log and attach it to your report:
+
+  ```bash
+  /usr/bin/log show --last 1h --style compact --predicate 'subsystem BEGINSWITH "org.agentbridge"' > ~/Desktop/agentbridge-terminal.log
+  ```
+
+  The log holds no command arguments, paths, environment, titles or terminal text.
 
 ### 14. Sign, notarize, and verify the app
 

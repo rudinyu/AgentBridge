@@ -44,6 +44,9 @@ final class CoreMessageCoverageTests: XCTestCase {
             for line in source.components(separatedBy: "\n") {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 guard !trimmed.hasPrefix("//") else { continue }
+                // Unified-log entries (os.Logger) are for developers reading
+                // `log show`, never shown in the App, so they stay English.
+                guard trimmed.range(of: #"[Ll]og\.(notice|info|debug|error|fault)\(""#, options: .regularExpression) == nil else { continue }
                 for literal in stringLiterals(in: line) {
                     guard let first = literal.unicodeScalars.first, CharacterSet.uppercaseLetters.contains(first),
                           literal.contains(" "), literal.count >= 14,

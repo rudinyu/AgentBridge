@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.1 — 2026-11-13
+
+### Added
+
+- Terminal diagnostics in the macOS unified log (subsystems `org.agentbridge.app` and `org.agentbridge.cli`), to find out why a terminal process can outlive its panel after Cancel and close. The app logs each in-app terminal's start, close, cancellation, shell handover and end, and when it shows a hidden running terminal again, with the process IDs, process groups and names on that terminal or below its first process. The interactive helper logs its provider CLI's start, cancellation and end, and any other process still on the terminal then. No arguments, paths, environment, titles or terminal text are logged. The usage guides give the `log show` command.
+
 ## 0.15.0 — 2026-11-13
 
 ### Changed

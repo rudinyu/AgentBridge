@@ -69,6 +69,9 @@ private enum EmbeddedTerminalAppearance {
 final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewDelegate, @preconcurrency LocalProcessDelegate {
     private var process: LocalProcess?
     var processIsRunning: Bool { process?.running == true }
+    /// Kept from the start for diagnostics, since SwiftTerm resets both on exit.
+    private(set) var startedProcessID: pid_t?
+    private(set) var startedTerminalDevice: dev_t?
     private let usageCaptureLock = NSLock()
     private var usageCaptureEnabled = false
     private var usageCaptureStartedAt: Date?
@@ -134,6 +137,8 @@ final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewD
         // A child that exits at once has already reported its termination here,
         // so it did start even though it is no longer running.
         guard process.running || terminationReported else { return false }
+        startedProcessID = process.shellPid
+        startedTerminalDevice = TerminalProcessDiagnostics.terminalDevice(ofPseudoTerminalMaster: process.childfd)
         updatePseudoTerminalSize()
         window?.makeFirstResponder(self)
         return true
@@ -443,6 +448,17 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
         terminalLaunchID == launchID && hasRunningProcess
     }
 
+    /// The controller's launch, whether its process runs, and every process
+    /// on its terminal or below its first process. Logged only.
+    func diagnosticSummary() -> String {
+        guard let terminalView else { return "Controller: no terminal view." }
+        let processes = TerminalProcessDiagnostics.related(
+            toTerminal: terminalView.startedTerminalDevice,
+            rootPID: terminalView.startedProcessID
+        )
+        return "Controller: launch \(terminalLaunchID?.uuidString ?? "none"), first process \(terminalView.startedProcessID.map(String.init) ?? "none"), running \(terminalView.processIsRunning). Processes: \(TerminalProcessDiagnostics.describe(processes))"
+    }
+
     /// Ends the process of `launchID`, if it is the current launch, the way a
     /// removed view does: its whole process group, escalating to SIGKILL.
     func terminateProcess(for launchID: UUID) {
@@ -562,7 +578,11 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
 
     func discardTerminal(launchID: UUID?) {
         guard let launchID, terminalLaunchID == launchID else { return }
-        guard !hasRunningProcess else { return }
+        guard !hasRunningProcess else {
+            TerminalProcessDiagnostics.logger(subsystem: TerminalProcessDiagnostics.appSubsystem)
+                .notice("Kept the terminal view of launch \(launchID.uuidString, privacy: .public): its process still runs. \(self.diagnosticSummary(), privacy: .public)")
+            return
+        }
 
         if let window = detachedWindow {
             window.delegate = nil

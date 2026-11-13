@@ -25,6 +25,9 @@ final class TerminalModel {
     /// for this rather than for `terminalRunning` alone.
     private(set) var terminalProcessLaunchID: UUID?
     @ObservationIgnored let windowController = TerminalWindowController()
+    /// Terminal life-cycle events for diagnosing a process that outlives its
+    /// panel; see `TerminalProcessDiagnostics`.
+    @ObservationIgnored private let diagnostics = TerminalProcessDiagnostics.logger(subsystem: TerminalProcessDiagnostics.appSubsystem)
     /// The launch whose CLI already handed over to a shell, so a repeated
     /// marker does not reset the panel again. The controller also stops
     /// watching titles after the first marker; this guard keeps the model
@@ -71,6 +74,7 @@ final class TerminalModel {
             return true
         }
         if terminalRunning, !windowController.hasRunningProcess {
+            diagnostics.notice("Cleared a stale running flag with no launch and no process.")
             terminalRunning = false
             terminalProcessLaunchID = nil
         }
@@ -296,6 +300,7 @@ final class TerminalModel {
 
     func closeEmbeddedTerminal() {
         let closingLaunchID = terminalLaunch?.id
+        diagnostics.notice("Close requested for launch \(closingLaunchID?.uuidString ?? "none", privacy: .public): running \(self.terminalRunning, privacy: .public), manual stop \(self.terminalNeedsManualStop, privacy: .public), session \(self.activeTerminalSessionID != nil, privacy: .public). \(self.windowController.diagnosticSummary(), privacy: .public)")
         // A process still running for another launch must stay reachable: show it
         // again instead of closing into a state where nothing can stop it.
         if let runningLaunch = windowController.runningLaunch, runningLaunch.id != closingLaunchID {
@@ -313,6 +318,7 @@ final class TerminalModel {
                     return
                 }
                 closeTerminalAfterCancellation = true
+                diagnostics.notice("Cancelling session \(sessionID.uuidString, privacy: .public) to close launch \(closingLaunchID.uuidString, privacy: .public).")
                 app.cancelSession(sessionID)
                 return
             }
@@ -329,6 +335,7 @@ final class TerminalModel {
             return
         }
         windowController.discardTerminal(launchID: closingLaunchID)
+        logClearedLaunch(closingLaunchID, reason: "closed")
         terminalIsDetached = false
         terminalLaunch = nil
         conversationReturnSessionID = nil
@@ -347,6 +354,18 @@ final class TerminalModel {
     func terminalProcessDidStart(launchID: UUID) {
         guard terminalLaunch?.id == launchID else { return }
         terminalProcessLaunchID = launchID
+        diagnostics.notice("Launch \(launchID.uuidString, privacy: .public) started (session \(self.activeTerminalSessionID?.uuidString ?? "none", privacy: .public)). \(self.windowController.diagnosticSummary(), privacy: .public)")
+    }
+
+    /// Logs that the panel forgets `launchID`, and loudly when a process still
+    /// runs in the controller, which is what later shows a hidden terminal again.
+    private func logClearedLaunch(_ launchID: UUID?, reason: String) {
+        let summary = windowController.diagnosticSummary()
+        if windowController.hasRunningProcess {
+            diagnostics.error("Panel cleared launch \(launchID?.uuidString ?? "none", privacy: .public) (\(reason, privacy: .public)) while a process still runs. \(summary, privacy: .public)")
+        } else {
+            diagnostics.notice("Panel cleared launch \(launchID?.uuidString ?? "none", privacy: .public) (\(reason, privacy: .public)). \(summary, privacy: .public)")
+        }
     }
 
     /// SwiftTerm reports nothing when it cannot create the pseudo-terminal or
@@ -361,6 +380,7 @@ final class TerminalModel {
     /// still runs. That process is never killed implicitly, so it is shown again.
     func terminalLaunchWasRefused(_ refusedLaunchID: UUID, runningLaunch: TerminalLaunchSpec) {
         guard terminalLaunch == nil || terminalLaunch?.id == refusedLaunchID else { return }
+        diagnostics.error("Launch \(refusedLaunchID.uuidString, privacy: .public) refused: launch \(runningLaunch.id.uuidString, privacy: .public) still runs.")
         showRunningLaunch(runningLaunch)
     }
 
@@ -369,6 +389,7 @@ final class TerminalModel {
     /// conservative local-shell rules: the user ends it before closing, and no
     /// /usage command or screen capture is allowed.
     private func showRunningLaunch(_ launch: TerminalLaunchSpec) {
+        diagnostics.error("Showing launch \(launch.id.uuidString, privacy: .public) again; the panel had lost it while its process ran. Panel launch was \(self.terminalLaunch?.id.uuidString ?? "none", privacy: .public). \(self.windowController.diagnosticSummary(), privacy: .public)")
         terminalLaunch = launch
         terminalTitle = launch.title
         terminalRunning = true
@@ -420,6 +441,7 @@ final class TerminalModel {
     }
 
     func terminalDidTerminate(launchID: UUID, exitCode: Int32?) {
+        diagnostics.notice("Launch \(launchID.uuidString, privacy: .public) ended with exit code \(exitCode.map(String.init) ?? "none", privacy: .public); panel launch \(self.terminalLaunch?.id.uuidString ?? "none", privacy: .public), close after cancel \(self.closeTerminalAfterCancellation, privacy: .public). \(self.windowController.diagnosticSummary(), privacy: .public)")
         guard terminalLaunch?.id == launchID else { return }
         terminalRunning = false
         if shellHandoffLaunchID == launchID { shellHandoffLaunchID = nil }
@@ -438,6 +460,7 @@ final class TerminalModel {
         app.refresh(forceUsageStatistics: true)
         if closeTerminalAfterCancellation {
             windowController.discardTerminal(launchID: launchID)
+            logClearedLaunch(launchID, reason: "ended after a cancelling close")
             terminalIsDetached = false
             terminalLaunch = nil
             closeTerminalAfterCancellation = false
@@ -502,6 +525,7 @@ final class TerminalModel {
     func interactiveCLIDidHandOverToShell(launchID: UUID) {
         guard terminalLaunch?.id == launchID, terminalRunning, shellHandoffLaunchID != launchID else { return }
         shellHandoffLaunchID = launchID
+        diagnostics.notice("Launch \(launchID.uuidString, privacy: .public) handed over to a shell; close after cancel \(self.closeTerminalAfterCancellation, privacy: .public). \(self.windowController.diagnosticSummary(), privacy: .public)")
         if closeTerminalAfterCancellation {
             windowController.terminateProcess(for: launchID)
             return
