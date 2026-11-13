@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A terminal task that failed could be reported as "The terminal task completed." SwiftTerm reads the ended process's status without checking that it got one, and macOS can report the end a moment before the status can be read; it then passed exit code 0 and left the ended process unreaped. AgentBridge now accepts a 0 only once the process has been reaped, and otherwise waits for the process itself and reports its real exit code. It showed most often for a command that could not be started (exit code 127), in about six of ten runs of the test for that case.
+
 ## 0.15.1 — 2026-11-13
 
 ### Added

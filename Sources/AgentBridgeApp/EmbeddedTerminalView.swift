@@ -349,6 +349,40 @@ final class AgentBridgeTerminalView: TerminalView, @preconcurrency TerminalViewD
         guard !terminationReported else { return }
         terminationReported = true
         disableUsageScreenCapture()
+        reportExit(ofProcess: source.shellPid, waitStatus: waitStatus)
+    }
+
+    /// SwiftTerm 1.20.0 reads the status with `waitpid(WNOHANG)`, ignores what
+    /// that returns and starts the status at 0. macOS can report a child's exit a
+    /// moment before the child can be waited for; that `waitpid` then returns 0,
+    /// so any end, even a failed exec's 127, arrived here as 0 (success) and the
+    /// child was left unreaped. So a 0 is trusted only once the child is gone
+    /// (SwiftTerm reaped it); otherwise the child is reaped here and its own
+    /// status used. Any other status can only come from a real wait.
+    /// Internal rather than private only so a test can hand it a child that
+    /// cannot be waited for yet.
+    func reportExit(ofProcess processID: pid_t, waitStatus: Int32?) {
+        guard waitStatus == 0, processID > 0 else { return reportTermination(waitStatus) }
+        var status: Int32 = 0
+        switch waitpid(processID, &status, WNOHANG) {
+        case processID:
+            reportTermination(status)
+        case 0:
+            // The child has exited and is about to become waitable, so this wait
+            // is short; it still runs off the main thread.
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                var status: Int32 = 0
+                var reaped: pid_t
+                repeat { reaped = waitpid(processID, &status, 0) } while reaped == -1 && errno == EINTR
+                let waitStatus: Int32? = reaped == processID ? status : nil
+                Task { @MainActor in self?.reportTermination(waitStatus) }
+            }
+        default:
+            reportTermination(waitStatus)
+        }
+    }
+
+    private func reportTermination(_ waitStatus: Int32?) {
         guard let onTermination else { return }
         let decodedExitCode = waitStatus.flatMap(Self.exitCode(fromWaitStatus:))
         Task { @MainActor in onTermination(decodedExitCode) }

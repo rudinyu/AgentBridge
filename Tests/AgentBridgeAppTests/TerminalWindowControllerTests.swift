@@ -402,7 +402,45 @@ final class TerminalWindowControllerTests: XCTestCase {
         // forkpty succeeds and the child's execve fails, so SwiftTerm reports a
         // started process that exits with 127, not a start failure. This is
         // SwiftTerm 1.20.0's forkpty path (its Subprocess path is compiled out);
-        // another SwiftTerm version may report this differently.
+        // another SwiftTerm version may report this differently. This child exits
+        // so fast that SwiftTerm often reports it before it can be waited for,
+        // as 0; the view then waits for it itself (see the next test).
         XCTAssertEqual(exitCodes(running: launch("/nonexistent/agentbridge-\(UUID().uuidString)")), [127])
+    }
+
+    /// Spawns `/bin/sh -c script` without waiting for it.
+    private func spawnShell(_ script: String) throws -> pid_t {
+        var pid: pid_t = 0
+        let arguments = ["/bin/sh", "-c", script].map { strdup($0) } + [nil]
+        defer { arguments.forEach { free($0) } }
+        let result = posix_spawn(&pid, "/bin/sh", nil, nil, arguments, nil)
+        guard result == 0 else { throw POSIXError(POSIXErrorCode(rawValue: result) ?? .EINVAL) }
+        return pid
+    }
+
+    func testAZeroStatusFromAChildNotYetWaitableForIsReplacedByItsOwnStatus() throws {
+        // SwiftTerm passes 0 when its WNOHANG wait finds nothing to reap yet. A
+        // child still running stands in for one that has exited but cannot be
+        // waited for yet, so this path runs on every run, not only under load.
+        let view = AgentBridgeTerminalView.make()
+        var reported: [Int32?] = []
+        view.onTermination = { reported.append($0) }
+        let pid = try spawnShell("sleep 0.3; exit 3")
+        view.reportExit(ofProcess: pid, waitStatus: 0)
+        XCTAssertTrue(runMainLoop { !reported.isEmpty })
+        drainMainQueue()
+        XCTAssertEqual(reported, [3])
+        var status: Int32 = 0
+        XCTAssertEqual(waitpid(pid, &status, WNOHANG), -1, "The view reaped the child.")
+
+        // A 0 for a child SwiftTerm did reap is its real status.
+        let reapedView = AgentBridgeTerminalView.make()
+        var reapedReports: [Int32?] = []
+        reapedView.onTermination = { reapedReports.append($0) }
+        let reapedPID = try spawnShell("exit 0")
+        XCTAssertEqual(waitpid(reapedPID, &status, 0), reapedPID)
+        reapedView.reportExit(ofProcess: reapedPID, waitStatus: 0)
+        drainMainQueue()
+        XCTAssertEqual(reapedReports, [0])
     }
 }
