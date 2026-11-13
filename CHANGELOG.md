@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.0 — 2026-11-13
 
 ### Changed
 
@@ -26,7 +26,7 @@
 
 ### Documentation
 
-- The architecture documents describe 0.14.1, including the Markdown handoff store and same-commit quick continuation. The README and usage guides no longer contain a machine-specific checkout path.
+- The architecture documents describe 0.15.0, including the Markdown handoff store and same-commit quick continuation. The README and usage guides no longer contain a machine-specific checkout path.
 
 ## 0.14.1 — 2026-11-11
 
