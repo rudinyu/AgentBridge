@@ -443,6 +443,13 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
         terminalLaunchID == launchID && hasRunningProcess
     }
 
+    /// Ends the process of `launchID`, if it is the current launch, the way a
+    /// removed view does: its whole process group, escalating to SIGKILL.
+    func terminateProcess(for launchID: UUID) {
+        guard terminalLaunchID == launchID else { return }
+        terminalView?.terminateWithEscalation()
+    }
+
     /// The newest live container for the current launch, preferring one in a window.
     private var embeddedContainer: NSView? {
         guard let terminalLaunchID else { return nil }
@@ -613,8 +620,12 @@ final class TerminalWindowController: NSObject, NSWindowDelegate {
             self.terminalModel?.terminalDidTerminate(launchID: launch.id, exitCode: exitCode)
         }
         if let marker = launch.shellHandoffMarker {
-            terminal.onTitleChange = { [weak self] title in
+            // Titles are only watched for this marker; the window title is not
+            // changed. The wrapper sends the marker once, so a later identical
+            // title (printed by the user in the shell) is ignored.
+            terminal.onTitleChange = { [weak self, weak terminal] title in
                 guard let self, self.terminalLaunchID == launch.id, title == marker else { return }
+                terminal?.onTitleChange = nil
                 self.terminalModel?.interactiveCLIDidHandOverToShell(launchID: launch.id)
             }
         }

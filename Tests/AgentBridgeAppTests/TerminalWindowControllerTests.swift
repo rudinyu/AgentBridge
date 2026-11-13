@@ -131,12 +131,43 @@ final class TerminalWindowControllerTests: XCTestCase {
     }
 
     func testOnlyTheLaunchsOwnMarkerHandsOverToTheShell() throws {
-        // A CLI that sets a title like the marker, but not this launch's.
+        // A CLI that sets a title like the marker, but not this launch's, and
+        // keeps running, so only the title could cause a handover.
         let (model, controller, spec, _) = try startInteractive([
-            "/bin/sh", "-c", "printf '\\033]0;agentbridge-shell-forged\\007'; exit 1"
+            "/bin/sh", "-c", "printf '\\033]0;agentbridge-shell-forged\\007'; printf '\\033]0;Codex\\007'; exec sleep 30"
         ])
-        XCTAssertTrue(runMainLoop { !controller.hasRunningProcess(for: spec.id) && !model.terminal.terminalRunning })
+        XCTAssertFalse(runMainLoop(timeout: 1) { model.terminal.terminalNeedsManualStop }, "A forged title handed over.")
+        XCTAssertTrue(controller.hasRunningProcess(for: spec.id))
+
+        // The right marker for another launch does not hand over either.
+        model.terminal.interactiveCLIDidHandOverToShell(launchID: UUID())
         XCTAssertFalse(model.terminal.terminalNeedsManualStop)
+    }
+
+    func testTheHandedOverShellKeepsFilenameExpansion() {
+        let spec = TerminalModel.interactiveLaunchSpec(
+            title: "Codex · Test", command: ["/usr/bin/true"], shellNotice: "", environment: [:], workingDirectory: "/"
+        )
+        let script = spec.arguments[1]
+        XCTAssertTrue(script.hasSuffix("exec /bin/sh"), "The shell must not run with -f (noglob).")
+    }
+
+    func testACLIThatEndsNormallyWhileClosingClosesThePanelInsteadOfOpeningAShell() throws {
+        let (model, controller, spec, _) = try startInteractive(["/bin/sh", "-c", "sleep 0.5"])
+        model.terminal.closeTerminalAfterCancellation = true
+        XCTAssertTrue(runMainLoop { !controller.hasRunningProcess(for: spec.id) && model.terminal.terminalLaunch == nil })
+        XCTAssertFalse(model.terminal.terminalNeedsManualStop)
+    }
+
+    func testEndingTheTerminalAlsoEndsTheCLIUnderTheWrapper() throws {
+        let pidFile = FileManager.default.temporaryDirectory.appendingPathComponent("agentbridge-cli-\(UUID().uuidString).pid")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let (_, controller, spec, view) = try startInteractive(["/bin/sh", "-c", "echo $$ > \"$0\"; exec sleep 30", pidFile.path])
+        XCTAssertTrue(runMainLoop { (try? String(contentsOf: pidFile, encoding: .utf8))?.isEmpty == false })
+        let pid = try XCTUnwrap(Int32((try String(contentsOf: pidFile, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
+        view.terminateWithEscalation()
+        XCTAssertTrue(runMainLoop { !controller.hasRunningProcess(for: spec.id) })
+        XCTAssertTrue(runMainLoop { kill(pid, 0) != 0 }, "The CLI outlived the terminal.")
     }
 
     // MARK: Running process and refusal

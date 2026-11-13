@@ -244,11 +244,12 @@ final class TerminalModel {
         guard let session = app.selectedSession else { app.errorMessage = "Select a session first."; return }
         guard terminalLaunch == nil, !terminalIsBusy else { app.errorMessage = "Close the current app terminal first."; return }
         let spec = TerminalLaunchSpec(
-            // The shell runs in the session's isolated copy, not in the source
-            // repository the name comes from, so the title says so.
-            title: "Local Terminal · isolated copy of \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)",
+            title: Self.localShellTitle(for: session),
             executablePath: "/bin/sh",
-            arguments: ["-f"],
+            // An interactive POSIX sh reads only $ENV as a startup file, and the
+            // sanitized environment has none, so no rc file runs. Filename
+            // expansion stays on (no -f), as users expect in a shell.
+            arguments: [],
             environment: sanitizedTerminalEnvironment(),
             workingDirectory: session.workspacePath
         )
@@ -428,6 +429,14 @@ final class TerminalModel {
     ///
     /// Everything reaches the shell as positional arguments, never inside the
     /// script, so paths need no quoting.
+    ///
+    /// The CLI runs as a child of the wrapper in the same process group (the
+    /// wrapper leads the terminal's session and, not being interactive, makes no
+    /// job-control groups), so ending the terminal signals both. A cancelled
+    /// helper exits non-zero, so a cancel never hands over to a shell.
+    ///
+    /// The marker is visible in the wrapper's arguments, so a same-user process
+    /// could forge it; that only switches the panel to the local-shell rules.
     static func interactiveLaunchSpec(
         title: String,
         command: [String],
@@ -436,11 +445,15 @@ final class TerminalModel {
         workingDirectory: String
     ) -> TerminalLaunchSpec {
         let marker = "agentbridge-shell-\(UUID().uuidString.lowercased())"
+        // `"$@" || exit $?` passes a failing or cancelled CLI's status on to
+        // `terminalDidTerminate`. `\033]0;…\007` is the OSC sequence that sets the
+        // terminal title (backslashes doubled for Swift). The shell is the same
+        // as the local shell's; see `openLocalShell`.
         let script = """
         marker=$1; notice=$2; shift 2
         "$@" || exit $?
         printf '\\033]0;%s\\007\\n%s\\n\\n' "$marker" "$notice"
-        exec /bin/sh -f
+        exec /bin/sh
         """
         return TerminalLaunchSpec(
             title: title,
@@ -455,11 +468,19 @@ final class TerminalModel {
     /// The provider CLI of `launchID` ended normally and its terminal is now a
     /// shell. Closing it is then like closing the local shell: the user ends the
     /// shell first, and nothing is cancelled, because no run is active.
+    ///
+    /// If the user asked to close the panel while cancelling and the CLI still
+    /// ended normally, the shell is ended too, so the panel closes as asked.
     func interactiveCLIDidHandOverToShell(launchID: UUID) {
-        guard terminalLaunch?.id == launchID, terminalRunning else { return }
+        guard terminalLaunch?.id == launchID, terminalRunning, shellHandoffLaunchID != launchID else { return }
+        shellHandoffLaunchID = launchID
+        if closeTerminalAfterCancellation {
+            windowController.terminateProcess(for: launchID)
+            return
+        }
         if let sessionID = activeTerminalSessionID,
            let session = app.sessions.first(where: { $0.id == sessionID }) {
-            terminalTitle = "Local Terminal · isolated copy of \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)"
+            terminalTitle = Self.localShellTitle(for: session)
         }
         activeTerminalSessionID = nil
         activeTerminalProfileID = nil
@@ -468,6 +489,16 @@ final class TerminalModel {
         app.status = "The CLI ended. A shell opened in the same isolated workspace."
         app.refresh(forceUsageStatistics: true)
     }
+
+    /// The shell runs in the session's isolated copy, not in the source
+    /// repository the name comes from, so the title says so.
+    static func localShellTitle(for session: SessionRecord) -> String {
+        "Local Terminal · isolated copy of \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)"
+    }
+
+    /// The launch whose CLI already handed over to a shell, so a repeated
+    /// marker does not reset the panel again.
+    @ObservationIgnored private var shellHandoffLaunchID: UUID?
 
     private func terminalLaunchSpec(title: String, arguments: [String], workingDirectory: String) -> TerminalLaunchSpec? {
         guard let cli = interactiveCLIURL() else { return nil }
