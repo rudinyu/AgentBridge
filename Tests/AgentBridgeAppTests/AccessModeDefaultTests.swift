@@ -45,4 +45,30 @@ final class AccessModeDefaultTests: XCTestCase {
         model.refresh()
         XCTAssertEqual(model.requestedAccessMode, .isolatedChanges)
     }
+
+    func testAProviderSwitchUsesTheNewSessionModeInsteadOfTheAnchorsMode() throws {
+        let model = try makeTestAppModel()
+        XCTAssertEqual(model.switchedSessionAccessMode(for: .claude), .interactiveManualApproval)
+        XCTAssertEqual(model.switchedSessionAccessMode(for: .local), .readOnly)
+
+        model.requestedAccessMode = .isolatedChanges
+        XCTAssertEqual(model.switchedSessionAccessMode(for: .codex), .isolatedChanges)
+
+        model.settings.usageMode = .api
+        XCTAssertEqual(model.switchedSessionAccessMode(for: .claude), .readOnly)
+    }
+
+    func testAProviderSwitchIgnoresAReadOnlyLimitFromALocalDefaultProvider() throws {
+        let model = try makeTestAppModel()
+        model.settings.defaultProvider = .local
+        model.applyAccessModeLimits()
+        XCTAssertEqual(model.requestedAccessMode, .readOnly)
+        XCTAssertEqual(model.switchedSessionAccessMode(for: .codex), .interactiveManualApproval)
+    }
+
+    func testAChatHandoffDefaultsToTheInteractiveTerminalWhereAllowed() {
+        XCTAssertEqual(DiscussionHandoffReviewView.defaultAccessMode(for: .codex, usageMode: .subscription), .interactiveManualApproval)
+        XCTAssertEqual(DiscussionHandoffReviewView.defaultAccessMode(for: .claude, usageMode: .api), .readOnly)
+        XCTAssertEqual(DiscussionHandoffReviewView.defaultAccessMode(for: .local, usageMode: .subscription), .readOnly)
+    }
 }

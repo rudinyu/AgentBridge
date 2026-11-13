@@ -369,9 +369,6 @@ extension BridgeService {
         record.handoffs.removeAll {
             $0.consumedSessionID != nil || $0.discussionRevision != currentDiscussionRevision
         }
-        guard accessMode == .readOnly || accessMode == .isolatedChanges else {
-            throw AgentBridgeError.invalidInput("Discussion handoffs currently support only read-only or isolated-change sessions.")
-        }
         guard targetProvider != .local || accessMode == .readOnly else {
             throw AgentBridgeError.sessionMismatch("Local models support only read-only project sessions; no handoff preview was created.")
         }
@@ -381,6 +378,11 @@ extension BridgeService {
         let targetSettings = try store.loadSettings()
         guard targetSettings.usageMode != .api || targetProvider == .claude || targetProvider == .local else {
             throw AgentBridgeError.sessionMismatch("The global mode is API; switch to subscription sign-in mode before creating a Codex project session. The discussion itself still uses subscription sign-in.")
+        }
+        // The native interactive terminal signs in with the subscription only,
+        // so an API-mode handoff could create a session that can never open it.
+        guard accessMode != .interactiveManualApproval || targetSettings.usageMode == .subscription else {
+            throw AgentBridgeError.sessionMismatch("The native interactive terminal uses subscription sign-in only. Choose read-only or isolated changes, or switch to subscription sign-in mode; no handoff preview was created.")
         }
         let destinationProfile = try accountProfile(id: targetProfileID)
         guard destinationProfile.provider == targetProvider else {

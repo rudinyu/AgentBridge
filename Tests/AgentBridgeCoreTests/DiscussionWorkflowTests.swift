@@ -451,6 +451,42 @@ final class DiscussionWorkflowTests: XCTestCase {
         XCTAssertEqual(try fixture.service.discussion(id: discussion.id).turns, stored.turns)
     }
 
+    func testAHandoffCanCreateAnInteractiveTerminalSessionInSubscriptionModeOnly() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let destination = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+            .appendingPathComponent("AgentBridge-Discussion-Interactive-\(UUID().uuidString.lowercased())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let profileID = AccountProfile.defaultID(for: .claude)
+        let discussion = try fixture.service.createDiscussion(provider: .claude, accountProfileID: profileID)
+
+        var settings = try fixture.service.settings()
+        settings.usageMode = .api
+        try fixture.service.saveSettings(settings)
+        do {
+            _ = try await fixture.service.prepareDiscussionProjectHandoff(
+                discussionID: discussion.id, destinationPath: destination.path, mode: .createNew,
+                targetProvider: .claude, targetProfileID: profileID, selectedTurnIDs: [],
+                accessMode: .interactiveManualApproval
+            )
+            XCTFail("API mode cannot open the native interactive terminal.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+
+        settings.usageMode = .subscription
+        try fixture.service.saveSettings(settings)
+        let handoff = try await fixture.service.prepareDiscussionProjectHandoff(
+            discussionID: discussion.id, destinationPath: destination.path, mode: .createNew,
+            targetProvider: .claude, targetProfileID: profileID, selectedTurnIDs: [],
+            accessMode: .interactiveManualApproval
+        )
+        let session = try await fixture.service.createOrAttachProjectFromDiscussion(
+            handoffID: handoff.id, reviewedDigest: handoff.reviewedDigest, explicitConfirmation: true
+        )
+        XCTAssertEqual(session.policy.accessMode, .interactiveManualApproval)
+    }
+
     func testFullSharedMemoryRefusalHappensBeforeCreatingProjectRepository() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

@@ -62,7 +62,7 @@ extension AgentBridgeCLI {
           agentbridge chat target CHAT-ID --provider codex|claude|local --profile PROFILE-ID
           agentbridge chat send CHAT-ID [--share|--no-share] < prompt.txt
           agentbridge chat cancel CHAT-ID
-          agentbridge chat project preview CHAT-ID --mode new|existing --path /absolute/path --provider codex|claude|local --profile PROFILE-ID [--access read-only|changes] [--turn TURN-ID ... | --no-context]
+          agentbridge chat project preview CHAT-ID --mode new|existing --path /absolute/path --provider codex|claude|local --profile PROFILE-ID [--access read-only|changes|interactive] [--turn TURN-ID ... | --no-context]
           agentbridge chat project apply HANDOFF-ID --digest REVIEW-DIGEST --confirm
 
         `chat new` needs a selected user data root but no Git repository. `chat send` reads the UTF-8 prompt from standard input only, up to \(DiscussionStore.maximumTextBytes) bytes; the prompt is never placed in process arguments. Turns are shareable for later shared context and handoffs by default, and `--share` is an explicit alias; `--no-share` keeps the turn in the chat transcript but excludes it from later context and handoffs. If the source or target account does not allow shared memory, that consent setting keeps the turn out of shared context. When a project preview omits `--turn` and `--no-context`, it selects every complete turn that satisfies the sharing consent; repeating `--turn` selects only the listed turns, and an ineligible turn makes the preview fail; `--no-context` explicitly transfers no turns and cannot be combined with `--turn`. `--access` defaults to read-only. A new project starts with an empty initial Git commit that contains no chat content; apply copies only the approved content listed in the preview into the destination session's AgentBridge memory, and the original chat is kept. No project is created or linked before the preview is done; apply needs the preview digest and `--confirm`. No remote Git call or push is made.
@@ -198,7 +198,7 @@ extension AgentBridgeCLI {
 
     static func chatProjectPreview(_ arguments: [String], service: BridgeService) async throws {
         guard arguments.count >= 2, let discussionID = UUID(uuidString: arguments[1]) else {
-            throw AgentBridgeError.invalidInput("Usage: agentbridge chat project preview CHAT-ID --mode new|existing --path /absolute/path --provider codex|claude|local --profile PROFILE-ID [--access read-only|changes] [--turn TURN-ID ... | --no-context]")
+            throw AgentBridgeError.invalidInput("Usage: agentbridge chat project preview CHAT-ID --mode new|existing --path /absolute/path --provider codex|claude|local --profile PROFILE-ID [--access read-only|changes|interactive] [--turn TURN-ID ... | --no-context]")
         }
         var mode: DiscussionProjectMode?
         var destinationPath: String?
@@ -241,7 +241,8 @@ extension AgentBridgeCLI {
                 switch try nextOptionValue(option, arguments: arguments, index: &index) {
                 case "read-only": accessMode = .readOnly
                 case "changes": accessMode = .isolatedChanges
-                default: throw AgentBridgeError.invalidInput("--access must be read-only or changes.")
+                case "interactive": accessMode = .interactiveManualApproval
+                default: throw AgentBridgeError.invalidInput("--access must be read-only, changes or interactive.")
                 }
             case "--turn":
                 guard !noContext else { throw AgentBridgeError.invalidInput("--no-context and --turn are mutually exclusive.") }

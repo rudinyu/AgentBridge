@@ -54,7 +54,7 @@ agentbridge chat project preview CHAT-ID --mode new --path /absolute/path/to/new
 agentbridge chat project apply HANDOFF-ID --digest REVIEW-DIGEST --confirm
 ```
 
-Use mode existing to link a repository. The default target access is read-only; changes requests an isolated-change session. Omitted turn selectors choose completed eligible shared turns; repeated --turn TURN-ID chooses an exact subset. Use --no-context to transfer no turns, including when creating a project from a private discussion. Review the printed payload before apply.
+Use mode existing to link a repository. On the CLI the default target access is read-only; changes requests an isolated-change session, and interactive a native interactive terminal session (subscription sign-in mode only). In the app, the handoff defaults to the native interactive terminal, or read-only for a local model or API mode. Omitted turn selectors choose completed eligible shared turns; repeated --turn TURN-ID chooses an exact subset. Use --no-context to transfer no turns, including when creating a project from a private discussion. Review the printed payload before apply.
 
 ## Validation and status
 

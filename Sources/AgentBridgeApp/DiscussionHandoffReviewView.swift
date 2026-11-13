@@ -13,7 +13,7 @@ struct DiscussionHandoffReviewView: View {
     @State private var destinationPath = ""
     @State private var targetProvider: AgentProvider
     @State private var targetProfileID: UUID?
-    @State private var accessMode = AccessMode.readOnly
+    @State private var accessMode: AccessMode
     @State private var selectedTurnIDs: Set<UUID>
     @State private var preparedHandoff: DiscussionProjectHandoff?
     @State private var preparedInputKey: String?
@@ -89,7 +89,22 @@ struct DiscussionHandoffReviewView: View {
         _mode = State(initialValue: initialMode)
         _targetProvider = State(initialValue: targetProvider)
         _targetProfileID = State(initialValue: targetProfileID)
+        _accessMode = State(initialValue: Self.defaultAccessMode(for: targetProvider, usageMode: model.settings.usageMode))
         _selectedTurnIDs = State(initialValue: eligibleIDs)
+    }
+
+    /// Like new project sessions, a handoff defaults to the native interactive
+    /// terminal where the provider and usage mode allow it.
+    static func defaultAccessMode(for provider: AgentProvider, usageMode: UsageMode) -> AccessMode {
+        provider == .local || usageMode == .api ? .readOnly : .interactiveManualApproval
+    }
+
+    static func accessLabel(_ accessMode: AccessMode) -> String {
+        switch accessMode {
+        case .readOnly: "Read-only"
+        case .isolatedChanges: "Isolated changes · review and explicit approval required"
+        case .interactiveManualApproval: "Native interactive terminal"
+        }
     }
 
     var body: some View {
@@ -186,9 +201,12 @@ struct DiscussionHandoffReviewView: View {
                     Text("Claude").tag(AgentProvider.claude)
                     Text("Local").tag(AgentProvider.local)
                 }
-                .onChange(of: targetProvider) { _, provider in
+                .onChange(of: targetProvider) { previous, provider in
                     targetProfileID = model.chats.preferredDiscussionProfileID(for: provider)
-                    if provider == .local { accessMode = .readOnly }
+                    // Local allows only read-only; leaving it restores the default.
+                    if provider == .local || previous == .local {
+                        accessMode = Self.defaultAccessMode(for: provider, usageMode: model.settings.usageMode)
+                    }
                     selectedTurnIDs = eligibleTurnIDs(for: provider, profileID: targetProfileID)
                     clearPreview()
                 }
@@ -210,9 +228,11 @@ struct DiscussionHandoffReviewView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     Picker("Session access", selection: $accessMode) {
-                        Text("Read-only").tag(AccessMode.readOnly)
+                        Text("Native interactive terminal (default)").tag(AccessMode.interactiveManualApproval)
+                            .disabled(model.settings.usageMode == .api)
                         Text("Isolated changes · review and explicit approval required").tag(AccessMode.isolatedChanges)
                             .disabled(model.settings.usageMode == .api)
+                        Text("Read-only").tag(AccessMode.readOnly)
                     }
                     .onChange(of: accessMode) { _, _ in clearPreview() }
                 }
@@ -233,6 +253,9 @@ struct DiscussionHandoffReviewView: View {
                 .font(.caption).foregroundStyle(.orange)
         } else if accessMode == .readOnly {
             Label("Read-only session · official CLI subscription sign-in", systemImage: "checkmark.shield")
+                .font(.caption).foregroundStyle(.secondary)
+        } else if accessMode == .interactiveManualApproval {
+            Label("The session opens the provider's own CLI in the embedded terminal, where it asks before each change. No autonomous workflow is started.", systemImage: "terminal")
                 .font(.caption).foregroundStyle(.secondary)
         } else {
             Label("Each change run will require an editable plan and your explicit approval. No autonomous workflow is started.", systemImage: "checkmark.shield")
@@ -360,7 +383,7 @@ struct DiscussionHandoffReviewView: View {
                     "Target: %@ · %@ · %@",
                     handoff.targetProvider.rawValue.capitalized,
                     model.profileName(for: handoff.targetProvider, profileID: handoff.targetProfileID),
-                    model.localized(handoff.accessMode == .readOnly ? "Read-only" : "Isolated changes · review and explicit approval required")
+                    model.localized(Self.accessLabel(handoff.accessMode))
                 ))
                 Text(model.localizedFormat(
                     "Expected repository commit: %@",

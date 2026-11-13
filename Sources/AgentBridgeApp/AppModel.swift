@@ -1516,6 +1516,17 @@ final class AppModel {
         }
     }
 
+    /// The access mode of the session a provider switch selects or creates: the
+    /// mode chosen for new sessions (the native interactive terminal unless the
+    /// user picked another), limited to read-only for a local model or API mode.
+    /// The anchor's mode is not copied, so switching from a read-only session
+    /// does not keep every later session read-only.
+    func switchedSessionAccessMode(for provider: AgentProvider) -> AccessMode {
+        if provider == .local || settings.usageMode == .api { return .readOnly }
+        // Read-only only because the default provider is local: not the user's choice.
+        return accessModeWasLimitedToReadOnly ? .interactiveManualApproval : requestedAccessMode
+    }
+
     func selectOrCreateSession(
         for provider: AgentProvider,
         anchoredTo anchor: SessionRecord,
@@ -1523,15 +1534,7 @@ final class AppModel {
     ) {
         guard isProjectConversationActive else { return }
         guard let profileID = selectedProfileIDs[provider], let service else { return }
-        let access: AccessMode
-        if provider == .local {
-            access = .readOnly
-        } else if settings.usageMode == .subscription,
-           (anchor.policy.accessMode == .interactiveManualApproval || anchor.policy.accessMode == .isolatedChanges) {
-            access = anchor.policy.accessMode
-        } else {
-            access = .readOnly
-        }
+        let access = switchedSessionAccessMode(for: provider)
         if let match = sessions.first(where: {
             $0.provider == provider
                 && ($0.accountProfileID ?? AccountProfile.defaultID(for: provider)) == profileID
@@ -1546,7 +1549,6 @@ final class AppModel {
             return
         }
         repositoryPath = anchor.sourceRepositoryPath
-        requestedAccessMode = access
         isSwitchingTarget = true
         status = "Creating an isolated workspace for this project and the selected assistant and account…"
         Task {

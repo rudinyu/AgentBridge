@@ -56,7 +56,7 @@ agentbridge chat project preview CHAT-ID --mode new --path /absolute/path/to/new
 agentbridge chat project apply HANDOFF-ID --digest REVIEW-DIGEST --confirm
 ```
 
-使用 existing 模式可連結既有儲存庫。預設為唯讀；changes 會建立隔離變更工作階段。不指定回合時選取已完成、符合共享條件的回合；重複使用 --turn TURN-ID 可選擇明確子集；--no-context 則明確不帶入任何回合，允許私人聊天轉入不共享內容的專案。套用前請完整檢視輸出內容。
+使用 existing 模式可連結既有儲存庫。CLI 預設為唯讀；changes 會建立隔離變更工作階段，interactive 會建立原生互動終端工作階段（僅限訂閱登入模式）。在 App 中，交接預設為原生互動終端；本機模型或 API 模式則為唯讀。不指定回合時選取已完成、符合共享條件的回合；重複使用 --turn TURN-ID 可選擇明確子集；--no-context 則明確不帶入任何回合，允許私人聊天轉入不共享內容的專案。套用前請完整檢視輸出內容。
 
 ## 驗證與狀態
 
