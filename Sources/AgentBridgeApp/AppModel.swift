@@ -70,6 +70,9 @@ final class AppModel {
     var isReviewingProviderHandoffPrompt = false
     var providerHandoffDocument: ProjectHandoffMarkdownDocument?
     var providerHandoffScopeIdentifier: String?
+    /// The last handoff-load failure shown for a session, so a failure that
+    /// repeats on every refresh is reported once instead of each time.
+    private var providerHandoffLoadFailure: (sessionID: UUID, message: String)?
     var apiBudget = ""
     var apiKey = ""
     var confirmAPIRun = false
@@ -456,6 +459,7 @@ final class AppModel {
             memoryNotes = ""
             providerHandoffDocument = nil
             providerHandoffScopeIdentifier = nil
+            providerHandoffLoadFailure = nil
             return
         }
         do {
@@ -477,11 +481,13 @@ final class AppModel {
         guard let service, let session = sessions.first(where: { $0.id == sessionID }) else {
             providerHandoffDocument = nil
             providerHandoffScopeIdentifier = nil
+            providerHandoffLoadFailure = nil
             return
         }
         do {
             let document = try service.projectHandoffMarkdown(sessionID: sessionID)
             guard selectedSessionID == sessionID else { return }
+            providerHandoffLoadFailure = nil
             providerHandoffDocument = document
             providerHandoffScopeIdentifier = document == nil
                 ? nil
@@ -492,7 +498,14 @@ final class AppModel {
         } catch {
             providerHandoffDocument = nil
             providerHandoffScopeIdentifier = nil
-            errorMessage = error.localizedDescription
+            let message = error.localizedDescription
+            if let previous = providerHandoffLoadFailure,
+               previous.sessionID == sessionID,
+               previous.message == message {
+                return
+            }
+            providerHandoffLoadFailure = (sessionID: sessionID, message: message)
+            errorMessage = message
         }
     }
 
