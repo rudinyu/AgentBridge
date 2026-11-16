@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A workspace data folder under `/private/tmp` or `/private/var` was saved through the `/tmp` or `/var` symbolic link, and the project-handoff store then refused it because it opens the folder without following links, so "Could not save session data…" came back after every refresh and could not be dismissed for good. The store now follows only the system `/private` link for such a folder and still refuses any other symbolic link in the path, including a `handoffs` folder that is itself a link. Reading a saved handoff also failed with "Project handoff file changed while it was being read.", because securing the file's permissions updates its change time even when they are already private; the read now checks the file against its state after that step. When loading a session's handoff fails, the App now reports that failure once for the session instead of after every refresh.
+
 ## 0.16.0 — 2026-11-15
 
 ### Changed

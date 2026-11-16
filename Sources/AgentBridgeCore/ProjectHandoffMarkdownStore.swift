@@ -40,7 +40,7 @@ public final class ProjectHandoffMarkdownStore: @unchecked Sendable {
         guard dataRoot.isFileURL, dataRoot.path.hasPrefix("/"), !dataRoot.path.contains("\0") else {
             throw AgentBridgeError.invalidInput("Project handoffs require an absolute workspace data root.")
         }
-        let dataRootDescriptor = Self.openDirectoryChain(dataRoot.path)
+        let dataRootDescriptor = Self.openResolvedDirectory(dataRoot.path)
         guard dataRootDescriptor >= 0 else {
             throw AgentBridgeError.persistence("The configured workspace data root is unavailable or contains a symbolic link.")
         }
@@ -258,7 +258,7 @@ public final class ProjectHandoffMarkdownStore: @unchecked Sendable {
         guard (sourceInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR), sourceInfo.st_uid == getuid() else {
             throw AgentBridgeError.persistence("The source project-handoffs path is not a directory owned by this user.")
         }
-        let sourceRootDescriptor = openDirectoryChain(sourceDataRoot.path)
+        let sourceRootDescriptor = openResolvedDirectory(sourceDataRoot.path)
         guard sourceRootDescriptor >= 0 else {
             throw AgentBridgeError.persistence("Could not safely open the source workspace data root.")
         }
@@ -373,7 +373,12 @@ public final class ProjectHandoffMarkdownStore: @unchecked Sendable {
               (opened.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
               opened.st_uid == getuid(), opened.st_nlink == 1,
               opened.st_size >= 0, opened.st_size <= off_t(Self.maximumHistoryBytes),
-              Self.sameFile(before, opened), fchmod(descriptor, mode_t(0o600)) == 0 else {
+              Self.sameFile(before, opened), fchmod(descriptor, mode_t(0o600)) == 0,
+              // fchmod updates the change time even when the mode is unchanged,
+              // so take the baseline for the read check after it.
+              fstat(descriptor, &opened) == 0,
+              opened.st_dev == before.st_dev, opened.st_ino == before.st_ino,
+              opened.st_size == before.st_size else {
             throw AgentBridgeError.persistence("Project handoff file is not a bounded private regular file.")
         }
         var data = Data()
@@ -566,6 +571,35 @@ public final class ProjectHandoffMarkdownStore: @unchecked Sendable {
         let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
         let normalizedDirectory = URL(fileURLWithPath: directory, isDirectory: true).standardizedFileURL.path
         return normalizedPath == normalizedDirectory || normalizedPath.hasPrefix(normalizedDirectory.hasSuffix("/") ? normalizedDirectory : normalizedDirectory + "/")
+    }
+
+    /// Opens a configured directory without following links, except the system
+    /// `/private` link: a stored root such as `/tmp/x` resolves to
+    /// `/private/tmp/x`, because Foundation strips `/private` when it
+    /// canonicalizes paths. The path is resolved with `realpath(3)` and accepted
+    /// only if it is unchanged or differs by that `/private` prefix; the
+    /// resolved path is then opened without following any link, and the opened
+    /// directory must be the same file the configured path refers to, so a link
+    /// swapped in after resolution is refused.
+    private static func openResolvedDirectory(_ path: String) -> Int32 {
+        guard path.hasPrefix("/"), !path.contains("\0") else { return -1 }
+        guard let resolvedPointer = realpath(path, nil) else { return -1 }
+        let resolvedPath = String(cString: resolvedPointer)
+        free(resolvedPointer)
+        guard resolvedPath == path || resolvedPath == "/private" + path else { return -1 }
+        let descriptor = openDirectoryChain(resolvedPath)
+        guard descriptor >= 0 else { return -1 }
+        var openedInfo = stat()
+        var configuredInfo = stat()
+        guard fstat(descriptor, &openedInfo) == 0,
+              (openedInfo.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
+              stat(path, &configuredInfo) == 0,
+              configuredInfo.st_dev == openedInfo.st_dev,
+              configuredInfo.st_ino == openedInfo.st_ino else {
+            _ = close(descriptor)
+            return -1
+        }
+        return descriptor
     }
 
     private static func openDirectoryChain(_ path: String) -> Int32 {
