@@ -227,10 +227,18 @@ enum WorkflowSettingsSummary {
         language: AppLanguage
     ) -> String {
         format(
-            "Limits: %@ agents at once · %@ review rounds · %@ min · %@ provider calls",
-            [String(concurrentAgents), String(reviewRounds), String(durationMinutes), String(providerCalls)],
+            "Limits: %@ agents at once · %@ review rounds · %@ · %@ provider calls",
+            [String(concurrentAgents), String(reviewRounds), durationText(seconds: durationMinutes * 60, language: language), String(providerCalls)],
             language: language
         )
+    }
+
+    /// A run's duration limit: whole minutes when it divides evenly, else seconds.
+    static func durationText(seconds: Int, language: AppLanguage) -> String {
+        if seconds > 0, seconds % 60 == 0 {
+            return format("%@ min", [String(seconds / 60)], language: language)
+        }
+        return format("%@ sec", [String(seconds)], language: language)
     }
 
     static func roleTitle(_ role: AutonomousRole) -> String {
@@ -244,5 +252,52 @@ enum WorkflowSettingsSummary {
 
     private static func format(_ source: String, _ arguments: [String], language: AppLanguage) -> String {
         String(format: AppLocalization.display(source, language: language), locale: language.locale, arguments: arguments)
+    }
+}
+
+/// The order the task list shows a plan's tasks in. Display only: the plan,
+/// its stored order and its digest are unchanged.
+enum WorkflowTaskOrder {
+    /// Each task after the tasks it depends on, keeping the stored order
+    /// between tasks that could go either way. Dependencies on IDs outside the
+    /// plan are ignored, and tasks left in a cycle follow in stored order.
+    static func dependencyOrder(_ tasks: [AutonomousTaskDefinition]) -> [AutonomousTaskDefinition] {
+        let knownIDs = Set(tasks.map(\.id))
+        var placedIDs: Set<String> = []
+        var placed = [Bool](repeating: false, count: tasks.count)
+        var ordered: [AutonomousTaskDefinition] = []
+        ordered.reserveCapacity(tasks.count)
+        // Each pass places one task, so this ends after at most tasks.count passes.
+        while let next = tasks.indices.first(where: { index in
+            !placed[index] && tasks[index].dependencies.allSatisfy { !knownIDs.contains($0) || placedIDs.contains($0) }
+        }) {
+            placed[next] = true
+            placedIDs.insert(tasks[next].id)
+            ordered.append(tasks[next])
+        }
+        ordered += tasks.indices.filter { !placed[$0] }.map { tasks[$0] }
+        return ordered
+    }
+}
+
+/// The status line shown when a started workflow returns, by how it ended.
+enum WorkflowRunOutcome {
+    static func statusMessage(for status: AutonomousRunStatus) -> String {
+        switch status {
+        case .completed:
+            "Autonomous workflow finished. Review the final diff in the existing change review."
+        case .failed:
+            "Autonomous workflow failed. See the run's final result and events."
+        case .cancelled:
+            "Autonomous workflow was cancelled. See the run's final result and events."
+        case .timedOut:
+            "Autonomous workflow reached its time limit. See the run's final result and events."
+        case .blocked:
+            "Autonomous workflow is blocked. See the run's final result and events."
+        case .interrupted:
+            "Autonomous workflow was interrupted. See the run's final result and events."
+        case .awaitingApproval, .approved, .running:
+            "Autonomous workflow ended."
+        }
     }
 }

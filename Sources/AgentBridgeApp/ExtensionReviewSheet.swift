@@ -282,7 +282,7 @@ struct ExtensionReviewSheet: View {
                     toolDefinitions(definitions)
                 }
             }
-            Text(model.localized(review.trustWarning))
+            Text(model.localized(ExtensionTrustNotice.text(for: kind, trustWarning: review.trustWarning)))
                 .font(.caption2)
                 .foregroundStyle(kind == .mcp ? Color.orange : Color.secondary)
                 .fixedSize(horizontal: false, vertical: true)

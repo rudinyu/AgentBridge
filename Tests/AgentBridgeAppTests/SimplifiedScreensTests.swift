@@ -183,6 +183,76 @@ final class WorkflowPresentationTests: XCTestCase {
             WorkflowSettingsSummary.limitsLine(concurrentAgents: 3, reviewRounds: 2, durationMinutes: 30, providerCalls: 20, language: .english),
             "Limits: 3 agents at once · 2 review rounds · 30 min · 20 provider calls"
         )
+        XCTAssertEqual(
+            WorkflowSettingsSummary.limitsLine(concurrentAgents: 3, reviewRounds: 2, durationMinutes: 30, providerCalls: 20, language: .traditionalChinese),
+            "上限：同時 3 個代理 · 2 個審查回合 · 30 分鐘 · 20 次供應商呼叫"
+        )
+    }
+
+    func testDurationUsesMinutesOnlyWhenWhole() {
+        XCTAssertEqual(WorkflowSettingsSummary.durationText(seconds: 1_800, language: .english), "30 min")
+        XCTAssertEqual(WorkflowSettingsSummary.durationText(seconds: 90, language: .english), "90 sec")
+        XCTAssertEqual(WorkflowSettingsSummary.durationText(seconds: 0, language: .english), "0 sec")
+        XCTAssertEqual(WorkflowSettingsSummary.durationText(seconds: 1_800, language: .traditionalChinese), "30 分鐘")
+        XCTAssertEqual(WorkflowSettingsSummary.durationText(seconds: 45, language: .traditionalChinese), "45 秒")
+    }
+
+    private func task(_ id: String, _ role: AutonomousRole, after dependencies: [String] = []) -> AutonomousTaskDefinition {
+        AutonomousTaskDefinition(id: id, role: role, title: id, prompt: "", dependencies: dependencies)
+    }
+
+    func testTasksAreShownInDependencyOrder() {
+        let tasks = [
+            task("implement", .implementer, after: ["research"]),
+            task("research", .researcher),
+            task("review", .reviewer, after: ["implement"]),
+        ]
+        XCTAssertEqual(WorkflowTaskOrder.dependencyOrder(tasks).map(\.id), ["research", "implement", "review"])
+    }
+
+    func testDependencyOrderKeepsStoredOrderForTies() {
+        let tasks = [
+            task("b", .researcher),
+            task("c", .implementer, after: ["a", "b"]),
+            task("a", .researcher),
+            task("d", .reviewer),
+        ]
+        XCTAssertEqual(WorkflowTaskOrder.dependencyOrder(tasks).map(\.id), ["b", "a", "c", "d"])
+        let independent = [task("x", .researcher), task("y", .researcher), task("z", .researcher)]
+        XCTAssertEqual(WorkflowTaskOrder.dependencyOrder(independent).map(\.id), ["x", "y", "z"])
+        XCTAssertEqual(WorkflowTaskOrder.dependencyOrder([]).map(\.id), [])
+    }
+
+    func testDependencyOrderToleratesAMalformedGraph() {
+        // A cycle, a self-dependency and a dependency on an unknown ID.
+        let tasks = [
+            task("cycle-a", .implementer, after: ["cycle-b"]),
+            task("cycle-b", .reviewer, after: ["cycle-a"]),
+            task("self", .implementer, after: ["self"]),
+            task("unknown", .researcher, after: ["missing"]),
+            task("after-cycle", .reviewer, after: ["cycle-a"]),
+        ]
+        XCTAssertEqual(
+            WorkflowTaskOrder.dependencyOrder(tasks).map(\.id),
+            ["unknown", "cycle-a", "cycle-b", "self", "after-cycle"]
+        )
+    }
+
+    func testRunOutcomeMessageFollowsTheFinalStatus() {
+        XCTAssertEqual(
+            WorkflowRunOutcome.statusMessage(for: .completed),
+            "Autonomous workflow finished. Review the final diff in the existing change review."
+        )
+        XCTAssertEqual(WorkflowRunOutcome.statusMessage(for: .failed), "Autonomous workflow failed. See the run's final result and events.")
+        XCTAssertEqual(WorkflowRunOutcome.statusMessage(for: .cancelled), "Autonomous workflow was cancelled. See the run's final result and events.")
+        XCTAssertEqual(WorkflowRunOutcome.statusMessage(for: .timedOut), "Autonomous workflow reached its time limit. See the run's final result and events.")
+        XCTAssertEqual(WorkflowRunOutcome.statusMessage(for: .blocked), "Autonomous workflow is blocked. See the run's final result and events.")
+        XCTAssertEqual(WorkflowRunOutcome.statusMessage(for: .interrupted), "Autonomous workflow was interrupted. See the run's final result and events.")
+        XCTAssertEqual(WorkflowRunOutcome.statusMessage(for: .running), "Autonomous workflow ended.")
+        XCTAssertEqual(
+            AppLocalization.display(WorkflowRunOutcome.statusMessage(for: .failed), language: .traditionalChinese),
+            "自主工作流程失敗。請查看此執行的最終結果與事件。"
+        )
     }
 }
 
@@ -206,6 +276,28 @@ final class ExtensionRowPresentationTests: XCTestCase {
         XCTAssertEqual(ExtensionRowState(kind: .skill, isTested: true, isEnabled: true).statusLine(language: .english), "Enabled")
         XCTAssertEqual(ExtensionRowState(kind: .mcp, isTested: true, isEnabled: true, toolCount: 3).statusLine(language: .english), "Enabled · 3 tools")
         XCTAssertEqual(ExtensionRowState(kind: .mcp, isTested: true, isEnabled: true, toolCount: 3).statusLine(language: .traditionalChinese), "已啟用 · 3 個工具")
+    }
+
+    func testMacControlRowTitleNamesTargetAndMode() {
+        XCTAssertEqual(
+            ExtensionRowTitle.title(name: "Mac Control", macControlTargetBundleID: "com.apple.TextEdit", macControlAccessMode: .observe, language: .english),
+            "Mac Control · com.apple.TextEdit · Observe"
+        )
+        XCTAssertEqual(
+            ExtensionRowTitle.title(name: "Mac Control", macControlTargetBundleID: "com.apple.TextEdit", macControlAccessMode: .control, language: .traditionalChinese),
+            "Mac Control · com.apple.TextEdit · 控制"
+        )
+        XCTAssertEqual(
+            ExtensionRowTitle.title(name: "Search", macControlTargetBundleID: nil, macControlAccessMode: nil, language: .english),
+            "Search"
+        )
+    }
+
+    func testSkillReviewShowsOnlyTheSkillTrustNotice() {
+        let warning = ActiveExtensionRuntimeStore.executionTrustWarning
+        XCTAssertEqual(ExtensionTrustNotice.text(for: .skill, trustWarning: warning), ExtensionTrustNotice.skill)
+        XCTAssertFalse(ExtensionTrustNotice.text(for: .skill, trustWarning: warning).contains("MCP"))
+        XCTAssertEqual(ExtensionTrustNotice.text(for: .mcp, trustWarning: warning), warning)
     }
 
     private func enableInputs(_ kind: ExtensionRowKind) -> ExtensionEnableRules.Inputs {

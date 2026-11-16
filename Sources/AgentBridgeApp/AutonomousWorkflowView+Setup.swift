@@ -122,9 +122,16 @@ extension AutonomousWorkflowView {
         VStack(alignment: .leading, spacing: 12) {
             Text("Role profiles")
                 .font(.subheadline.weight(.semibold))
-            LazyVGrid(columns: [GridItem(.flexible(minimum: 240)), GridItem(.flexible(minimum: 240))], alignment: .leading, spacing: 10) {
-                ForEach(WorkflowRoleSelection.allCases) { role in
-                    roleCard(role)
+            // Two cards a row, top-aligned and as tall as the taller one, so the
+            // Planner's extra line does not push its neighbour down.
+            let roles = WorkflowRoleSelection.allCases
+            Grid(alignment: .topLeading, horizontalSpacing: 10, verticalSpacing: 10) {
+                ForEach(Array(stride(from: 0, to: roles.count, by: 2)), id: \.self) { start in
+                    GridRow(alignment: .top) {
+                        ForEach(roles[start..<min(start + 2, roles.count)]) { role in
+                            roleCard(role)
+                        }
+                    }
                 }
             }
             Text("Every planning and execution role is bound to this provider and profile. Global account selection is not changed.")
@@ -249,7 +256,7 @@ extension AutonomousWorkflowView {
             }
         }
         .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 240, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(.quaternary.opacity(0.23), in: RoundedRectangle(cornerRadius: 8))
     }
 

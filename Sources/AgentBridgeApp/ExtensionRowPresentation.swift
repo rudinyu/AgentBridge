@@ -29,6 +29,46 @@ enum ExtensionRowKind: Equatable {
     var needsConnectionTest: Bool { self != .skill }
 }
 
+/// The row's title. A Mac Control preset also names its target app and its
+/// access mode, so two presets for different apps or modes can be told apart.
+enum ExtensionRowTitle {
+    static func title(
+        name: String,
+        macControlTargetBundleID: String?,
+        macControlAccessMode: MacControlAccessMode?,
+        language: AppLanguage
+    ) -> String {
+        guard let target = macControlTargetBundleID else { return name }
+        var parts = [name, target]
+        switch macControlAccessMode {
+        case .observe: parts.append(AppLocalization.display("Observe", language: language))
+        case .control: parts.append(AppLocalization.display("Control", language: language))
+        case nil: break
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    static func title(_ configuration: ActiveExtensionConfigurationSummary, language: AppLanguage) -> String {
+        title(
+            name: configuration.name,
+            macControlTargetBundleID: configuration.macControlTargetBundleID,
+            macControlAccessMode: configuration.macControlAccessMode,
+            language: language
+        )
+    }
+}
+
+/// The trust notice in the review sheet. The core's warning is mostly about
+/// MCP processes, so a Skill, which runs nothing, gets its own sentence. The
+/// core's warning itself is unchanged, since its version is part of the review digest.
+enum ExtensionTrustNotice {
+    static let skill = "Skill content is instructions only and cannot grant additional tools or change AgentBridge approvals. Referenced scripts, hooks and installers are never run."
+
+    static func text(for kind: ExtensionKind, trustWarning: String) -> String {
+        kind == .skill ? skill : trustWarning
+    }
+}
+
 enum ExtensionRowAction: Equatable {
     case testConnection
     case reviewAndEnable

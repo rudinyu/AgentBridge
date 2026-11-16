@@ -1507,7 +1507,7 @@ final class AppModel {
             do {
                 let record = try await service.runAutonomousRun(id: id, reviewedDigest: reviewedDigest, cancellation: cancellation)
                 self.selectedAutonomousRunID = record.id
-                self.autonomousStatus = self.localized("Autonomous workflow finished. Review the final diff in the existing change review.")
+                self.autonomousStatus = self.localized(WorkflowRunOutcome.statusMessage(for: record.status))
             } catch {
                 self.autonomousError = error.localizedDescription
                 self.autonomousStatus = self.localized("Autonomous workflow ended.")

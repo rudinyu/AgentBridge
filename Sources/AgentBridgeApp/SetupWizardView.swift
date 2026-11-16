@@ -401,7 +401,7 @@ struct SetupWizardView: View {
                         get: { wizard.usageControls.macOSNotificationsEnabled },
                         set: { wizard.setNotificationsEnabled($0) }
                     ))
-                    Text(model.localized("A missing cap means unlimited. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available."))
+                    Text(model.localized("0 means no cap. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Button(model.localized("Save local usage settings")) { wizard.saveUsageControls() }
