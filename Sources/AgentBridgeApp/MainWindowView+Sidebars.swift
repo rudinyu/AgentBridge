@@ -169,7 +169,15 @@ extension MainWindowView {
             ))
                     .font(.callout.weight(.medium)).lineLimit(1)
             }
-            Text(model.localizedFormat("%@ · %@", model.profileName(for: session), String(session.snapshotCommit.prefix(12))))
+            // Sessions from one autonomous run share provider, account and commit,
+            // so the access mode and creation time tell them apart.
+            Text(model.localizedFormat(
+                "%@ · %@ · %@ · %@",
+                model.profileName(for: session),
+                model.localized(Self.accessModeLabel(session.policy.accessMode)),
+                model.formattedDate(session.createdAt, date: .abbreviated, time: .shortened),
+                String(session.snapshotCommit.prefix(12))
+            ))
                 .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
         .padding(.horizontal, 8)
@@ -177,6 +185,14 @@ extension MainWindowView {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
         .contentShape(Rectangle())
+    }
+
+    static func accessModeLabel(_ mode: AccessMode) -> String {
+        switch mode {
+        case .readOnly: "Read-only"
+        case .isolatedChanges: "Isolated changes"
+        case .interactiveManualApproval: "value.terminal"
+        }
     }
 
     @ViewBuilder
@@ -399,7 +415,7 @@ extension MainWindowView {
                         }
                         Text("\(model.profileName(for: session)) · \(model.localized(session.status.rawValue.capitalized))")
                             .font(.caption).foregroundStyle(.secondary)
-                        Text("\(session.snapshotCommit.prefix(12)) · \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent)")
+                        Text("\(session.snapshotCommit.prefix(12)) · \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent) · \(model.formattedDate(session.createdAt, date: .abbreviated, time: .shortened))")
                             .font(.caption2).foregroundStyle(.tertiary)
                     }
                     .padding(.vertical, 3)

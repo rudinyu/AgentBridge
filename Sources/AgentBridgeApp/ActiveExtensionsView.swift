@@ -203,7 +203,7 @@ struct ActiveExtensionsView: View {
                 .frame(width: 22)
                 .foregroundStyle(state.isEnabled ? Color.green : Color.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(configuration.name)
+                Text(ExtensionRowTitle.title(configuration, language: model.appLanguage))
                     .font(.callout.weight(.semibold))
                 Text(state.statusLine(language: model.appLanguage))
                     .font(.caption)

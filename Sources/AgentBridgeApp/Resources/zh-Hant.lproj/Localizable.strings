@@ -102,7 +102,7 @@
 "Could not save the usage report." = "無法儲存用量報告。";
 "0 = unlimited" = "0 = 不限";
 "A local shell runs with your macOS account permissions." = "本機 shell 會以你的 macOS 帳號權限執行。";
-"A missing cap means unlimited. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available." = "未設定上限代表不限。只有你開啟此選項時，App 才會要求 macOS 通知權限；App 內提醒仍可使用。";
+"0 means no cap. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available." = "0 代表不設上限。只有你開啟此選項時，App 才會要求 macOS 通知權限；App 內提醒仍可使用。";
 "Account selected. Sign-in remains managed by the provider CLI." = "已選取帳戶。登入仍由供應商 CLI 管理。";
 "Add a separate account" = "新增獨立帳戶";
 "Add isolated account" = "新增隔離帳戶";
@@ -369,6 +369,14 @@
 "Running the approved bounded workflow…" = "正在執行已核准且設有限制的工作流程…";
 "Autonomous workflow finished. Review the final diff in the existing change review." = "自主工作流程已結束。請在既有的變更審查中檢視最終差異。";
 "Autonomous workflow ended." = "自主工作流程已結束。";
+"Autonomous workflow failed. See the run's final result and events." = "自主工作流程失敗。請查看此執行的最終結果與事件。";
+"Autonomous workflow was cancelled. See the run's final result and events." = "自主工作流程已取消。請查看此執行的最終結果與事件。";
+"Autonomous workflow reached its time limit. See the run's final result and events." = "自主工作流程已達時間上限。請查看此執行的最終結果與事件。";
+"Autonomous workflow is blocked. See the run's final result and events." = "自主工作流程受阻。請查看此執行的最終結果與事件。";
+"Autonomous workflow was interrupted. See the run's final result and events." = "自主工作流程已中斷。請查看此執行的最終結果與事件。";
+"%@ min" = "%@ 分鐘";
+"%@ sec" = "%@ 秒";
+"Skill content is instructions only and cannot grant additional tools or change AgentBridge approvals. Referenced scripts, hooks and installers are never run." = "Skill 內容只是指示，無法授予額外工具，也無法變更 AgentBridge 的核准。其中引用的指令碼、hook 與安裝程式一律不會執行。";
 "Cancellation was sent to every planned provider session." = "已向所有計畫中的供應商工作階段送出取消要求。";
 "Provider and account settings are locked while an autonomous workflow is active." = "自主工作流程執行期間會鎖定供應商及帳戶設定。";
 "Changes are locked while an autonomous workflow is active." = "自主工作流程執行期間會鎖定變更操作。";
@@ -1821,7 +1829,7 @@
 "no profile" = "未選帳戶";
 "Custom executable not set" = "尚未設定自訂執行檔";
 "Custom executable %@" = "自訂執行檔 %@";
-"Limits: %@ agents at once · %@ review rounds · %@ min · %@ provider calls" = "上限：同時 %@ 個代理 · %@ 個審查回合 · %@ 分鐘 · %@ 次供應商呼叫";
+"Limits: %@ agents at once · %@ review rounds · %@ · %@ provider calls" = "上限：同時 %@ 個代理 · %@ 個審查回合 · %@ · %@ 次供應商呼叫";
 "Review and enable" = "檢視並啟用";
 "Enabled" = "已啟用";
 "Enabled · %@ tools" = "已啟用 · %@ 個工具";

@@ -5,6 +5,17 @@
 ### Fixed
 
 - A workspace data folder under `/private/tmp` or `/private/var` was saved through the `/tmp` or `/var` symbolic link, and the project-handoff store then refused it because it opens the folder without following links, so "Could not save session data…" came back after every refresh and could not be dismissed for good. The store now follows only the system `/private` link for such a folder and still refuses any other symbolic link in the path, including a `handoffs` folder that is itself a link. Reading a saved handoff also failed with "Project handoff file changed while it was being read.", because securing the file's permissions updates its change time even when they are already private; the read now checks the file against its state after that step. When loading a session's handoff fails, the App now reports that failure once for the session instead of after every refresh.
+- After an autonomous workflow failed, was cancelled, timed out, was blocked or was interrupted, the status line still said it had finished. It now says how the run ended.
+- The task list of an autonomous workflow showed tasks in their stored order, so a reviewer or implementer could appear before the research it depends on. Tasks are now shown after the tasks they depend on.
+- The Skill review sheet showed the warning about MCP processes. A Skill now shows only that its content is instructions and that referenced scripts, hooks and installers are never run; MCP servers and Mac Control keep the full warning.
+- The Planner's role card had one more line than its neighbour, which pushed the Researcher card down. Role cards in a row are now top-aligned and the same height.
+- The usage caps hint said a missing cap means unlimited while the fields show 0. It now says 0 means no cap.
+
+### Changed
+
+- A run's duration limit is shown in minutes, or in seconds when it is not a whole number of minutes, in the same words on every step and in Traditional Chinese.
+- A Mac Control row in Skills & MCP now names its target app and whether it observes or controls it.
+- Project sessions in the sidebar now show their access mode and when they were created, so the sessions of one autonomous run can be told apart.
 
 ## 0.16.0 — 2026-11-15
 

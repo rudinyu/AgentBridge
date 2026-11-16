@@ -10,7 +10,7 @@ extension AutonomousWorkflowView {
             planSummary(run)
             Text("Task graph")
                 .font(.caption.weight(.semibold))
-            ForEach(run.plan.tasks) { task in
+            ForEach(WorkflowTaskOrder.dependencyOrder(run.plan.tasks)) { task in
                 taskRow(task, progress: run.taskProgress.first(where: { $0.id == task.id }))
             }
             planDetails(run.plan)
@@ -57,7 +57,7 @@ extension AutonomousWorkflowView {
                 metric("Tasks", "\(run.plan.tasks.count)")
                 metric("Concurrency", "\(run.plan.limits.maxConcurrentAgents)")
                 metric("Review rounds", "\(run.plan.limits.maxReviewRounds)")
-                metric("Duration", "\(run.plan.limits.maxDurationSeconds) sec")
+                metric("Duration", WorkflowSettingsSummary.durationText(seconds: run.plan.limits.maxDurationSeconds, language: model.appLanguage))
                 metric("Provider calls", "\(run.providerInvocationsStarted)/\(run.plan.limits.maxProviderInvocations)")
             }
             .padding(.top, 4)

@@ -102,7 +102,7 @@
 "Could not save the usage report." = "Could not save the usage report.";
 "0 = unlimited" = "0 = unlimited";
 "A local shell runs with your macOS account permissions." = "A local shell runs with your macOS account permissions.";
-"A missing cap means unlimited. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available." = "A missing cap means unlimited. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available.";
+"0 means no cap. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available." = "0 means no cap. Turning on macOS notifications asks for permission only after you enable this toggle; in-app reminders remain available.";
 "Account selected. Sign-in remains managed by the provider CLI." = "Account selected. Sign-in remains managed by the provider CLI.";
 "Add a separate account" = "Add a separate account";
 "Add isolated account" = "Add isolated account";
@@ -369,6 +369,14 @@
 "Running the approved bounded workflow…" = "Running the approved bounded workflow…";
 "Autonomous workflow finished. Review the final diff in the existing change review." = "Autonomous workflow finished. Review the final diff in the existing change review.";
 "Autonomous workflow ended." = "Autonomous workflow ended.";
+"Autonomous workflow failed. See the run's final result and events." = "Autonomous workflow failed. See the run's final result and events.";
+"Autonomous workflow was cancelled. See the run's final result and events." = "Autonomous workflow was cancelled. See the run's final result and events.";
+"Autonomous workflow reached its time limit. See the run's final result and events." = "Autonomous workflow reached its time limit. See the run's final result and events.";
+"Autonomous workflow is blocked. See the run's final result and events." = "Autonomous workflow is blocked. See the run's final result and events.";
+"Autonomous workflow was interrupted. See the run's final result and events." = "Autonomous workflow was interrupted. See the run's final result and events.";
+"%@ min" = "%@ min";
+"%@ sec" = "%@ sec";
+"Skill content is instructions only and cannot grant additional tools or change AgentBridge approvals. Referenced scripts, hooks and installers are never run." = "Skill content is instructions only and cannot grant additional tools or change AgentBridge approvals. Referenced scripts, hooks and installers are never run.";
 "Cancellation was sent to every planned provider session." = "Cancellation was sent to every planned provider session.";
 "Provider and account settings are locked while an autonomous workflow is active." = "Provider and account settings are locked while an autonomous workflow is active.";
 "Changes are locked while an autonomous workflow is active." = "Changes are locked while an autonomous workflow is active.";
@@ -1821,7 +1829,7 @@
 "no profile" = "no profile";
 "Custom executable not set" = "Custom executable not set";
 "Custom executable %@" = "Custom executable %@";
-"Limits: %@ agents at once · %@ review rounds · %@ min · %@ provider calls" = "Limits: %@ agents at once · %@ review rounds · %@ min · %@ provider calls";
+"Limits: %@ agents at once · %@ review rounds · %@ · %@ provider calls" = "Limits: %@ agents at once · %@ review rounds · %@ · %@ provider calls";
 "Review and enable" = "Review and enable";
 "Enabled" = "Enabled";
 "Enabled · %@ tools" = "Enabled · %@ tools";
