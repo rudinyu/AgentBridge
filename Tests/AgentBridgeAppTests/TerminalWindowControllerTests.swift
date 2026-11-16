@@ -411,7 +411,10 @@ final class TerminalWindowControllerTests: XCTestCase {
     /// Spawns `/bin/sh -c script` without waiting for it.
     private func spawnShell(_ script: String) throws -> pid_t {
         var pid: pid_t = 0
-        let arguments = ["/bin/sh", "-c", script].map { strdup($0) } + [nil]
+        // Typed explicitly: Swift 6.3 cannot infer the element type of the
+        // array literal from posix_spawn's argument and reports a String error.
+        let command: [String] = ["/bin/sh", "-c", script]
+        let arguments: [UnsafeMutablePointer<CChar>?] = command.map { strdup($0) } + [nil]
         defer { arguments.forEach { free($0) } }
         let result = posix_spawn(&pid, "/bin/sh", nil, nil, arguments, nil)
         guard result == 0 else { throw POSIXError(POSIXErrorCode(rawValue: result) ?? .EINVAL) }
