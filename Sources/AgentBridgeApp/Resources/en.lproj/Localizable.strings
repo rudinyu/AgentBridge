@@ -1839,3 +1839,14 @@
 "The configuration changed during testing. Test it again." = "The configuration changed during testing. Test it again.";
 "Tasks" = "Tasks";
 "Required. The reviewer gets the complete, unchanged diff; both profiles must allow shared memory." = "Required. The reviewer gets the complete, unchanged diff; both profiles must allow shared memory.";
+"Included the repository's AGENTS.md from commit %@ for %@: %@ bytes, SHA-256 %@." = "Included the repository's AGENTS.md from commit %@ for %@: %@ bytes, SHA-256 %@.";
+"Included the repository's AGENTS.md from commit %@ for %@, truncated at 32 KiB: %@ bytes, SHA-256 %@." = "Included the repository's AGENTS.md from commit %@ for %@, truncated at 32 KiB: %@ bytes, SHA-256 %@.";
+"Included the repository's AGENTS.md from commit %@ for %@, shortened to fit the local context window: %@ bytes, SHA-256 %@." = "Included the repository's AGENTS.md from commit %@ for %@, shortened to fit the local context window: %@ bytes, SHA-256 %@.";
+"Skipped the repository's AGENTS.md for %@: %@" = "Skipped the repository's AGENTS.md for %@: %@";
+"AGENTS.md is a symbolic link, which is not followed." = "AGENTS.md is a symbolic link, which is not followed.";
+"AGENTS.md is not a regular file." = "AGENTS.md is not a regular file.";
+"AGENTS.md is not valid UTF-8 text." = "AGENTS.md is not valid UTF-8 text.";
+"AGENTS.md could not be read safely." = "AGENTS.md could not be read safely.";
+"AGENTS.md in the workspace differs from the session's commit." = "AGENTS.md in the workspace differs from the session's commit.";
+"Could not confirm that AGENTS.md matches the session's commit." = "Could not confirm that AGENTS.md matches the session's commit.";
+"AGENTS.md does not fit the local model's context window." = "AGENTS.md does not fit the local model's context window.";

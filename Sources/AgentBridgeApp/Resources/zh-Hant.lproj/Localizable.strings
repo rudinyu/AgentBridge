@@ -1839,3 +1839,14 @@
 "The configuration changed during testing. Test it again." = "測試期間設定已變更，再測試一次。";
 "Tasks" = "任務";
 "Required. The reviewer gets the complete, unchanged diff; both profiles must allow shared memory." = "必要項目。審查者會取得完整且未修改的差異；兩個帳戶都必須允許共享記憶。";
+"Included the repository's AGENTS.md from commit %@ for %@: %@ bytes, SHA-256 %@." = "已將儲存庫在提交版本 %@ 的 AGENTS.md 提供給 %@：%@ 位元組，SHA-256 %@。";
+"Included the repository's AGENTS.md from commit %@ for %@, truncated at 32 KiB: %@ bytes, SHA-256 %@." = "已將儲存庫在提交版本 %@ 的 AGENTS.md 提供給 %@，並於 32 KiB 處截斷：%@ 位元組，SHA-256 %@。";
+"Included the repository's AGENTS.md from commit %@ for %@, shortened to fit the local context window: %@ bytes, SHA-256 %@." = "已將儲存庫在提交版本 %@ 的 AGENTS.md 提供給 %@，並縮短以符合本機上下文視窗：%@ 位元組，SHA-256 %@。";
+"Skipped the repository's AGENTS.md for %@: %@" = "未將儲存庫的 AGENTS.md 提供給 %@：%@";
+"AGENTS.md is a symbolic link, which is not followed." = "AGENTS.md 是符號連結，不會跟隨。";
+"AGENTS.md is not a regular file." = "AGENTS.md 不是一般檔案。";
+"AGENTS.md is not valid UTF-8 text." = "AGENTS.md 不是有效的 UTF-8 文字。";
+"AGENTS.md could not be read safely." = "無法安全讀取 AGENTS.md。";
+"AGENTS.md in the workspace differs from the session's commit." = "工作區中的 AGENTS.md 與工作階段的提交版本不同。";
+"Could not confirm that AGENTS.md matches the session's commit." = "無法確認 AGENTS.md 與工作階段的提交版本相符。";
+"AGENTS.md does not fit the local model's context window." = "AGENTS.md 放不進本機模型的上下文視窗。";

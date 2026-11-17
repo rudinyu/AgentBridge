@@ -202,7 +202,11 @@ extension BridgeService {
             profile: profile,
             includeMemory: allowSharedMemoryForRun
         )
-        let providerPrompt = extensionInvocation.skillPrompt + sharedPrompt
+        // Codex reads AGENTS.md itself; Claude runs with --safe-mode and gets it here.
+        let projectInstructions: ProjectInstructionsOutcome = session.provider == .claude
+            ? await projectInstructionsOutcome(for: session)
+            : .none
+        let providerPrompt = Self.prependingProjectInstructions(extensionInvocation.skillPrompt + sharedPrompt, withProjectInstructions: projectInstructions)
         guard providerPrompt.utf8.count <= 512_000 else {
             throw AgentBridgeError.invalidInput("The prompt plus approved Skill instructions exceed the 512 KiB run limit.")
         }
@@ -262,6 +266,7 @@ extension BridgeService {
                     message: "Loaded shared memory revision \(memoryContext.revision), with \(memoryContext.includedTurnCount) earlier turn(s) and \(memoryContext.includedProjectHandoffCount) project handoff entry(s)\(memoryContext.wasTruncated ? " (content truncated)" : "")."
                 ))
             }
+            recordProjectInstructions(projectInstructions, session: session)
 
             let (processResult, parsedOutput) = try await adapter.runReadOnly(
                 provider: session.provider,
@@ -449,12 +454,12 @@ extension BridgeService {
             throw AgentBridgeError.invalidInput("Select a model in Local Model Settings first.")
         }
         try await workspaceManager.validateWorkspace(for: session, accessMode: .readOnly)
-        let (providerPrompt, memoryContext, compression) = try promptWithSharedMemory(
+        let (providerPrompt, memoryContext, compression, projectInstructions) = try await localPromptWithProjectInstructions(
             prompt,
             session: session,
             profile: profile,
-            includeMemory: allowSharedMemory,
-            localSettings: settings
+            settings: settings,
+            allowSharedMemory: allowSharedMemory
         )
         guard providerPrompt.utf8.count <= LocalModelClient.maximumResponseBytes else {
             throw AgentBridgeError.invalidInput("The local model prompt exceeds the 2 MiB limit; shorten the current request or reduce pinned background content.")
@@ -474,6 +479,7 @@ extension BridgeService {
                 kind: "local.context.prepared",
                 message: Self.contextCompressionAuditSummary(compression.report)
             ))
+            recordProjectInstructions(projectInstructions, session: session)
             if let memoryContext {
                 try store.appendEvent(AuditEvent(
                     sessionID: session.id,
@@ -534,6 +540,65 @@ extension BridgeService {
             ))
             throw error
         }
+    }
+
+    /// The local prompt: the repository's AGENTS.md first, then shared memory and
+    /// the request, all within the local input budget. The instructions may use
+    /// up to half of that budget; when even the shortened envelope does not fit
+    /// what the request and memory leave, it is dropped and the run goes on.
+    private func localPromptWithProjectInstructions(
+        _ prompt: String,
+        session: SessionRecord,
+        profile: AccountProfile,
+        settings: LocalModelSettings,
+        allowSharedMemory: Bool
+    ) async throws -> (prompt: String, context: SharedMemoryContext?, compression: CompressedContext, instructions: ProjectInstructionsOutcome) {
+        let budget = try localContextInputByteBudget(settings)
+        let separator = "\n\n"
+        var loaded: ProjectInstructions?
+        var outcome = ProjectInstructionsOutcome.none
+        switch await projectInstructions(for: session) {
+        case .missing: break
+        case .loaded(let instructions): loaded = instructions
+        case .skipped(let reason): outcome = .skipped(reason)
+        }
+        var reserved = 0
+        if let loaded {
+            reserved = ProjectInstructionsFile.envelope(for: loaded, commit: session.snapshotCommit).text.utf8.count
+                + separator.utf8.count
+        }
+        let prepared: (prompt: String, context: SharedMemoryContext?, compression: CompressedContext)
+        do {
+            prepared = try promptWithSharedMemory(
+                prompt,
+                session: session,
+                profile: profile,
+                includeMemory: allowSharedMemory,
+                localSettings: settings,
+                reservedLocalInputBytes: reserved
+            )
+        } catch where reserved > 0 {
+            // The request and protected notes need the room set aside for the
+            // instructions; prepare them as before and fit the instructions after.
+            prepared = try promptWithSharedMemory(
+                prompt,
+                session: session,
+                profile: profile,
+                includeMemory: allowSharedMemory,
+                localSettings: settings
+            )
+        }
+        guard let loaded else { return (prepared.prompt, prepared.context, prepared.compression, outcome) }
+        let room = budget - prepared.prompt.utf8.count - separator.utf8.count
+        guard let envelope = ProjectInstructionsFile.envelope(
+            for: loaded,
+            commit: session.snapshotCommit,
+            fittingUTF8Bytes: room
+        ) else {
+            return (prepared.prompt, prepared.context, prepared.compression, .skipped(.doesNotFitLocalContext))
+        }
+        outcome = .included(envelope)
+        return (envelope.text + separator + prepared.prompt, prepared.context, prepared.compression, outcome)
     }
 
     static func contextCompressionAuditSummary(_ report: ContextCompressionReport) -> String {
@@ -611,7 +676,14 @@ extension BridgeService {
         let (promptWithMemory, memoryContext) = includesMemory
             ? try legacyPromptWithSharedMemory(trimmedPrompt, session: session, profile: profile)
             : (trimmedPrompt, nil)
-        let providerPrompt = makeChangePrompt(plan: plan, extensionInvocation: extensionInvocation, promptWithMemory: promptWithMemory)
+        // Codex reads AGENTS.md itself; Claude runs with --safe-mode and gets it here.
+        let projectInstructions: ProjectInstructionsOutcome = session.provider == .claude
+            ? await projectInstructionsOutcome(for: session)
+            : .none
+        let providerPrompt = Self.prependingProjectInstructions(
+            makeChangePrompt(plan: plan, extensionInvocation: extensionInvocation, promptWithMemory: promptWithMemory),
+            withProjectInstructions: projectInstructions
+        )
 
         var activeSession = session
         let emitter = ProgressEmitter(sessionID: sessionID, store: store, callback: onProgress)
@@ -668,6 +740,7 @@ extension BridgeService {
                     message: "Loaded shared memory revision \(memoryContext.revision), with \(memoryContext.includedTurnCount) earlier turn(s) and \(memoryContext.includedProjectHandoffCount) project handoff entry(s)\(memoryContext.wasTruncated ? " (content truncated)" : "")."
                 ))
             }
+            recordProjectInstructions(projectInstructions, session: session)
             let (processResult, parsedOutput) = try await adapter.runChanges(
                 provider: session.provider,
                 session: session,
@@ -1106,10 +1179,22 @@ extension BridgeService {
             defer { try? FileManager.default.removeItem(at: temp) }
             var environment = try providerEnvironment(profile: profile, privateTemporaryDirectory: temp)
             environment["TERM"] = "xterm-256color"
-            contextFileURL = try writeInteractiveMemoryContext(session: invocationSession, profile: profile)
-            if contextFileURL != nil {
+            // Codex reads AGENTS.md itself; Claude runs with --safe-mode and gets it here.
+            let instructions: ProjectInstructionsOutcome = invocationSession.provider == .claude
+                ? await projectInstructionsOutcome(for: invocationSession)
+                : .none
+            let includedInstructions: ProjectInstructionsEnvelope?
+            if case .included(let envelope) = instructions { includedInstructions = envelope } else { includedInstructions = nil }
+            let contextFile = try writeInteractiveMemoryContext(
+                session: invocationSession,
+                profile: profile,
+                projectInstructions: includedInstructions
+            )
+            contextFileURL = contextFile?.url
+            if contextFile?.includesSharedMemory == true {
                 try? store.appendEvent(AuditEvent(sessionID: sessionID, kind: "memory.loaded", message: "A shared memory file was provided to the interactive terminal. Terminal history is not saved."))
             }
+            recordProjectInstructions(instructions, session: invocationSession)
             let result = try await adapter.runInteractive(
                 provider: session.provider,
                 session: invocationSession,
