@@ -730,6 +730,73 @@ final class AgentBridgeCoreTests: XCTestCase {
         }
     }
 
+    func testInteractiveWorkspaceAcceptsCommitsOnTopOfThePinnedCommit() async throws {
+        let (root, manager, session) = try await makeCommittedWorkspaceSession(accessMode: .interactiveManualApproval)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = session.workspacePath
+        try await manager.validateWorkspace(for: session, accessMode: .interactiveManualApproval)
+
+        try Data("approved edit\n".utf8).write(to: URL(fileURLWithPath: workspace).appendingPathComponent("tracked.txt"))
+        try FixtureGit.run(["-C", workspace, "commit", "-q", "-a", "-m", "approved commit"])
+        XCTAssertNotEqual(try FixtureGit.run(["-C", workspace, "rev-parse", "HEAD"]), session.snapshotCommit)
+        try await manager.validateWorkspace(for: session, accessMode: .interactiveManualApproval)
+
+        try FixtureGit.run(["-C", workspace, "checkout", "-q", "-b", "feature/approved"])
+        try FixtureGit.run(["-C", workspace, "commit", "-q", "--allow-empty", "-m", "on a new branch"])
+        try await manager.validateWorkspace(for: session, accessMode: .interactiveManualApproval)
+    }
+
+    func testInteractiveWorkspaceRefusesHistoryWithoutThePinnedCommit() async throws {
+        let (root, manager, session) = try await makeCommittedWorkspaceSession(accessMode: .interactiveManualApproval)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = session.workspacePath
+        let orphan = try FixtureGit.run(["-C", workspace, "commit-tree", "HEAD^{tree}", "-m", "unrelated"])
+        try FixtureGit.run(["-C", workspace, "reset", "-q", "--hard", orphan])
+        do {
+            try await manager.validateWorkspace(for: session, accessMode: .interactiveManualApproval)
+            XCTFail("A workspace whose history lacks the pinned commit was accepted.")
+        } catch let error as AgentBridgeError {
+            XCTAssertEqual(error, .sessionMismatch("The session's pinned commit is no longer in the isolated workspace's history. Create a new session from the source repository."))
+        }
+
+        // A graft file could make the pinned commit look like a parent, so it is refused.
+        try Data("\(orphan) \(session.snapshotCommit)\n".utf8)
+            .write(to: URL(fileURLWithPath: workspace).appendingPathComponent(".git/info/grafts"))
+        do {
+            try await manager.validateWorkspace(for: session, accessMode: .interactiveManualApproval)
+            XCTFail("A workspace with a Git graft file was accepted.")
+        } catch let error as AgentBridgeError {
+            XCTAssertEqual(error, .sessionMismatch("The isolated workspace has a Git graft file, so AgentBridge cannot confirm its history."))
+        }
+    }
+
+    func testReadOnlyWorkspaceStillRefusesACommitOnTop() async throws {
+        let (root, manager, session) = try await makeCommittedWorkspaceSession(accessMode: .readOnly)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await manager.validateWorkspace(for: session, accessMode: .readOnly)
+        try FixtureGit.run(["-C", session.workspacePath, "commit", "-q", "--allow-empty", "-m", "on top"])
+        do {
+            try await manager.validateWorkspace(for: session, accessMode: .readOnly)
+            XCTFail("A read-only workspace moved past the pinned commit was accepted.")
+        } catch let error as AgentBridgeError {
+            XCTAssertEqual(error, .workspaceChanged)
+        }
+    }
+
+    private func makeCommittedWorkspaceSession(accessMode: AccessMode) async throws -> (URL, WorkspaceManager, SessionRecord) {
+        let root = try temporaryDirectory()
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try FixtureGit.run(["init", "-q", source.path])
+        try Data("committed\n".utf8).write(to: source.appendingPathComponent("tracked.txt"))
+        try FixtureGit.run(["-C", source.path, "add", "tracked.txt"])
+        try FixtureGit.run(["-C", source.path, "commit", "-q", "-m", "snapshot"])
+        let store = try AuditStore(rootURL: root.appendingPathComponent("state", isDirectory: true))
+        let manager = WorkspaceManager(store: store)
+        let session = try await manager.createSnapshot(sourcePath: source.path, provider: .codex, accessMode: accessMode)
+        return (root, manager, session)
+    }
+
     func testBridgeServiceKeepsReadOnlyRunsStatelessAndRoutesExplicitAPIKeyThroughMockCLI() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

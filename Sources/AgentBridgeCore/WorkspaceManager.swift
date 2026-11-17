@@ -234,7 +234,39 @@ public final class WorkspaceManager: @unchecked Sendable {
             throw AgentBridgeError.sessionMismatch("The Git workspace root does not match the session record.")
         }
         let commit = try await gitText(["-C", workspace.path, "rev-parse", "HEAD"])
-        guard commit == session.snapshotCommit else { throw AgentBridgeError.workspaceChanged }
+        guard commit != session.snapshotCommit else { return }
+        // A read-only workspace must stay at the pinned commit. In an interactive
+        // session the user may approve commits, so commits on top of the pinned
+        // one (on any branch) are fine, but the pinned commit must stay in HEAD's history.
+        guard accessMode == .interactiveManualApproval else { throw AgentBridgeError.workspaceChanged }
+        try await validatePinnedCommitIsAncestor(of: commit, in: workspace, gitMetadata: gitMetadata, session: session)
+    }
+
+    private static let pinnedCommitLeftHistoryMessage = "The session's pinned commit is no longer in the isolated workspace's history. Create a new session from the source repository."
+
+    /// Whether the session's pinned commit is in the history of `head`. The workspace's
+    /// `.git` is writable by the provider, so files that let Git invent parents are
+    /// refused or ignored: the graft file is refused, the commit-graph cache is not
+    /// read, and `runGit` already ignores replace refs.
+    private func validatePinnedCommitIsAncestor(of head: String, in workspace: URL, gitMetadata: URL, session: SessionRecord) async throws {
+        let pattern = #"^[0-9a-f]{40}([0-9a-f]{24})?$"#
+        guard session.snapshotCommit.range(of: pattern, options: .regularExpression) != nil,
+              head.lowercased().range(of: pattern, options: .regularExpression) != nil else {
+            throw AgentBridgeError.sessionMismatch(Self.pinnedCommitLeftHistoryMessage)
+        }
+        var graftMetadata = stat()
+        if lstat(gitMetadata.appendingPathComponent("info/grafts").path, &graftMetadata) == 0 || errno != ENOENT {
+            throw AgentBridgeError.sessionMismatch("The isolated workspace has a Git graft file, so AgentBridge cannot confirm its history.")
+        }
+        let result = try await runGit(
+            arguments: [
+                "-c", "core.commitGraph=false",
+                "-C", workspace.path, "merge-base", "--is-ancestor", session.snapshotCommit, head
+            ],
+            workingDirectory: nil,
+            allowedExitCodes: [0, 1, 128]
+        )
+        guard result.exitCode == 0 else { throw AgentBridgeError.sessionMismatch(Self.pinnedCommitLeftHistoryMessage) }
     }
 
     /// AgentBridge's own copy of the pinned commit, in the private data root. Review,

@@ -1324,6 +1324,8 @@
 "The isolated workspace commit does not match the source." = "The isolated workspace commit does not match the source.";
 "The isolated workspace has changed. Create a new session to pin the new commit." = "The isolated workspace has changed. Create a new session to pin the new commit.";
 "The isolated workspace has lost its Git metadata." = "The isolated workspace has lost its Git metadata.";
+"The session's pinned commit is no longer in the isolated workspace's history. Create a new session from the source repository." = "The session's pinned commit is no longer in the isolated workspace's history. Create a new session from the source repository.";
+"The isolated workspace has a Git graft file, so AgentBridge cannot confirm its history." = "The isolated workspace has a Git graft file, so AgentBridge cannot confirm its history.";
 "The isolated workspace's Git settings were changed. Create a new session." = "The isolated workspace's Git settings were changed. Create a new session.";
 "The isolated workspace has no executable .codex/ci.sh." = "The isolated workspace has no executable .codex/ci.sh.";
 "The isolated workspace path already exists." = "The isolated workspace path already exists.";
