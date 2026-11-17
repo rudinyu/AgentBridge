@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Reopening the terminal of an interactive session failed for good after any commit in its workspace, with "The isolated workspace has changed. Create a new session to pin the new commit." An interactive session now opens as long as the session's pinned commit is still in the workspace's history, so commits made on top of it, on any branch, are fine. A workspace reset to history without the pinned commit is still refused, now with a message saying so, and a read-only session must still be exactly at its pinned commit.
+
 ## 0.16.2 — 2026-11-17
 
 ### Added
