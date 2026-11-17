@@ -73,7 +73,11 @@ public final class BridgeService: @unchecked Sendable {
     public func settings() throws -> BridgeSettings { try store.loadSettings() }
     public func saveSettings(_ settings: BridgeSettings) throws {
         try LocalModelClient.validateSettings(settings.localModel)
-        try store.saveSettings(settings)
+        var checked = settings
+        for provider in [AgentProvider.codex, .claude] {
+            checked.setModelDefaults(try settings.modelDefaults(for: provider).validated(for: provider), for: provider)
+        }
+        try store.saveSettings(checked)
     }
     public func localModels(settings: LocalModelSettings? = nil) async throws -> [LocalModelDescriptor] {
         let localSettings = try settings ?? store.loadSettings().localModel
@@ -175,9 +179,14 @@ public final class BridgeService: @unchecked Sendable {
         provider: AgentProvider,
         accessMode: AccessMode = .readOnly,
         snapshotCommit: String? = nil,
-        accountProfileID: UUID? = nil
+        accountProfileID: UUID? = nil,
+        modelChoice: ProviderModelChoice? = nil
     ) async throws -> SessionRecord {
-        guard try store.loadSettings().usageMode != .api || provider == .claude || provider == .local else {
+        let settings = try store.loadSettings()
+        // Like the account, the model and effort are fixed when the session is
+        // created. Without an explicit choice the saved new-session defaults apply.
+        let boundModelChoice = try (modelChoice ?? settings.modelDefaults(for: provider)).validated(for: provider)
+        guard settings.usageMode != .api || provider == .claude || provider == .local else {
             throw AgentBridgeError.sessionMismatch("API mode supports Claude only. Switch to subscription sign-in mode to use Codex.")
         }
         guard provider != .local || accessMode == .readOnly else {
@@ -197,7 +206,8 @@ public final class BridgeService: @unchecked Sendable {
             provider: provider,
             accessMode: accessMode,
             accountProfileID: selectedProfile.id,
-            snapshotCommit: snapshotCommit
+            snapshotCommit: snapshotCommit,
+            modelChoice: boundModelChoice
         )
     }
 

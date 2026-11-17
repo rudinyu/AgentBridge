@@ -38,7 +38,7 @@ Icon 以深靛藍底色呈現兩個不同助理節點，透過一道明亮的弧
 
 AgentBridge 0.16.3 是獨立的 SwiftPM Repository，提供共用 `AgentBridgeCore`、`agentbridge` CLI 與原生 SwiftUI App。App 和 CLI 共用已保存的工作區資料根目錄，以及私有設定、帳戶、工作階段索引、稽核、用量控制與 API 帳本。App 預設使用英文，並內建英文與繁體中文資源，可在 App 內選擇並保存語言。Core、CLI 與 App 的訊息原文一律是英文；繁體中文放在 `zh-Hant.lproj`，以整句或整句範本（例如 `Loaded %@ turn(s)`，其中擷取的值會再各自翻譯）對照。`en.lproj/Legacy.strings` 保留舊的中文對英文條目，讓這次改版前已保存的稽核事件在英文介面仍顯示為英文。CLI 只輸出英文。設定精靈會續接尚未完成的首次設定，也可從標題列重新開啟；`SetupWizardFlow` 將必要的工作區限制與選用的 CLI／登入狀態摘要做成可測試的核心邏輯。App 的內嵌終端使用 SwiftTerm 1.20.0；Release bundle 由 `scripts/package-app.sh` 組裝，不維護兩份 Xcode 專案設定。
 
-供應商整合透過本機官方 CLI 執行：Codex 使用 `codex exec --json` 或原生互動 CLI，Claude Code 使用 `claude -p --output-format stream-json` 或原生互動 CLI。程式不匯出或複製 OAuth 憑證，也不把 CLI session ID 當成跨供應商記憶。此專案使用 Swift 管理本機程序，不另外引入 Codex/Claude SDK runtime。
+供應商整合透過本機官方 CLI 執行：Codex 使用 `codex exec --json` 或原生互動 CLI，Claude Code 使用 `claude -p --output-format stream-json` 或原生互動 CLI。程式不匯出或複製 OAuth 憑證，也不把 CLI session ID 當成跨供應商記憶。此專案使用 Swift 管理本機程序，不另外引入 Codex/Claude SDK runtime。選用的模型與推理強度會先驗證為單一安全參數，再以 Codex 的 `-m` 與 `-c model_reasoning_effort`，或 Claude 的 `--model` 與 `--effort` 傳給唯讀、修改、對話與原生終端執行，永遠不會傳給用量終端；CLI 拒絕的模型會讓執行失敗並顯示 CLI 的訊息，不會改用其他模型。
 
 官方 CLI 參數與驗證行為會演進。實作查核所依據的官方來源及當時本機版本列於 README；事件解析採 fail-closed，未知登入方式、事件格式錯誤或缺少成功事件都不會被推定為成功。使用者執行前仍應確認目前安裝版本支援 README 中列出的選項。
 
@@ -81,7 +81,7 @@ App 與 CLI 共用已保存的根目錄。CLI 可用 `agentbridge workspace set 
 
 建立 session 時，AgentBridge 讀取來源 Repository 的已提交版本，在 `<selected root>/workspaces/<小寫工作階段 UUID>/` 建立獨立 clone，並記錄完整 commit hash。唯讀為預設。隔離變更工作階段只支援訂閱模式，使用同一個固定 clone，且 provider 寫入前必須先檢視並明確核准工作計畫。Codex 使用官方 `workspace-write` sandbox；Claude 使用 `acceptEdits` 與狹窄工具允許清單。原生互動 TUI 是另一種模式。切換 Codex/Claude 或切換帳戶時，以同一來源路徑和原固定提交建立或重用對應工作階段，來源 Repository 的 HEAD 即使後續改變也不會偷偷改變既有對話範圍。未提交與未追蹤檔不會複製。
 
-每個 session 綁定建立時所選的 provider 帳戶。切換帳戶後，舊 session 不會改用新帳戶續行；需切回原帳戶或建立新的 session。Codex 和 Claude 各自有內建「目前本機登入」 profile，以及可選擇新增的獨立 profile。新增 profile 使用專屬 `CODEX_HOME` 或 `CLAUDE_CONFIG_DIR`，憑證由官方 CLI 建立及讀取，AgentBridge 不解析或複製憑證。內建帳戶不提供重新登入按鈕，避免改動既有登入。
+每個 session 綁定建立時所選的 provider 帳戶，也同樣綁定當時選定的模型與推理強度；未選擇代表 CLI 預設，在此功能之前建立的 session 也是如此。自主工作流程的角色綁定帶有同樣的設定，且只有在有設定時才納入計畫摘要值，因此先前核准的計畫摘要值不變。切換帳戶後，舊 session 不會改用新帳戶續行；需切回原帳戶或建立新的 session。Codex 和 Claude 各自有內建「目前本機登入」 profile，以及可選擇新增的獨立 profile。新增 profile 使用專屬 `CODEX_HOME` 或 `CLAUDE_CONFIG_DIR`，憑證由官方 CLI 建立及讀取，AgentBridge 不解析或複製憑證。內建帳戶不提供重新登入按鈕，避免改動既有登入。
 
 ### 變更審查、驗證、任務與擴充政策
 

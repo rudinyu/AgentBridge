@@ -19,12 +19,13 @@ extension AgentBridgeCLI {
           agentbridge settings show
           agentbridge settings usage subscription|api
           agentbridge settings binary codex|claude /absolute/path/to/cli|auto
+          agentbridge settings model codex|claude [--model NAME] [--effort LEVEL]
           agentbridge profiles list [codex|claude|local]
           agentbridge profiles create --provider codex|claude|local --name NAME [--share-memory] (shared memory is on by default)
           agentbridge profiles select --provider codex|claude|local PROFILE-ID
           agentbridge profiles memory PROFILE-ID on|off
           agentbridge profile-login PROFILE-ID
-          agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes]
+          agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes] [--model NAME] [--effort LEVEL]
           agentbridge session remove SESSION-ID [--confirm [--discard-unsaved-work]]
           agentbridge sessions
           agentbridge run SESSION-ID [--api-budget USD --confirm-api-spend --api-key-env ANTHROPIC_API_KEY]
@@ -33,7 +34,7 @@ extension AgentBridgeCLI {
           agentbridge changes run SESSION-ID PLAN-ID REVIEW-DIGEST < prompt.txt
           agentbridge changes diff|restore|restore-all|export|verify|accept|apply ...
           agentbridge tasks [SESSION-ID]
-          agentbridge autonomous plan --source REPOSITORY --planner PROVIDER:PROFILE-ID --researcher PROVIDER:PROFILE-ID --implementer PROVIDER:PROFILE-ID --reviewer PROVIDER:PROFILE-ID --share-diff-with-reviewer [--desktop-control-scope TEXT --confirm-desktop-separate-from-git] [--save-summary-to-memory --memory-destination PROFILE-ID] [--verification none|projectCI|custom] < goal.txt
+          agentbridge autonomous plan --source REPOSITORY --planner PROVIDER:PROFILE-ID --researcher PROVIDER:PROFILE-ID --implementer PROVIDER:PROFILE-ID --reviewer PROVIDER:PROFILE-ID --share-diff-with-reviewer [--desktop-control-scope TEXT --confirm-desktop-separate-from-git] [--save-summary-to-memory --memory-destination PROFILE-ID] [--verification none|projectCI|custom] [--ROLE-model NAME] [--ROLE-effort LEVEL] < goal.txt
           agentbridge autonomous approve RUN-ID --digest PLAN-DIGEST --confirm
           agentbridge autonomous run RUN-ID --digest PLAN-DIGEST
           agentbridge autonomous status [RUN-ID] --json
@@ -67,7 +68,7 @@ extension AgentBridgeCLI {
 
         `run` reads up to 256 KiB of prompt text from standard input and never puts the prompt in process arguments or the audit file.
         Local models support chats and read-only project chats only; local sessions offer no autonomy, editing tools, interactive Terminal, Skills or MCP. Local uses no API key, no official CLI sign-in and no cloud fallback.
-        `autonomous plan` immediately starts one real planning request to the official CLI subscription model; the goal is read from standard input, up to 8,000 bytes. Every role and the planner must name a provider and a profile UUID explicitly, for example `--planner codex:00000000-0000-0000-0000-000000000001`. Claude API mode is not used for autonomous workflows.
+        `autonomous plan` immediately starts one real planning request to the official CLI subscription model; the goal is read from standard input, up to 8,000 bytes. Every role and the planner must name a provider and a profile UUID explicitly, for example `--planner codex:00000000-0000-0000-0000-000000000001`. Claude API mode is not used for autonomous workflows. `--planner-model`, `--researcher-model`, `--implementer-model` and `--reviewer-model`, with the matching `--ROLE-effort`, choose each role's model and reasoning effort; a role without them uses the CLI default, not the saved defaults, and the plan digest covers what is set.
         The plan command saves an immutable plan that is not yet approved. Review the roles, extensions, file scope, limits and verification settings in full, then approve with `autonomous approve RUN-ID --digest PLAN-DIGEST --confirm`; a single approval covers only the revision rounds and verification in that plan. Running requires the exact same `--digest` again. `status --json` lets automation read session progress, review results and verification status; an interrupted run is never replayed automatically.
         Sharing output across accounts needs both the source and the receiving profile to allow shared memory. By default the content of a dependency task is not handed to the next role; the exact implementation diff always needs an explicit `--share-diff-with-reviewer`, and both the implementer and reviewer profiles must agree to shared memory.
         To use Mac Control in Control mode, the plan command must include `--desktop-control-scope` and `--confirm-desktop-separate-from-git`; only the implementer role can select Control. Both are included in the immutable plan digest.
@@ -79,6 +80,7 @@ extension AgentBridgeCLI {
         usage-tui starts the native CLI only when the selected provider account uses a subscription sign-in; after sign-in finishes and an input prompt appears, the App's fixed button sends /usage. This screen is not parsed or stored by AgentBridge.
         Custom accounts have their own provider config folders; create the profile, then run profile-login in an interactive Terminal.
         `session create --interactive` creates an isolated Codex or Claude Terminal workspace, still subject to manual approval and the bound account.
+        `session create --model NAME --effort LEVEL` binds a Codex or Claude model and reasoning effort to the new session, like its account; without them the defaults from `settings model` apply, and an empty value means the CLI default. The model name is passed to the CLI as is: letters, digits and . - _ : / @ [ ], up to 128 bytes, not starting with -. Codex effort levels: \(ProviderModelOptions.effortLevels(for: .codex).joined(separator: ", ")); Claude: \(ProviderModelOptions.effortLevels(for: .claude).joined(separator: ", ")). If the CLI rejects the model, the run fails with the CLI's error; AgentBridge never retries with another model. The usage terminal never sets a model, and local models keep their own model setting.
         `session create --changes` creates a subscription-mode isolated-changes session that is read-only by default; save and review a plan, then retype its digest in the approve command before anything can run.
         `changes verify` runs .codex/ci.sh only when you call it explicitly. Custom verification needs `--approve-custom` and passes separate argv values with repeated `--arg`; nothing goes through a shell.
         `changes accept` and `changes apply` both require the current diff to be verified successfully. If `changes diff` reports files that are not fully shown, review them with `changes export`, then pass `--confirm-partial` with the digest it prints. Apply only creates an uncommitted isolated worktree on a local branch and refuses if the source base differs; it never commits, pushes or merges.

@@ -47,6 +47,12 @@ final class AppModel {
     var isChangingWorkspaceRoot = false
     var codexPath = ""
     var claudePath = ""
+    /// The model and effort for the next new session or chat, per provider. A
+    /// provider without an entry shows its saved defaults.
+    var newModelDrafts: [AgentProvider: ProviderModelChoice] = [:]
+    /// The saved defaults being edited; refreshed from settings until edited.
+    var defaultModelDrafts: [AgentProvider: ProviderModelChoice] = [:]
+    var defaultModelDraftsEdited = false
     var prompt = ""
     var status = "Ready."
     var errorMessage: String?
@@ -394,6 +400,9 @@ final class AppModel {
             if persistedLocalModelChanged { invalidateLocalModelConnectionState() }
             codexPath = settings.codexBinaryPath ?? ""
             claudePath = settings.claudeBinaryPath ?? ""
+            if !defaultModelDraftsEdited {
+                defaultModelDrafts = [.codex: settings.modelDefaults(for: .codex), .claude: settings.modelDefaults(for: .claude)]
+            }
             let profiles = try reads.accountProfiles.get()
             let selectedIDs = try reads.selectedProfileIDs.get()
             for provider in AgentProvider.allCases {
@@ -870,6 +879,32 @@ final class AppModel {
         }
     }
 
+    func newModelChoice(for provider: AgentProvider) -> ProviderModelChoice {
+        newModelDrafts[provider] ?? settings.modelDefaults(for: provider)
+    }
+
+    /// The bound model label for a session, or nil for local sessions, which
+    /// use the local model settings instead.
+    func modelLabel(for session: SessionRecord) -> String? {
+        guard ProviderModelOptions.supportsModelChoice(session.provider) else { return nil }
+        return ModelChoicePresentation.label(model: session.model, reasoningEffort: session.reasoningEffort, language: appLanguage)
+    }
+
+    func modelLabel(for discussion: DiscussionRecord) -> String? {
+        guard ProviderModelOptions.supportsModelChoice(discussion.provider) else { return nil }
+        return ModelChoicePresentation.label(model: discussion.model, reasoningEffort: discussion.reasoningEffort, language: appLanguage)
+    }
+
+    /// Saves the defaults for new sessions and chats. Existing ones keep theirs.
+    func saveModelDefaults() {
+        for provider in [AgentProvider.codex, .claude] {
+            settings.setModelDefaults(defaultModelDrafts[provider] ?? .cliDefault, for: provider)
+        }
+        defaultModelDraftsEdited = false
+        newModelDrafts = [:]
+        saveSettings()
+    }
+
     func checkAuthentication() {
         guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
             errorMessage = localized("Provider checks are paused while a discussion request is active.")
@@ -970,9 +1005,16 @@ final class AppModel {
         }
         status = "Creating an isolated workspace for the pinned commit…"
         let access = requestedAccessMode
+        let modelChoice = newModelChoice(for: provider)
         Task {
             do {
-                let session = try await service.createSession(sourcePath: repositoryPath, provider: provider, accessMode: access)
+                let session = try await service.createSession(
+                    sourcePath: repositoryPath,
+                    provider: provider,
+                    accessMode: access,
+                    modelChoice: provider == .local ? nil : modelChoice
+                )
+                newModelDrafts[provider] = nil
                 status = session.sourceWasDirty ? "Session created. Uncommitted source changes were excluded." : "Session created."
                 refresh()
                 isProjectConversationActive = true

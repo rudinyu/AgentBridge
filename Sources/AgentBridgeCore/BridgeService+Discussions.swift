@@ -92,7 +92,8 @@ extension BridgeService {
 
     public func createDiscussion(
         provider: AgentProvider,
-        accountProfileID: UUID? = nil
+        accountProfileID: UUID? = nil,
+        modelChoice: ProviderModelChoice? = nil
     ) throws -> DiscussionRecord {
         guard let dataRoot = store.workspaceRootURL else {
             throw AgentBridgeError.invalidInput("No workspace data root is configured; choose a user data folder first.")
@@ -105,11 +106,15 @@ extension BridgeService {
         }
         let profile = try accountProfile(id: profileID)
         guard profile.provider == provider else { throw AccountProfileError.providerMismatch(profileID, provider) }
+        // Bound at creation like a session's; without a choice the saved defaults apply.
+        let boundModelChoice = try (modelChoice ?? store.loadSettings().modelDefaults(for: provider)).validated(for: provider)
         let record = DiscussionRecord(
             dataRootPath: dataRoot.standardizedFileURL.path,
             provider: provider,
             accountProfileID: profile.id,
-            usageProfileIDs: [profile.id]
+            usageProfileIDs: [profile.id],
+            model: boundModelChoice.model,
+            reasoningEffort: boundModelChoice.reasoningEffort
         )
         let saved = try discussionStore.create(record)
         try store.appendEvent(AuditEvent(
@@ -136,6 +141,11 @@ extension BridgeService {
         guard profile.provider == provider else { throw AccountProfileError.providerMismatch(accountProfileID, provider) }
         guard record.provider != provider || record.accountProfileID != accountProfileID else { return record }
         guard record.revision < Int.max else { throw AgentBridgeError.persistence("The discussion revision counter has reached its limit.") }
+        if record.provider != provider {
+            // A model name and effort level belong to one provider's CLI.
+            record.model = nil
+            record.reasoningEffort = nil
+        }
         record.provider = provider
         record.accountProfileID = accountProfileID
         record.revision += 1
@@ -284,6 +294,7 @@ extension BridgeService {
                     executableURL: executable,
                     environment: environment,
                     cancellationRequestURL: store.cancellationRequestURL(for: id),
+                    modelChoice: record.modelChoice,
                     onProgress: { message in emitter.emit(message) },
                     cancellation: cancellation
                 )

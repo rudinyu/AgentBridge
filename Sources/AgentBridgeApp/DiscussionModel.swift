@@ -113,7 +113,12 @@ final class DiscussionModel {
             return
         }
         do {
-            let discussion = try service.createDiscussion(provider: targetProvider, accountProfileID: targetProfileID)
+            let discussion = try service.createDiscussion(
+                provider: targetProvider,
+                accountProfileID: targetProfileID,
+                modelChoice: targetProvider == .local ? nil : app.newModelChoice(for: targetProvider)
+            )
+            app.newModelDrafts[targetProvider] = nil
             discussions = try service.discussions()
             discussionProfilePreferences[targetProvider] = targetProfileID
             persistDiscussionProfilePreferences()

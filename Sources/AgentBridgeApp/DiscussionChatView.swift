@@ -157,8 +157,15 @@ struct DiscussionChatView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 } else {
-                    Label("Official CLI subscription", systemImage: "checkmark.shield")
-                        .font(.caption).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label("Official CLI subscription", systemImage: "checkmark.shield")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if let modelLabel = model.modelLabel(for: discussion) {
+                            Label(modelLabel, systemImage: "cpu")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .help(model.localized("The model and reasoning effort are fixed when the chat is created. Switching to another provider clears them."))
+                        }
+                    }
                 }
                 Spacer(minLength: 4)
                 Button("Create Git Project…") { presentHandoffReview(.createNew) }

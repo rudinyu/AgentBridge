@@ -87,7 +87,7 @@ extension AgentBridgeCLI {
         print("""
         Usage: agentbridge chat <subcommand>
 
-          agentbridge chat new --provider codex|claude|local [--profile PROFILE-ID]
+          agentbridge chat new --provider codex|claude|local [--profile PROFILE-ID] [--model NAME] [--effort LEVEL]
           agentbridge chat list
           agentbridge chat show CHAT-ID
           agentbridge chat target CHAT-ID --provider codex|claude|local --profile PROFILE-ID
@@ -100,6 +100,7 @@ extension AgentBridgeCLI {
         `chat new` needs a selected user data root but no Git repository. `chat send` reads the UTF-8 prompt from standard input only, up to \(DiscussionStore.maximumTextBytes) bytes; the prompt is never placed in process arguments. Turns are shareable for later shared context and handoffs by default, and `--share` is an explicit alias; `--no-share` keeps the turn in the chat transcript but excludes it from later context and handoffs. If the source or target account does not allow shared memory, that consent setting keeps the turn out of shared context. When a project preview omits `--turn` and `--no-context`, it selects every complete turn that satisfies the sharing consent; repeating `--turn` selects only the listed turns, and an ineligible turn makes the preview fail; `--no-context` explicitly transfers no turns and cannot be combined with `--turn`. `--access` defaults to read-only. A new project starts with an empty initial Git commit that contains no chat content; apply copies only the approved content listed in the preview into the destination session's AgentBridge memory, and the original chat is kept. No project is created or linked before the preview is done; apply needs the preview digest and `--confirm`. No remote Git call or push is made.
         Codex and Claude chats use only the bound official CLI subscription sign-in; Local chats connect only to the explicitly configured local model. Local project sessions are always read-only. Chat has no API key or budget parameters and no API-credits fallback.
         `chat new --profile`, `chat target` and `project preview` can use a configured account of the matching provider; if `--profile` is omitted for a new chat, the provider's currently selected account is used.
+        `chat new --model` and `--effort` choose the Codex or Claude model and reasoning effort for the chat; without them the defaults from `settings model` apply, and an empty value means the CLI default. They stay with the chat; `chat target` to another provider clears them. Local chats use the model from the local model settings.
 
         Local model settings, model list and connection test: `agentbridge local settings|configure|models|test`. Only `models` and `test` connect to the configured local endpoint, and only when you run them; AgentBridge never installs or starts a service or downloads a model. `agentbridge local preview discussion CHAT-ID|project SESSION-ID < prompt.txt` shows the actual context, the compression summary and byte/token estimates.
         """)
@@ -108,6 +109,8 @@ extension AgentBridgeCLI {
     static func chatNew(_ arguments: [String], service: BridgeService) async throws {
         var provider: AgentProvider?
         var profileID: UUID?
+        var model: String?
+        var effort: String?
         var index = 1
         while index < arguments.count {
             let option = arguments[index]
@@ -116,6 +119,12 @@ extension AgentBridgeCLI {
             case "--provider":
                 guard provider == nil else { throw AgentBridgeError.invalidInput("--provider cannot be repeated.") }
                 provider = try parseProvider(nextOptionValue(option, arguments: arguments, index: &index))
+            case "--model":
+                guard model == nil else { throw AgentBridgeError.invalidInput("--model cannot be repeated.") }
+                model = try nextOptionValue(option, arguments: arguments, index: &index)
+            case "--effort":
+                guard effort == nil else { throw AgentBridgeError.invalidInput("--effort cannot be repeated.") }
+                effort = try nextOptionValue(option, arguments: arguments, index: &index)
             case "--profile":
                 guard profileID == nil else { throw AgentBridgeError.invalidInput("--profile cannot be repeated.") }
                 let value = try nextOptionValue(option, arguments: arguments, index: &index)
@@ -125,16 +134,23 @@ extension AgentBridgeCLI {
                 throw AgentBridgeError.invalidInput("Unknown chat new option \(option).")
             }
         }
-        guard let provider else { throw AgentBridgeError.invalidInput("Usage: agentbridge chat new --provider codex|claude|local [--profile PROFILE-ID]") }
+        guard let provider else { throw AgentBridgeError.invalidInput("Usage: agentbridge chat new --provider codex|claude|local [--profile PROFILE-ID] [--model NAME] [--effort LEVEL]") }
         let resolvedProfileID: UUID
         if let profileID {
             resolvedProfileID = profileID
         } else {
             resolvedProfileID = try service.selectedAccountProfile(provider: provider).id
         }
-        let discussion = try service.createDiscussion(provider: provider, accountProfileID: resolvedProfileID)
+        let discussion = try service.createDiscussion(
+            provider: provider,
+            accountProfileID: resolvedProfileID,
+            modelChoice: requestedModelChoice(model: model, effort: effort, provider: provider, service: service)
+        )
         print("Created chat: \(discussion.id.uuidString.lowercased())")
         print("Provider: \(discussion.provider.rawValue) · profile: \(discussion.accountProfileID.uuidString.lowercased())")
+        if provider != .local {
+            print("Model: \(modelLabel(model: discussion.model, reasoningEffort: discussion.reasoningEffort))")
+        }
         print("Data root: \(discussion.dataRootPath)")
         print("This chat does not need a Git repository; a destination is only needed when you create or link a project.")
     }
@@ -147,6 +163,9 @@ extension AgentBridgeCLI {
         print("Chat: \(discussion.id.uuidString.lowercased())")
         print("Status: \(discussion.status.rawValue) · Revision: \(discussion.revision)")
         print("Target: \(discussion.provider.rawValue) · profile: \(discussion.accountProfileID.uuidString.lowercased())")
+        if discussion.provider != .local {
+            print("Model: \(modelLabel(model: discussion.model, reasoningEffort: discussion.reasoningEffort))")
+        }
         print("Created: \(discussion.createdAt) · updated: \(discussion.updatedAt)")
         if discussion.transcriptWasTruncated { print("Note: the saved conversation was shortened to fit the storage limit.") }
         if !discussion.linkedSessionIDs.isEmpty {

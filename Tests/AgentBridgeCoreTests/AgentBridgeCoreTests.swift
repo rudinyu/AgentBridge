@@ -99,7 +99,7 @@ final class AgentBridgeCoreTests: XCTestCase {
             workspacePath: workspace,
             sessionID: sessionID
         )
-        let discussion = ProviderCommandBuilder.claudeDiscussionArguments()
+        let discussion = try ProviderCommandBuilder.claudeDiscussionArguments()
         let change = try ProviderCommandBuilder.claudeChangeArguments(
             workspacePath: workspace,
             sessionID: sessionID

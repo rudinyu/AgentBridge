@@ -38,6 +38,9 @@ struct AutonomousWorkflowView: View {
     ]
     @State var profileIDs: [WorkflowRoleSelection: UUID] = [:]
     @State var selectedExtensionIDs: [WorkflowRoleSelection: Set<String>] = [:]
+    /// Each role's model and effort; a role without an entry starts from the
+    /// provider's saved defaults. The plan digest covers whatever is set.
+    @State var roleModelChoices: [WorkflowRoleSelection: ProviderModelChoice] = [:]
     @State var maxConcurrentAgents = 3
     @State var maxReviewRounds = 2
     @State var maxDurationMinutes = 30
@@ -218,6 +221,10 @@ struct AutonomousWorkflowView: View {
         providers[role] ?? .codex
     }
 
+    func selectedModelChoice(for role: WorkflowRoleSelection) -> ProviderModelChoice {
+        roleModelChoices[role] ?? model.settings.modelDefaults(for: selectedProvider(for: role))
+    }
+
     func selectedProfile(for role: WorkflowRoleSelection) -> AccountProfile? {
         let provider = selectedProvider(for: role)
         let profileID = profileIDs[role] ?? model.selectedProfileIDs[provider]
@@ -324,29 +331,40 @@ struct AutonomousWorkflowView: View {
     }
 
     func makeRoleBindings() -> (bindings: [AutonomousRoleBinding], isValid: Bool) {
+        (try? makeCheckedRoleBindings()).map { ($0, true) } ?? ([], false)
+    }
+
+    /// Throws the reason a role cannot be bound, such as an invalid model name.
+    func makeCheckedRoleBindings() throws -> [AutonomousRoleBinding] {
         var bindings: [AutonomousRoleBinding] = []
-        do {
-            for role in WorkflowRoleSelection.allCases {
-                guard let profile = selectedProfile(for: role) else { return ([], false) }
-                let ids = role == .planner ? [] : Array(selectedExtensionIDs[role, default: []]).sorted()
-                bindings.append(try AutonomousRoleBinding(
-                    role: role.coreRole,
-                    provider: profile.provider,
-                    accountProfileID: profile.id,
-                    extensionIDs: ids
-                ))
+        for role in WorkflowRoleSelection.allCases {
+            guard let profile = selectedProfile(for: role) else {
+                throw AgentBridgeError.invalidInput(model.localized("Choose an account profile for the planner and every execution role."))
             }
-            return (bindings, true)
-        } catch {
-            return ([], false)
+            let ids = role == .planner ? [] : Array(selectedExtensionIDs[role, default: []]).sorted()
+            let choice = selectedModelChoice(for: role)
+            bindings.append(try AutonomousRoleBinding(
+                role: role.coreRole,
+                provider: profile.provider,
+                accountProfileID: profile.id,
+                extensionIDs: ids,
+                model: choice.model,
+                reasoningEffort: choice.reasoningEffort
+            ))
         }
+        return bindings
     }
 
     func generatePlan() {
         localError = nil
-        let roles = makeRoleBindings()
-        guard roles.isValid,
-              let planner = roles.bindings.first(where: { $0.role == .planner }) else {
+        let roles: [AutonomousRoleBinding]
+        do {
+            roles = try makeCheckedRoleBindings()
+        } catch {
+            localError = error.localizedDescription
+            return
+        }
+        guard let planner = roles.first(where: { $0.role == .planner }) else {
             localError = model.localized("Choose an account profile for the planner and every execution role.")
             return
         }
@@ -373,7 +391,7 @@ struct AutonomousWorkflowView: View {
                 goal: goal,
                 sourceRepositoryPath: model.repositoryPath,
                 planner: planner,
-                roleBindings: roles.bindings.filter { $0.role != .planner },
+                roleBindings: roles.filter { $0.role != .planner },
                 limits: limits,
                 shareOutputsWithDependencies: shareDependencyOutputs,
                 shareDiffWithReviewer: shareDiffWithReviewer,

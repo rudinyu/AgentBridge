@@ -69,6 +69,8 @@ CLI=build/swiftpm/debug/agentbridge
 4. 在「新工作階段存取模式」選「唯讀」（預設是「原生互動終端」），按「建立同一專案的新工作階段」。這會建立唯讀聊天工作階段。
 5. 在右側輸入提示並按「傳送」。成功完成的回合會保存到此 Repository 與固定提交版本的共用記憶。
 
+模型與推理強度：建立按鈕上方的「模型」與「推理強度」決定新的 Codex 或 Claude 工作階段使用什麼。模型可自由輸入，清單按鈕提供幾個建議名稱；CLI 接受的名稱都能輸入。推理強度第一個選項是「CLI 預設」，後面是 CLI 接受的等級（Codex：low、medium、high、xhigh、max、ultra；Claude：low、medium、high、xhigh、max）。兩者都留空就使用 CLI 自己的預設值，AgentBridge 不會猜測那是哪個模型。這個選擇和帳戶一樣綁定在工作階段上：套用於唯讀執行、修改執行與原生終端，之後無法更改，並在工作階段的供應商與帳戶旁顯示，例如「gpt-x · high」或「CLI 預設」。若 CLI 拒絕該模型，執行會失敗並顯示 CLI 的訊息；AgentBridge 不會改用其他模型重試。用量終端永遠不設定模型，本機模型仍使用自己的模型設定。新工作階段與新對話的預設值在「助理」>「新工作階段的預設模型」。新對話也有相同的兩個欄位；對話切換到其他供應商時會回到 CLI 預設。CLI 用法：`session create … --model NAME --effort LEVEL`、`chat new … --model NAME --effort LEVEL`，以及 `settings model codex|claude [--model NAME] [--effort LEVEL]`。
+
 每個工作階段固定建立時的來源 `HEAD`，並在 `<你選擇的資料夾>/workspaces/<工作階段 ID>/` 中的專屬隔離複本執行。未提交和未追蹤的檔案不會複製。來源提交後續改變時，既有工作階段仍使用原來的固定版本；建立新工作階段會以新的來源提交建立新的記憶範圍。AgentBridge 不會自動合併或推送工作區變更。
 
 專案指示：Codex 會自行讀取 Repository 的 `AGENTS.md`。對 Claude（唯讀、修改、API 與原生終端工作階段）和本機模型，AgentBridge 會傳入工作階段工作區根目錄、位於工作階段固定提交版本的 `AGENTS.md`，讓三者遵循相同的指示。只使用根目錄的檔案，上限 32 KiB；不讀取 CLAUDE.md、上層資料夾或子資料夾。若本機模型的上下文視窗放不下，檔案會被縮短或略過。由於工作階段固定在某個提交版本，修改 `AGENTS.md` 後必須先提交，並建立新的工作階段才會生效。活動紀錄會記錄檔案是否納入、大小與 SHA-256，或略過的原因。
@@ -215,7 +217,7 @@ CLI 也提供對應操作：
 
 **1 目標。** 選擇來源 Repository 並填入具體目標。目標下方以三行摘要目前的角色、驗證與上限。按 **Check subscription sign-in** 確認每個角色的帳戶；呼叫只使用訂閱登入。在 **Generate plan** 上方開啟 **Share the exact implementation diff with the reviewer**：它預設關閉但為必要項目，且實作者與審查者的帳戶都必須已允許共享記憶。其餘設定都在預設收合的 **Advanced settings** 中：
 
-- 規劃、調查、實作與審查角色的供應商與帳戶，以及各執行角色可使用的已啟用 Skills／MCP。
+- 規劃、調查、實作與審查角色的供應商與帳戶、各角色的模型與推理強度（預先帶入已儲存的預設值），以及各執行角色可使用的已啟用 Skills／MCP。有設定時，計畫摘要值會涵蓋各角色的模型與推理強度，因此核准後若要更改，就需要新的計畫。CLI 使用 `--planner-model`、`--planner-effort`，以及 `researcher`、`implementer`、`reviewer` 的同名選項；未指定的角色使用 CLI 預設。
 - 並行數、審查修正輪數、時間與供應商呼叫上限；並行數和審查輪數最多三個／三輪。
 - 驗證：專案 CI、不驗證，或已檢視的自訂執行檔。只有選擇自訂時才會出現路徑與參數欄位。
 - 其他共享選擇。將任務輸出傳給相依角色預設關閉。保存最終摘要到專案記憶開啟時，才會要求選擇目標帳戶。

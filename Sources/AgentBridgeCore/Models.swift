@@ -108,19 +108,46 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
     public var codexBinaryPath: String?
     public var claudeBinaryPath: String?
     public var localModel: LocalModelSettings
+    /// What new Codex and Claude sessions and chats start with. Nil means the
+    /// CLI default; existing sessions keep the choice they were created with.
+    public var codexModelDefaults: ProviderModelChoice?
+    public var claudeModelDefaults: ProviderModelChoice?
 
     public init(
         defaultProvider: AgentProvider = .codex,
         usageMode: UsageMode = .subscription,
         codexBinaryPath: String? = nil,
         claudeBinaryPath: String? = nil,
-        localModel: LocalModelSettings = LocalModelSettings()
+        localModel: LocalModelSettings = LocalModelSettings(),
+        codexModelDefaults: ProviderModelChoice? = nil,
+        claudeModelDefaults: ProviderModelChoice? = nil
     ) {
         self.defaultProvider = defaultProvider
         self.usageMode = usageMode
         self.codexBinaryPath = codexBinaryPath
         self.claudeBinaryPath = claudeBinaryPath
         self.localModel = localModel
+        self.codexModelDefaults = codexModelDefaults
+        self.claudeModelDefaults = claudeModelDefaults
+    }
+
+    public func modelDefaults(for provider: AgentProvider) -> ProviderModelChoice {
+        switch provider {
+        case .codex: codexModelDefaults ?? .cliDefault
+        case .claude: claudeModelDefaults ?? .cliDefault
+        case .local: .cliDefault
+        }
+    }
+
+    /// Stores nothing for "CLI default", so a settings file without a choice is
+    /// written exactly as before. Autonomous plans digest a copy of the settings.
+    public mutating func setModelDefaults(_ choice: ProviderModelChoice, for provider: AgentProvider) {
+        let stored = choice.isCLIDefault ? nil : choice
+        switch provider {
+        case .codex: codexModelDefaults = stored
+        case .claude: claudeModelDefaults = stored
+        case .local: break
+        }
     }
 
     public func binaryPath(for provider: AgentProvider) -> String? {
@@ -145,6 +172,8 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
         case codexBinaryPath
         case claudeBinaryPath
         case localModel
+        case codexModelDefaults
+        case claudeModelDefaults
     }
 
     public init(from decoder: Decoder) throws {
@@ -154,6 +183,8 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
         codexBinaryPath = try values.decodeIfPresent(String.self, forKey: .codexBinaryPath)
         claudeBinaryPath = try values.decodeIfPresent(String.self, forKey: .claudeBinaryPath)
         localModel = try values.decodeIfPresent(LocalModelSettings.self, forKey: .localModel) ?? LocalModelSettings()
+        codexModelDefaults = try values.decodeIfPresent(ProviderModelChoice.self, forKey: .codexModelDefaults)
+        claudeModelDefaults = try values.decodeIfPresent(ProviderModelChoice.self, forKey: .claudeModelDefaults)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -163,6 +194,8 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
         try values.encodeIfPresent(codexBinaryPath, forKey: .codexBinaryPath)
         try values.encodeIfPresent(claudeBinaryPath, forKey: .claudeBinaryPath)
         try values.encode(localModel, forKey: .localModel)
+        try values.encodeIfPresent(codexModelDefaults, forKey: .codexModelDefaults)
+        try values.encodeIfPresent(claudeModelDefaults, forKey: .claudeModelDefaults)
     }
 }
 
@@ -189,6 +222,11 @@ public struct SessionRecord: Codable, Equatable, Identifiable, Sendable {
     public let sourceWasDirty: Bool
     public var providerSessionID: String?
     public let accountProfileID: UUID?
+    /// The model and reasoning effort chosen when the session was created. Nil
+    /// means the provider CLI's default, which is what sessions created before
+    /// this choice existed use.
+    public let model: String?
+    public let reasoningEffort: String?
     public var status: SessionStatus
     public let policy: SessionPolicy
     public var changePlan: ChangePlan?
@@ -226,7 +264,9 @@ public struct SessionRecord: Codable, Equatable, Identifiable, Sendable {
         verificationDiffDigest: String? = nil,
         verificationCompletedAt: Date? = nil,
         changesAcceptedAt: Date? = nil,
-        removedAt: Date? = nil
+        removedAt: Date? = nil,
+        model: String? = nil,
+        reasoningEffort: String? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -238,6 +278,8 @@ public struct SessionRecord: Codable, Equatable, Identifiable, Sendable {
         self.sourceWasDirty = sourceWasDirty
         self.providerSessionID = providerSessionID
         self.accountProfileID = accountProfileID
+        self.model = model
+        self.reasoningEffort = reasoningEffort
         self.status = status
         self.policy = policy
         self.changePlan = changePlan

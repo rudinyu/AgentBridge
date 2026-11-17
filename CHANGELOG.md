@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Choose the model and reasoning effort for Codex and Claude. A new session or chat takes a model name (free text with suggestions) and an effort level, or leaves either at "CLI default"; the choice is fixed for the session, like its account, and is shown next to its provider and account. It applies to read-only runs, isolated change runs, chats, the native terminal and every autonomous workflow role, and never to the usage terminal. Defaults for new sessions and chats are saved per provider. The CLI adds `--model` and `--effort` to `session create` and `chat new`, `settings model`, and per-role `--ROLE-model` and `--ROLE-effort` to `autonomous plan`. A model the CLI rejects fails the run with the CLI's message; AgentBridge never retries with another model. Plans approved before this change keep their digest.
+- A failed Codex or Claude run now shows the reason the CLI gave, redacted and shortened, after its exit code.
+
 ## 0.16.3 — 2026-11-17
 
 ### Fixed

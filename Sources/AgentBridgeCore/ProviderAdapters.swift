@@ -234,7 +234,8 @@ public final class ProviderAdapter: Sendable {
                 budgetUSD: apiBudgetUSD,
                 activeMCPServers: activeMCPServers,
                 mcpWorkingDirectory: session.workspacePath,
-                mcpEnvironment: mcpEnvironment
+                mcpEnvironment: mcpEnvironment,
+                modelChoice: session.modelChoice
             )
         } else {
             switch provider {
@@ -245,7 +246,8 @@ public final class ProviderAdapter: Sendable {
                     ephemeral: stateless,
                     activeMCPServers: activeMCPServers,
                     mcpWorkingDirectory: session.workspacePath,
-                    mcpEnvironment: mcpEnvironment
+                    mcpEnvironment: mcpEnvironment,
+                    modelChoice: session.modelChoice
                 )
             case .claude:
                 arguments = try ProviderCommandBuilder.claudeReadOnlyArguments(
@@ -255,7 +257,8 @@ public final class ProviderAdapter: Sendable {
                     stateless: stateless,
                     activeMCPServers: activeMCPServers,
                     mcpWorkingDirectory: session.workspacePath,
-                    mcpEnvironment: mcpEnvironment
+                    mcpEnvironment: mcpEnvironment,
+                    modelChoice: session.modelChoice
                 )
             case .local:
                 throw AgentBridgeError.sessionMismatch("Local models do not run through a CLI, MCP or project tools.")
@@ -284,7 +287,7 @@ public final class ProviderAdapter: Sendable {
         let result = try await runner.run(spec, cancellation: cancellation)
         if result.timedOut { throw AgentBridgeError.processTimedOut }
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
-        guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "CLI exit code \(result.exitCode).") }
+        guard result.exitCode == 0 else { throw Self.cliFailure(provider: provider, result: result) }
         let parsed = try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated)
         let output = stateless
             ? ProviderOutput(text: parsed.text, providerSessionID: nil, actualCostUSD: parsed.actualCostUSD, tokenUsage: parsed.tokenUsage)
@@ -299,15 +302,19 @@ public final class ProviderAdapter: Sendable {
         executableURL: URL,
         environment: [String: String],
         cancellationRequestURL: URL?,
+        modelChoice: ProviderModelChoice = .cliDefault,
         onProgress: (@Sendable (String) -> Void)? = nil,
         cancellation: CancellationFlag = CancellationFlag()
     ) async throws -> (ProcessResult, ProviderOutput) {
         let arguments: [String]
         switch provider {
         case .codex:
-            arguments = ProviderCommandBuilder.codexDiscussionArguments(workspacePath: discussionWorkspaceURL.path)
+            arguments = try ProviderCommandBuilder.codexDiscussionArguments(
+                workspacePath: discussionWorkspaceURL.path,
+                modelChoice: modelChoice
+            )
         case .claude:
-            arguments = ProviderCommandBuilder.claudeDiscussionArguments()
+            arguments = try ProviderCommandBuilder.claudeDiscussionArguments(modelChoice: modelChoice)
         case .local:
             throw AgentBridgeError.sessionMismatch("Local models use a direct local HTTP connection and do not launch a CLI.")
         }
@@ -336,7 +343,7 @@ public final class ProviderAdapter: Sendable {
         let result = try await runner.run(spec, cancellation: cancellation)
         if result.timedOut { throw AgentBridgeError.processTimedOut }
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
-        guard result.exitCode == 0 else { throw AgentBridgeError.providerFailed(provider, "CLI exit code \(result.exitCode).") }
+        guard result.exitCode == 0 else { throw Self.cliFailure(provider: provider, result: result) }
         return (result, try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated))
     }
 
@@ -365,7 +372,8 @@ public final class ProviderAdapter: Sendable {
                 resumeID: session.providerSessionID,
                 activeMCPServers: activeMCPServers,
                 mcpWorkingDirectory: session.workspacePath,
-                mcpEnvironment: mcpEnvironment
+                mcpEnvironment: mcpEnvironment,
+                modelChoice: session.modelChoice
             )
         case .claude:
             arguments = try ProviderCommandBuilder.claudeChangeArguments(
@@ -374,7 +382,8 @@ public final class ProviderAdapter: Sendable {
                 resumeID: session.providerSessionID,
                 activeMCPServers: activeMCPServers,
                 mcpWorkingDirectory: session.workspacePath,
-                mcpEnvironment: mcpEnvironment
+                mcpEnvironment: mcpEnvironment,
+                modelChoice: session.modelChoice
             )
         case .local:
             throw AgentBridgeError.sessionMismatch("Local models do not support isolated changes.")
@@ -406,10 +415,21 @@ public final class ProviderAdapter: Sendable {
         let result = try await runner.run(spec, cancellation: cancellation)
         if result.timedOut { throw AgentBridgeError.processTimedOut }
         if result.wasCancelled { throw AgentBridgeError.processCancelled }
-        guard result.exitCode == 0 else {
-            throw AgentBridgeError.providerFailed(provider, "CLI exit code \(result.exitCode).")
-        }
+        guard result.exitCode == 0 else { throw Self.cliFailure(provider: provider, result: result) }
         return (result, try ProviderOutputParser.parse(provider: provider, data: result.standardOutput, truncated: result.outputWasTruncated))
+    }
+
+    /// Includes what the CLI said, such as a rejected model name, because the exit
+    /// code alone does not tell the user what to change.
+    static func cliFailure(provider: AgentProvider, result: ProcessResult) -> AgentBridgeError {
+        guard let detail = ProviderOutputParser.failureDetail(
+            provider: provider,
+            standardOutput: result.standardOutput,
+            standardError: result.standardError
+        ) else {
+            return .providerFailed(provider, "CLI exit code \(result.exitCode).")
+        }
+        return .providerFailed(provider, "CLI exit code \(result.exitCode). The CLI reported: \(detail)")
     }
 
     private func mcpPrivateDirectory(from environment: [String: String], fallback: String) -> URL {
@@ -456,14 +476,16 @@ public final class ProviderAdapter: Sendable {
             arguments = try ProviderCommandBuilder.codexInteractiveArguments(
                 workspacePath: session.workspacePath,
                 resumeID: session.providerSessionID,
-                contextFilePath: contextFilePath
+                contextFilePath: contextFilePath,
+                modelChoice: session.modelChoice
             )
         case .claude:
             arguments = try ProviderCommandBuilder.claudeInteractiveArguments(
                 workspacePath: session.workspacePath,
                 sessionID: session.id,
                 resumeID: session.providerSessionID,
-                contextFilePath: contextFilePath
+                contextFilePath: contextFilePath,
+                modelChoice: session.modelChoice
             )
         case .local:
             throw AgentBridgeError.sessionMismatch("Local models do not support the native interactive terminal.")

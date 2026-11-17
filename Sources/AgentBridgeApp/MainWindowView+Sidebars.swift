@@ -36,6 +36,9 @@ extension MainWindowView {
                             : "Chats use the provider’s official CLI subscription sign-in. Claude API usage is not available here.")
                             .font(.caption2).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        if model.chats.newDiscussionProvider != .local {
+                            newModelChoiceFields(for: model.chats.newDiscussionProvider)
+                        }
                         if model.chats.newDiscussionProvider == .local
                             || model.chats.selectedDiscussion?.provider == .local
                             || model.settings.defaultProvider == .local {
@@ -149,6 +152,10 @@ extension MainWindowView {
                 model.formattedDate(discussion.updatedAt, date: .abbreviated, time: .shortened)
             ))
                 .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            if let modelLabel = model.modelLabel(for: discussion) {
+                Text(verbatim: modelLabel)
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
@@ -179,6 +186,10 @@ extension MainWindowView {
                 String(session.snapshotCommit.prefix(12))
             ))
                 .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            if let modelLabel = model.modelLabel(for: session) {
+                Text(verbatim: modelLabel)
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
@@ -271,11 +282,37 @@ extension MainWindowView {
                             }
                         }
                     }
+                    DisclosureGroup("Default model for new sessions") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach([AgentProvider.codex, .claude], id: \.self) { provider in
+                                Text(provider.rawValue.capitalized).font(.caption.weight(.semibold))
+                                ModelChoiceFields(model: model, provider: provider, choice: Binding(
+                                    get: { model.defaultModelDrafts[provider] ?? .cliDefault },
+                                    set: {
+                                        model.defaultModelDrafts[provider] = $0
+                                        model.defaultModelDraftsEdited = true
+                                    }
+                                ))
+                            }
+                            Button("Save default models") { model.saveModelDefaults() }
+                            Text("New sessions and chats start with these. Each session keeps the model and effort it was created with.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
             }
             .padding(.vertical, 2)
         }
         .disabled(model.hasActiveAutonomousWorkflow || model.chats.hasActiveDiscussionOperation)
+    }
+
+    /// The model and effort for the next new session or chat of this provider.
+    func newModelChoiceFields(for provider: AgentProvider) -> some View {
+        ModelChoiceFields(model: model, provider: provider, choice: Binding(
+            get: { model.newModelChoice(for: provider) },
+            set: { model.newModelDrafts[provider] = $0 }
+        ))
     }
 
     var accountPanel: some View {
@@ -367,6 +404,7 @@ extension MainWindowView {
                         Text("Read-only").tag(AccessMode.readOnly)
                     }
                     .font(.caption)
+                    newModelChoiceFields(for: model.settings.defaultProvider)
                 }
                 if model.settings.usageMode == .api && model.settings.defaultProvider != .local {
                     Text("Claude API sessions are read-only; isolated changes and interactive terminal sessions require official CLI subscription mode.")
@@ -415,6 +453,10 @@ extension MainWindowView {
                         }
                         Text("\(model.profileName(for: session)) · \(model.localized(session.status.rawValue.capitalized))")
                             .font(.caption).foregroundStyle(.secondary)
+                        if let modelLabel = model.modelLabel(for: session) {
+                            Text(verbatim: modelLabel)
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
                         Text("\(session.snapshotCommit.prefix(12)) · \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent) · \(model.formattedDate(session.createdAt, date: .abbreviated, time: .shortened))")
                             .font(.caption2).foregroundStyle(.tertiary)
                     }

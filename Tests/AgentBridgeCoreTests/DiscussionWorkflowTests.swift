@@ -6,7 +6,7 @@ import XCTest
 final class DiscussionWorkflowTests: XCTestCase {
     func testDiscussionCommandsDisableProjectToolsAndNativeHistory() throws {
         let workspace = "/private/tmp/AgentBridge discussion"
-        let codex = ProviderCommandBuilder.codexDiscussionArguments(workspacePath: workspace)
+        let codex = try ProviderCommandBuilder.codexDiscussionArguments(workspacePath: workspace)
         XCTAssertEqual(codex[codex.firstIndex(of: "--cd")! + 1], workspace)
         XCTAssertTrue(codex.contains("--skip-git-repo-check"))
         XCTAssertTrue(codex.contains("--ephemeral"))
@@ -20,7 +20,7 @@ final class DiscussionWorkflowTests: XCTestCase {
         XCTAssertFalse(codex.contains("resume"))
         XCTAssertFalse(codex.contains("--mcp-config"))
 
-        let claude = ProviderCommandBuilder.claudeDiscussionArguments()
+        let claude = try ProviderCommandBuilder.claudeDiscussionArguments()
         XCTAssertTrue(claude.contains("--no-session-persistence"))
         XCTAssertEqual(claude[claude.firstIndex(of: "--tools")! + 1], "")
         XCTAssertEqual(claude[claude.firstIndex(of: "--mcp-config")! + 1], "{\"mcpServers\":{}}")

@@ -33,8 +33,10 @@ public final class WorkspaceManager: @unchecked Sendable {
         provider: AgentProvider,
         accessMode: AccessMode = .readOnly,
         accountProfileID: UUID? = nil,
-        snapshotCommit requestedSnapshotCommit: String? = nil
+        snapshotCommit requestedSnapshotCommit: String? = nil,
+        modelChoice: ProviderModelChoice = .cliDefault
     ) async throws -> SessionRecord {
+        let modelChoice = try modelChoice.validated(for: provider)
         guard store.workspaceRootURL != nil else {
             throw AgentBridgeError.invalidInput("No workspace data root is set. Choose a folder in the app, or run `agentbridge workspace set /absolute/path/to/root` first.")
         }
@@ -95,7 +97,9 @@ public final class WorkspaceManager: @unchecked Sendable {
                 snapshotCommit: snapshot.commit,
                 sourceWasDirty: snapshot.wasDirty,
                 policy: SessionPolicy(accessMode: accessMode, workspaceReadOnly: accessMode == .readOnly, apiModeAllowed: false),
-                accountProfileID: accountProfileID
+                accountProfileID: accountProfileID,
+                model: modelChoice.model,
+                reasoningEffort: modelChoice.reasoningEffort
             )
             if accessMode == .isolatedChanges { _ = try await privateBase(for: record) }
             try store.saveSession(record)
