@@ -33,8 +33,28 @@ extension MainWindowView {
                         .font(.caption2).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                workNotificationToggle
             }
             .padding(.vertical, 2)
+        }
+    }
+
+    /// App-wide, unlike the per-account threshold notifications above.
+    @ViewBuilder
+    var workNotificationToggle: some View {
+        let notifier = model.workNotifier
+        Toggle("Notify when work finishes", isOn: Binding(
+            get: { notifier.isEnabled },
+            set: { notifier.setEnabled($0) }
+        ))
+        .font(.caption2)
+        Text("Change runs, verifications and autonomous workflows notify when they end while AgentBridge is in the background.")
+            .font(.caption2).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        if !notifier.status.isEmpty {
+            Text(model.localized(notifier.status))
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

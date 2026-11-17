@@ -107,6 +107,10 @@ final class AppModel {
     /// What removing a session would delete, while the user decides.
     var sessionRemovalPreview: SessionRemovalPreview?
     var isRemovingSession = false
+    /// Sends finished-work notifications. Tests get one of their own that is off.
+    @ObservationIgnored let workNotifier: WorkNotifier
+    /// Work a clicked notification opened, for the window to show; it clears it.
+    var openedFinishedWork: WorkNotificationTarget?
 
     /// Keeps `requestedAccessMode` to what the provider and usage mode allow:
     /// read-only for local models and Claude API mode. When those allow more
@@ -198,6 +202,9 @@ final class AppModel {
 
     init() {
         appLanguage = AppLanguage.saved
+        workNotifier = .shared
+        // Registered last, once sessions are loaded, so a click that launched the app can open its work.
+        defer { WorkNotifier.shared.register(self) }
         setupWizard.attach(to: self)
         usage.attach(to: self)
         chats.attach(to: self)
@@ -231,6 +238,7 @@ final class AppModel {
     /// reads the user's real data root or saved preferences.
     init(store: AuditStore, service: BridgeService) {
         appLanguage = .english
+        workNotifier = WorkNotifier(defaults: nil)
         setupWizard.attach(to: self)
         usage.attach(to: self)
         chats.attach(to: self)
@@ -288,6 +296,22 @@ final class AppModel {
             return
         }
         selectedSessionID = id
+    }
+
+    /// Opens the session or workflow run a clicked notification is about.
+    /// Returns false, changing nothing, when it no longer exists.
+    @discardableResult
+    func openFinishedWork(_ target: WorkNotificationTarget) -> Bool {
+        switch target {
+        case .session(let id):
+            guard sessions.contains(where: { $0.id == id }) else { return false }
+            openProjectSession(id)
+        case .autonomousRun(let id):
+            guard autonomousRuns.contains(where: { $0.id == id }) else { return false }
+            selectedAutonomousRunID = id
+        }
+        openedFinishedWork = target
+        return true
     }
 
     var selectedSessionIsRunning: Bool {
@@ -1085,12 +1109,20 @@ final class AppModel {
         errorMessage = nil
         status = "Running the approved changes in the isolated workspace…"
         Task { @MainActor [self] in
+            var succeeded = false
             defer {
                 activeRunFlags.removeValue(forKey: session.id)
                 isRunning = !activeRunFlags.isEmpty
                 activeRunSessionID = activeRunFlags.keys.first
                 refresh()
                 refreshSelectedEvents()
+                workNotifier.workFinished(FinishedWork(
+                    outcome: .changeRun(succeeded: succeeded),
+                    target: .session(session.id),
+                    repositoryPath: session.sourceRepositoryPath,
+                    providers: [session.provider],
+                    cancelledByUser: cancellation.isCancelled
+                ), language: appLanguage)
             }
             do {
                 let output = try await service.runChanges(
@@ -1108,6 +1140,7 @@ final class AppModel {
                 outputText = output.text
                 prompt = ""
                 status = "The CLI reported the change run finished; review the full file diff."
+                succeeded = true
             } catch {
                 errorMessage = error.localizedDescription
                 status = "The change run ended."
@@ -1136,6 +1169,8 @@ final class AppModel {
         changes.isVerifying = true
         changes.verificationResult = nil
         Task { @MainActor [self] in
+            var passed = false
+            var cancelled = false
             defer {
                 activeRunFlags.removeValue(forKey: session.id)
                 isRunning = !activeRunFlags.isEmpty
@@ -1143,6 +1178,13 @@ final class AppModel {
                 activeRunSessionID = activeRunFlags.keys.first
                 refresh()
                 refreshSelectedEvents()
+                workNotifier.workFinished(FinishedWork(
+                    outcome: .verification(passed: passed),
+                    target: .session(session.id),
+                    repositoryPath: session.sourceRepositoryPath,
+                    providers: [session.provider],
+                    cancelledByUser: cancelled || cancellation.isCancelled
+                ), language: appLanguage)
             }
             do {
                 let result = try await service.runVerification(
@@ -1153,6 +1195,8 @@ final class AppModel {
                     cancellation: cancellation
                 )
                 changes.verificationResult = result
+                passed = result.succeeded
+                cancelled = result.wasCancelled
                 status = result.succeeded
                     ? "The verification CLI reported success; exit code 0, took \(String(format: "%.2f", result.durationSeconds)) s."
                     : "Verification did not pass or did not finish; check the CLI output and the activity log."
@@ -1493,19 +1537,23 @@ final class AppModel {
             return
         }
         let cancellation = CancellationFlag()
+        let runAtStart = autonomousRuns.first(where: { $0.id == id })
         autonomousCancellationFlags[id] = cancellation
         isRunningAutonomousRun = true
         autonomousStatus = localized("Running the approved bounded workflow…")
         autonomousError = nil
         Task { @MainActor [weak self] in
             guard let self else { return }
+            var finishedRecord: AutonomousRunRecord?
             defer {
                 self.autonomousCancellationFlags.removeValue(forKey: id)
                 self.isRunningAutonomousRun = !self.autonomousCancellationFlags.isEmpty
                 self.refresh()
+                self.notifyAutonomousRunEnded(id: id, record: finishedRecord, runAtStart: runAtStart)
             }
             do {
                 let record = try await service.runAutonomousRun(id: id, reviewedDigest: reviewedDigest, cancellation: cancellation)
+                finishedRecord = record
                 self.selectedAutonomousRunID = record.id
                 self.autonomousStatus = self.localized(WorkflowRunOutcome.statusMessage(for: record.status))
             } catch {
@@ -1513,6 +1561,20 @@ final class AppModel {
                 self.autonomousStatus = self.localized("Autonomous workflow ended.")
             }
         }
+    }
+
+    /// A workflow notifies however it ended. When the run threw, the status saved
+    /// in the store (just refreshed) is the best word for how it ended; failing
+    /// that, the run as it was at start still names the repository.
+    private func notifyAutonomousRunEnded(id: UUID, record: AutonomousRunRecord?, runAtStart: AutonomousRunRecord?) {
+        let saved = record ?? autonomousRuns.first(where: { $0.id == id })
+        guard let plan = (saved ?? runAtStart)?.plan else { return }
+        workNotifier.workFinished(FinishedWork(
+            outcome: .autonomousWorkflow(saved?.status),
+            target: .autonomousRun(id),
+            repositoryPath: plan.sourceRepositoryPath,
+            providers: [plan.plannerBinding.provider] + plan.roleProfiles.map(\.binding.provider)
+        ), language: appLanguage)
     }
 
     func cancelAutonomousRun(id: UUID) {
