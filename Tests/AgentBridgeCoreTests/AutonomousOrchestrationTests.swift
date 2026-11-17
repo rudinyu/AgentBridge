@@ -241,8 +241,14 @@ final class AutonomousOrchestrationTests: XCTestCase {
             profileIDForTask: { _ in sourceProfileID },
             operation: { task, dependencies in
                 await probe.start(taskID: task.id, dependencyOutputs: dependencies)
-                let delay: UInt64 = task.id == "research-b" ? 140_000_000 : 20_000_000
-                try await Task.sleep(nanoseconds: delay)
+                // research-b stays running until research-c has started, so the
+                // order does not depend on how fast the machine is. The bounded
+                // wait turns a scheduler that holds research-c back into a
+                // failure instead of a hang.
+                if task.id == "research-b" {
+                    let started = try await probe.waitForStart(of: "research-c", timeoutNanoseconds: 10_000_000_000)
+                    XCTAssertTrue(started, "research-c did not start while research-b was still running.")
+                }
                 await probe.finish(taskID: task.id)
                 return "output-\(task.id)"
             }
@@ -893,5 +899,16 @@ private actor AutonomousDAGProbe {
 
     func snapshot() -> Snapshot {
         Snapshot(events: events, maximumConcurrent: maximumConcurrent, dependencyProfileID: dependencyProfileID, dependencyText: dependencyText)
+    }
+
+    func waitForStart(of taskID: String, timeoutNanoseconds: UInt64) async throws -> Bool {
+        let step: UInt64 = 5_000_000
+        var waited: UInt64 = 0
+        while !events.contains("start:\(taskID)") {
+            guard waited < timeoutNanoseconds else { return false }
+            try await Task.sleep(nanoseconds: step)
+            waited += step
+        }
+        return true
     }
 }
