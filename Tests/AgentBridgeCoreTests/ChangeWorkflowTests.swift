@@ -1080,6 +1080,303 @@ final class ChangeWorkflowTests: XCTestCase {
         }
     }
 
+    // MARK: Drafting a plan
+
+    private static let validDraftJSON = #"{"title":"Update the greeting","summary":"Change the greeting in source.txt only.","steps":["Replace the greeting.","Leave other files unchanged."]}"#
+
+    func testDraftedPlanIsReturnedButNothingIsSavedToTheSession() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let saved = try fixture.service.createChangePlan(
+            sessionID: fixture.session.id, title: "Existing", summary: "An earlier plan.", steps: ["Keep it."]
+        )
+        _ = try fixture.service.approveChangePlan(sessionID: fixture.session.id, planID: saved.id, reviewedDigest: saved.reviewDigest)
+        let mock = try installMockCodex(fixture, agentText: Self.validDraftJSON)
+
+        let draft = try await fixture.service.draftChangePlan(sessionID: fixture.session.id, request: "  Make the greeting friendlier.  ")
+        XCTAssertEqual(draft, DraftedChangePlan(
+            title: "Update the greeting",
+            summary: "Change the greeting in source.txt only.",
+            steps: ["Replace the greeting.", "Leave other files unchanged."]
+        ))
+
+        // The saved plan and its approval are untouched, and the draft can be saved as is.
+        let session = try XCTUnwrap(fixture.store.session(id: fixture.session.id))
+        XCTAssertEqual(session.changePlan?.id, saved.id)
+        XCTAssertEqual(session.changePlan?.reviewDigest, saved.reviewDigest)
+        XCTAssertEqual(session.approvedChangePlanDigest, saved.reviewDigest)
+        XCTAssertNil(session.lastChangeRunAt)
+        XCTAssertEqual(session.status, .completed)
+        let prompt = try String(contentsOf: mock.stdin, encoding: .utf8)
+        XCTAssertTrue(prompt.contains("Make the greeting friendlier."))
+        XCTAssertTrue(prompt.contains("Do not edit, create or delete any file"))
+        let resaved = try fixture.service.createChangePlan(
+            sessionID: fixture.session.id, title: draft.title, summary: draft.summary, steps: draft.steps
+        )
+        XCTAssertFalse(resaved.includesSharedMemory)
+    }
+
+    func testDraftingRunsWithTheReadOnlyArgumentsNotTheChangeArguments() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let codex = try installMockCodex(fixture, agentText: Self.validDraftJSON)
+        _ = try await fixture.service.draftChangePlan(sessionID: fixture.session.id, request: "Plan a greeting change.")
+        let codexArguments = try String(contentsOf: codex.arguments, encoding: .utf8).split(separator: "\n").map(String.init)
+        XCTAssertEqual(codexArguments[codexArguments.firstIndex(of: "--sandbox")! + 1], "read-only")
+        XCTAssertEqual(codexArguments[codexArguments.firstIndex(of: "--cd")! + 1], fixture.session.workspacePath)
+        XCTAssertTrue(codexArguments.contains("--ephemeral"))
+        XCTAssertFalse(codexArguments.contains("workspace-write"))
+        XCTAssertFalse(codexArguments.contains("resume"))
+
+        let claude = try installMockClaude(fixture, resultText: Self.validDraftJSON)
+        let claudeSession = try await fixture.service.createSession(
+            sourcePath: fixture.sourceURL.path, provider: .claude, accessMode: .isolatedChanges
+        )
+        let draft = try await fixture.service.draftChangePlan(sessionID: claudeSession.id, request: "Plan a greeting change.")
+        XCTAssertEqual(draft.steps.count, 2)
+        let claudeArguments = try String(contentsOf: claude.arguments, encoding: .utf8).split(separator: "\n").map(String.init)
+        XCTAssertEqual(claudeArguments[claudeArguments.firstIndex(of: "--permission-mode")! + 1], "dontAsk")
+        XCTAssertEqual(claudeArguments[claudeArguments.firstIndex(of: "--tools")! + 1], "Read,Glob,Grep")
+        XCTAssertTrue(claudeArguments.contains("--no-session-persistence"))
+        XCTAssertFalse(claudeArguments.contains("acceptEdits"))
+        XCTAssertFalse(claudeArguments.contains { $0.contains("Edit") || $0.contains("Write") })
+        XCTAssertFalse(claudeArguments.contains("--session-id"))
+        XCTAssertEqual(try FixtureGit.run(["-C", claudeSession.workspacePath, "status", "--porcelain"]), "")
+    }
+
+    func testDraftsThatAreNotExactlyAValidPlanAreRejected() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let tooManySteps = (1...33).map { "\"Step \($0)\"" }.joined(separator: ",")
+        let cases: [(String, String)] = [
+            ("Here is the plan: " + Self.validDraftJSON, "not a single JSON object"),
+            ("```json\n" + Self.validDraftJSON + "\n```", "not a single JSON object"),
+            (#"[{"title":"t","summary":"s","steps":["a"]}]"#, "exactly a title"),
+            (#"{"title":"t","summary":"s"}"#, "exactly a title"),
+            (#"{"title":"t","summary":"s","steps":["a"],"includesSharedMemory":true}"#, "exactly a title"),
+            (#"{"title":"t","summary":"s","steps":"a"}"#, "text steps"),
+            (#"{"title":7,"summary":"s","steps":["a"]}"#, "text steps"),
+            (#"{"title":"t","summary":"s","steps":["a",2]}"#, "text steps"),
+            (#"{"title":"t","summary":"s","steps":[]}"#, "plan limits"),
+            (#"{"title":" ","summary":"s","steps":["a"]}"#, "plan limits"),
+            (#"{"title":"t","summary":"s","steps":[\#(tooManySteps)]}"#, "plan limits"),
+            (#"{"title":"\#(String(repeating: "x", count: 401))","summary":"s","steps":["a"]}"#, "plan limits"),
+            (#"{"title":"t","summary":"\#(String(repeating: "x", count: 10_001))","steps":["a"]}"#, "plan limits"),
+            (#"{"title":"t","summary":"s","steps":["\#(String(repeating: "x", count: 2_001))"]}"#, "plan limits"),
+            (#"{"title":"t","summary":"s","steps":["one\ntwo"]}"#, "plan limits"),
+            (#"{"title":"t\u0000","summary":"s","steps":["a"]}"#, "plan limits"),
+        ]
+        for (index, (text, expected)) in cases.enumerated() {
+            XCTAssertThrowsError(try ChangePlanDraftParser.parse(text), "case \(index)") { error in
+                guard case AgentBridgeError.invalidChangePlan(let message) = error, message.contains(expected) else {
+                    return XCTFail("case \(index): unexpected error \(error)")
+                }
+            }
+        }
+        XCTAssertThrowsError(try ChangePlanDraftParser.parse(String(repeating: " ", count: 256 * 1_024 + 1) + Self.validDraftJSON))
+
+        // A rejected draft fails the run, is recorded, and still leaves the plan alone.
+        _ = try installMockCodex(fixture, agentText: "Sure! " + Self.validDraftJSON)
+        do {
+            _ = try await fixture.service.draftChangePlan(sessionID: fixture.session.id, request: "Plan something.")
+            XCTFail("A draft with prose around it was accepted.")
+        } catch let error as AgentBridgeError {
+            guard case .invalidChangePlan = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        let session = try XCTUnwrap(fixture.store.session(id: fixture.session.id))
+        XCTAssertNil(session.changePlan)
+        XCTAssertEqual(session.status, .failed)
+        let events = try fixture.service.events(sessionID: fixture.session.id)
+        XCTAssertTrue(events.contains { $0.kind == "change_plan.draft_failed" })
+        XCTAssertFalse(events.contains { $0.kind == "change_plan.drafted" })
+        XCTAssertEqual(try fixture.service.taskRecords(sessionID: fixture.session.id).map(\.status), [.failed])
+    }
+
+    func testDraftRequestsMustHaveContentAndFitTheLimit() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let mock = try installMockCodex(fixture, agentText: Self.validDraftJSON)
+        for request in ["  \n ", String(repeating: "x", count: BridgeService.maximumChangePlanRequestBytes + 1), "a\0b"] {
+            do {
+                _ = try await fixture.service.draftChangePlan(sessionID: fixture.session.id, request: request)
+                XCTFail("An empty or oversized request was sent.")
+            } catch let error as AgentBridgeError {
+                guard case .invalidInput = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: mock.arguments.path))
+        _ = try await fixture.service.draftChangePlan(
+            sessionID: fixture.session.id,
+            request: String(repeating: "x", count: BridgeService.maximumChangePlanRequestBytes)
+        )
+    }
+
+    func testDraftingIsRefusedWhileAnotherRunHoldsTheSessionOrEverySlotIsBusy() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let mock = try installMockCodex(fixture, agentText: Self.validDraftJSON)
+        do {
+            let lease = try fixture.store.acquireRunLease(for: fixture.session.id, countsTowardRunLimit: true)
+            do {
+                _ = try await fixture.service.draftChangePlan(sessionID: fixture.session.id, request: "Plan it.")
+                XCTFail("Drafting ran while another run held the session.")
+            } catch let error as AgentBridgeError {
+                XCTAssertTrue(error.isSessionBusy, "Unexpected error: \(error)")
+            }
+            withExtendedLifetime(lease) {}
+        }
+        do {
+            var runs: [SessionRunLease] = []
+            for _ in 0..<AuditStore.maximumConcurrentRuns {
+                runs.append(try fixture.store.acquireRunLease(for: UUID(), countsTowardRunLimit: true))
+            }
+            do {
+                _ = try await fixture.service.draftChangePlan(sessionID: fixture.session.id, request: "Plan it.")
+                XCTFail("Drafting ran with every run slot busy.")
+            } catch let error as AgentBridgeError {
+                guard case .sessionMismatch(let message) = error, message.contains("can run at once") else {
+                    return XCTFail("Unexpected error: \(error)")
+                }
+            }
+            withExtendedLifetime(runs) {}
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: mock.arguments.path))
+    }
+
+    func testDraftingIsRefusedForLocalModelsAPIModeAndReadOnlySessions() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let mock = try installMockCodex(fixture, agentText: Self.validDraftJSON)
+        let local = try await fixture.service.createSession(sourcePath: fixture.sourceURL.path, provider: .local)
+        do {
+            _ = try await fixture.service.draftChangePlan(sessionID: local.id, request: "Plan it.")
+            XCTFail("A local-model session drafted a plan.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch(let message) = error, message.contains("Local models") else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+        let readOnly = try await fixture.service.createSession(sourcePath: fixture.sourceURL.path, provider: .codex, accessMode: .readOnly)
+        do {
+            _ = try await fixture.service.draftChangePlan(sessionID: readOnly.id, request: "Plan it.")
+            XCTFail("A read-only session drafted a change plan.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch(let message) = error, message.contains("isolated-change session") else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+        var settings = try fixture.service.settings()
+        settings.usageMode = .api
+        try fixture.service.saveSettings(settings)
+        do {
+            _ = try await fixture.service.draftChangePlan(sessionID: fixture.session.id, request: "Plan it.")
+            XCTFail("API mode drafted a plan.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch(let message) = error, message.contains("subscription") else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: mock.arguments.path))
+    }
+
+    func testDraftingIsCountedAndRecordedLikeOtherRuns() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        _ = try installMockCodex(fixture, agentText: Self.validDraftJSON, usage: (input: 120, cached: 20, output: 30))
+        _ = try await fixture.service.draftChangePlan(sessionID: fixture.session.id, request: "Plan it.")
+
+        let events = try fixture.service.events(sessionID: fixture.session.id)
+        let kinds = events.map(\.kind)
+        XCTAssertTrue(kinds.contains("change_plan.draft_started"))
+        XCTAssertTrue(kinds.contains("change_plan.drafted"))
+        XCTAssertTrue(kinds.contains("run.output"))
+        XCTAssertFalse(kinds.contains("change.run.started"))
+        XCTAssertFalse(kinds.contains("memory.loaded"))
+        XCTAssertFalse(events.contains { $0.kind != "run.output" && $0.message.contains("Plan it.") }, "The request reached an audit message.")
+        let tokens = try XCTUnwrap(events.first { $0.kind == "usage.tokens" }?.tokenUsage)
+        XCTAssertEqual(tokens, TokenUsage(inputTokens: 100, cachedInputTokens: 20, outputTokens: 30))
+        let tasks = try fixture.service.taskRecords(sessionID: fixture.session.id)
+        XCTAssertEqual(tasks.map(\.status), [.completed])
+        // The run slot and the session lease are free again.
+        withExtendedLifetime(try fixture.store.acquireRunLease(for: fixture.session.id, countsTowardRunLimit: true)) {}
+    }
+
+    func testDraftingSendsNoSharedMemory() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try fixture.service.setSharedMemoryNotes(sessionID: fixture.session.id, notes: "planted-memory-marker")
+        let mock = try installMockCodex(fixture, agentText: Self.validDraftJSON)
+        _ = try await fixture.service.draftChangePlan(sessionID: fixture.session.id, request: "Plan it.")
+        XCTAssertFalse(try String(contentsOf: mock.stdin, encoding: .utf8).contains("planted-memory-marker"))
+        let memory = try fixture.service.sharedMemory(sessionID: fixture.session.id)
+        XCTAssertTrue(memory.turns.isEmpty, "A draft was written to shared memory.")
+    }
+
+    private struct MockProvider {
+        let arguments: URL
+        let stdin: URL
+    }
+
+    /// A fake Codex that records its arguments and prompt and answers with `agentText`.
+    private func installMockCodex(
+        _ fixture: Fixture,
+        agentText: String,
+        usage: (input: Int, cached: Int, output: Int)? = nil
+    ) throws -> MockProvider {
+        let message = try JSONSerialization.data(withJSONObject: [
+            "type": "item.completed", "item": ["type": "agent_message", "text": agentText]
+        ] as [String: Any])
+        var turn: [String: Any] = ["type": "turn.completed"]
+        if let usage {
+            turn["usage"] = ["input_tokens": usage.input, "cached_input_tokens": usage.cached, "output_tokens": usage.output]
+        }
+        let lines = String(decoding: message, as: UTF8.self) + "\n"
+            + String(decoding: try JSONSerialization.data(withJSONObject: turn), as: UTF8.self) + "\n"
+        let mock = try installMockProvider(fixture, name: "codex", response: lines, loginCheck: #"case " $* " in *"login status"*) printf '%s\n' 'Logged in using ChatGPT'; exit 0 ;; esac"#)
+        var settings = try fixture.service.settings()
+        settings.codexBinaryPath = fixture.rootURL.appendingPathComponent("mock-bin/codex").path
+        settings.usageMode = .subscription
+        try fixture.service.saveSettings(settings)
+        return mock
+    }
+
+    private func installMockClaude(_ fixture: Fixture, resultText: String) throws -> MockProvider {
+        let result = try JSONSerialization.data(withJSONObject: ["type": "result", "subtype": "success", "result": resultText])
+        let mock = try installMockProvider(
+            fixture,
+            name: "claude",
+            response: String(decoding: result, as: UTF8.self) + "\n",
+            loginCheck: #"case " $* " in *" auth status "*) printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}'; exit 0 ;; esac"#
+        )
+        var settings = try fixture.service.settings()
+        settings.claudeBinaryPath = fixture.rootURL.appendingPathComponent("mock-bin/claude").path
+        settings.usageMode = .subscription
+        try fixture.service.saveSettings(settings)
+        return mock
+    }
+
+    private func installMockProvider(_ fixture: Fixture, name: String, response: String, loginCheck: String) throws -> MockProvider {
+        let directory = fixture.rootURL.appendingPathComponent("mock-bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let mock = MockProvider(
+            arguments: fixture.rootURL.appendingPathComponent("\(name)-arguments.txt"),
+            stdin: fixture.rootURL.appendingPathComponent("\(name)-stdin.txt")
+        )
+        let responseURL = fixture.rootURL.appendingPathComponent("\(name)-response.jsonl")
+        try Data(response.utf8).write(to: responseURL)
+        try? FileManager.default.removeItem(at: mock.arguments)
+        let executable = directory.appendingPathComponent(name)
+        try Data("""
+        #!/bin/sh
+        \(loginCheck)
+        for argument in "$@"; do printf '%s\\n' "$argument"; done > '\(mock.arguments.path)'
+        /bin/cat > '\(mock.stdin.path)'
+        /bin/cat '\(responseURL.path)'
+        """.utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        return mock
+    }
+
     private struct Fixture {
         let rootURL: URL
         let sourceURL: URL

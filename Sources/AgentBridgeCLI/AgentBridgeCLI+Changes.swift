@@ -5,9 +5,11 @@ import AgentBridgeCore
 extension AgentBridgeCLI {
     static func changesCommand(_ arguments: [String], service: BridgeService) async throws {
         guard let action = arguments.first else {
-            throw AgentBridgeError.invalidInput("Usage: agentbridge changes plan|approve|run|diff|restore|restore-all|export|verify|accept|apply ...")
+            throw AgentBridgeError.invalidInput("Usage: agentbridge changes draft|plan|approve|run|diff|restore|restore-all|export|verify|accept|apply ...")
         }
         switch action {
+        case "draft":
+            try await changesDraft(arguments, service: service)
         case "plan":
             try await changesPlan(arguments, service: service)
         case "approve":
@@ -169,6 +171,31 @@ extension AgentBridgeCLI {
         for (offset, step) in plan.steps.enumerated() { print("  \(offset + 1). \(step)") }
         print("Review digest: \(plan.reviewDigest)")
         print("The plan is not approved; it does not authorize writes yet.")
+    }
+
+    /// Prints a drafted plan without saving it; `changes plan` saves it.
+    static func changesDraft(_ arguments: [String], service: BridgeService) async throws {
+        guard (arguments.count == 2 || (arguments.count == 3 && arguments[2] == "--json")),
+              let sessionID = UUID(uuidString: arguments[1]) else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge changes draft SESSION-ID [--json] < request.txt")
+        }
+        let request = try readBoundedStandardInput(maximumBytes: BridgeService.maximumChangePlanRequestBytes, label: "Change request")
+        let cancellation = CancellationFlag()
+        let signalSources = makeCancellationSignalSources(cancellation)
+        defer { signalSources.forEach { $0.cancel() } }
+        let draft = try await service.draftChangePlan(sessionID: sessionID, request: request, cancellation: cancellation) { progress in
+            FileHandle.standardError.write(Data("• \(OutputRedactor.redact(progress))\n".utf8))
+        }
+        if arguments.count == 3 {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            FileHandle.standardOutput.write(try encoder.encode(draft) + Data("\n".utf8))
+            return
+        }
+        print("Drafted plan (not saved):")
+        print("Title: \(draft.title)\nSummary: \(draft.summary)\nSteps:")
+        for (offset, step) in draft.steps.enumerated() { print("  \(offset + 1). \(step)") }
+        print("Nothing was saved or approved. Edit the plan as needed, then save it with `changes plan`.")
     }
 
     static func changesApprove(_ arguments: [String], service: BridgeService) async throws {

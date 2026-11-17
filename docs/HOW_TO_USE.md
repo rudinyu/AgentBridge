@@ -163,13 +163,15 @@ To remove a chat, right-click it in the Chats list and choose **Remove Chat…**
 
 The native interactive terminal is the default access mode. For an isolated change, choose **Isolated changes** under **New session access mode** and create a new session while subscription mode is selected. It uses a fresh workspace based on the source repository's committed `HEAD`; uncommitted source files are not copied. Native interactive TUI mode is separate.
 
-In **Changes**, write a title, summary, and steps for the plan, then save and review it. The change run sees no shared memory unless you select **Include shared memory in the change run** (or pass `--with-memory` to `changes plan`); approval then covers the memory as it is, so approve again if it changes. Edit the plan until it matches the work you want. Click **Approve reviewed plan** before **Run approved changes** becomes available. The provider writes only in the isolated session workspace. Codex change runs use headless `codex exec`: AgentBridge does not enable automatic approval, and no runtime approval prompt is available. A command that needs permissions outside the configured sandbox fails closed; keep the work within the approved plan and workspace. The CLI offers the same sequence:
+In **Changes**, write a title, summary, and steps for the plan, then save and review it. To start from a draft, describe the change in **What should change?** and click **Draft plan**: AgentBridge sends one real read-only request to the session's provider, which may read the workspace but not edit it, and fills the title, summary and steps with its answer. If those fields already have text, it asks before replacing them. You can cancel while it drafts. The draft is not saved, approved or run, and it never turns on shared memory; edit it, then save it as usual. The request counts as a run like any other. From the CLI, `changes draft SESSION-ID < request.txt` prints a draft (`--json` for JSON) without saving it; pass the text you keep to `changes plan`. The change run sees no shared memory unless you select **Include shared memory in the change run** (or pass `--with-memory` to `changes plan`); approval then covers the memory as it is, so approve again if it changes. Edit the plan until it matches the work you want. Click **Approve reviewed plan** before **Run approved changes** becomes available. The provider writes only in the isolated session workspace. Codex change runs use headless `codex exec`: AgentBridge does not enable automatic approval, and no runtime approval prompt is available. A command that needs permissions outside the configured sandbox fails closed; keep the work within the approved plan and workspace. The CLI offers the same sequence:
 
 ```sh
 CLI=build/swiftpm/debug/agentbridge
 "$CLI" session create --provider codex --repo "$HOME/Projects/example" --changes
 # Copy the session ID printed above.
 SESSION_ID="paste-session-id-here"
+# Optional: ask the model for a draft. It prints a plan and saves nothing.
+printf '%s' 'Handle the new record shape in the parser.' | "$CLI" changes draft "$SESSION_ID"
 "$CLI" changes plan "$SESSION_ID" --title "Update parser" \
   --summary "Handle the new record shape." --step "Update decoding" --step "Adjust focused coverage"
 # Copy PLAN_ID and REVIEW_DIGEST from the output. Approval prints the plan and

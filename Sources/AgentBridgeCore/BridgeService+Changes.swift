@@ -20,11 +20,7 @@ extension BridgeService {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSteps = steps.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard !trimmedTitle.isEmpty, trimmedTitle.utf8.count <= 400,
-              !trimmedSummary.isEmpty, trimmedSummary.utf8.count <= 10_000,
-              (1...32).contains(trimmedSteps.count),
-              trimmedSteps.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2_000 && !$0.contains("\0") }),
-              !trimmedTitle.contains("\0"), !trimmedSummary.contains("\0") else {
+        guard Self.changePlanFieldsFitLimits(title: trimmedTitle, summary: trimmedSummary, steps: trimmedSteps) else {
             throw AgentBridgeError.invalidChangePlan("The title, summary and 1 to 32 steps must all have content and fit the size limits.")
         }
         if includesSharedMemory {
@@ -205,6 +201,15 @@ extension BridgeService {
             }
             throw error
         }
+    }
+
+    /// The limits a saved plan must meet, for already trimmed fields. A drafted
+    /// plan is checked against the same limits, so it can always be saved.
+    static func changePlanFieldsFitLimits(title: String, summary: String, steps: [String]) -> Bool {
+        !title.isEmpty && title.utf8.count <= 400 && !title.contains("\0")
+            && !summary.isEmpty && summary.utf8.count <= 10_000 && !summary.contains("\0")
+            && (1...32).contains(steps.count)
+            && steps.allSatisfy { !$0.isEmpty && $0.utf8.count <= 2_000 && !$0.contains("\0") }
     }
 
     func requireIsolatedChangesSession(_ session: SessionRecord) throws {

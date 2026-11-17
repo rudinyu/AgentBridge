@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The model can draft an isolated-change plan. In **Changes**, describe what should change and click **Draft plan**; AgentBridge sends one read-only request to the session's provider in its isolated workspace and fills the plan's title, summary and steps with the answer, asking first if those fields already have text. The draft is never saved, approved or run, and it never includes shared memory; you edit and save it as before. The run is cancellable and counts like any other run. The CLI has `changes draft SESSION-ID [--json]`, which reads the request from standard input and prints the draft without saving it.
+
 ## 0.16.3 — 2026-11-17
 
 ### Fixed

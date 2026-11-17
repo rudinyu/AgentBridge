@@ -28,6 +28,7 @@ extension AgentBridgeCLI {
           agentbridge session remove SESSION-ID [--confirm [--discard-unsaved-work]]
           agentbridge sessions
           agentbridge run SESSION-ID [--api-budget USD --confirm-api-spend --api-key-env ANTHROPIC_API_KEY]
+          agentbridge changes draft SESSION-ID [--json] < request.txt
           agentbridge changes plan SESSION-ID --title TITLE --summary SUMMARY --step STEP [--step STEP ...] [--with-memory]
           agentbridge changes approve SESSION-ID PLAN-ID REVIEW-DIGEST
           agentbridge changes run SESSION-ID PLAN-ID REVIEW-DIGEST < prompt.txt
@@ -80,6 +81,7 @@ extension AgentBridgeCLI {
         Custom accounts have their own provider config folders; create the profile, then run profile-login in an interactive Terminal.
         `session create --interactive` creates an isolated Codex or Claude Terminal workspace, still subject to manual approval and the bound account.
         `session create --changes` creates a subscription-mode isolated-changes session that is read-only by default; save and review a plan, then retype its digest in the approve command before anything can run.
+        `changes draft` reads up to 8,000 bytes describing what should change from standard input and sends one real read-only request to the session's provider in its isolated workspace, then prints the drafted title, summary and steps (`--json` prints them as JSON). It counts as a run like any other, uses no shared memory and saves nothing; to save the plan, pass the edited text to `changes plan`.
         `changes verify` runs .codex/ci.sh only when you call it explicitly. Custom verification needs `--approve-custom` and passes separate argv values with repeated `--arg`; nothing goes through a shell.
         `changes accept` and `changes apply` both require the current diff to be verified successfully. If `changes diff` reports files that are not fully shown, review them with `changes export`, then pass `--confirm-partial` with the digest it prints. Apply only creates an uncommitted isolated worktree on a local branch and refuses if the source base differs; it never commits, pushes or merges.
         `memory carry-forward` copies only the explicitly selected App memory turns/notes to another commit of the same repository and requires the target's bound account to allow shared memory; native TUI conversations are not imported.

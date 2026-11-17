@@ -2,6 +2,31 @@ import AppKit
 import AgentBridgeCore
 import Observation
 
+/// How a drafted plan goes into the plan form.
+enum ChangePlanDraftFill {
+    struct Fields: Equatable {
+        var title: String
+        var summary: String
+        var stepsText: String
+    }
+
+    /// Whether filling the form would replace anything the user typed. Blank
+    /// fields hold nothing to lose; the shared-memory toggle is never filled.
+    static func replacesUserText(title: String, summary: String, stepsText: String) -> Bool {
+        [title, summary, stepsText].contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// A draft fills the form without a second question when the form still holds
+    /// what it held when drafting started (already agreed to), or nothing at all.
+    static func canFillWithoutAsking(current: Fields, atStart: Fields) -> Bool {
+        current == atStart || !replacesUserText(title: current.title, summary: current.summary, stepsText: current.stepsText)
+    }
+
+    static func fields(for draft: DraftedChangePlan) -> Fields {
+        Fields(title: draft.title, summary: draft.summary, stepsText: draft.steps.joined(separator: "\n"))
+    }
+}
+
 /// Review of an isolated-change session: the plan draft and its approval,
 /// the current diff, per-file restore, patch export, verification results,
 /// acceptance and applying to a local branch. Running the approved change
@@ -19,7 +44,18 @@ final class ChangeReviewModel {
     var customVerifierPath = ""
     var customVerifierArgumentsText = ""
     var isVerifying = false
+    /// What the user asks the model to plan; it is never saved.
+    var changeRequestText = ""
+    /// The session a plan is being drafted for, while its read-only run lasts.
+    var draftingSessionID: UUID?
+    var confirmReplacingPlanFields = false
+    /// A finished draft waiting for the user to agree to replace newer text.
+    private(set) var pendingDraft: DraftedChangePlan?
     private var partiallyShownFilesConfirmedDigest: String?
+
+    var isDraftingSelectedPlan: Bool {
+        draftingSessionID != nil && draftingSessionID == app.selectedSession?.id
+    }
 
     var selectedChangePlanDraftMatchesSaved: Bool {
         guard let plan = app.selectedSession?.changePlan else { return false }
@@ -58,6 +94,8 @@ final class ChangeReviewModel {
     }
 
     func loadChangePlanDraftFromSelectedSession() {
+        // A draft waiting for an answer belongs to the session that was shown.
+        cancelReplacingPlanFields()
         if let plan = app.selectedSession?.changePlan {
             changePlanTitle = plan.title
             changePlanSummary = plan.summary
@@ -69,6 +107,60 @@ final class ChangeReviewModel {
             changePlanStepsText = ""
             changePlanIncludesSharedMemory = false
         }
+    }
+
+    /// Drafting fills the title, summary and steps, so text the user already wrote
+    /// there is only replaced after they agree to it.
+    func requestChangePlanDraft() {
+        pendingDraft = nil
+        if ChangePlanDraftFill.replacesUserText(title: changePlanTitle, summary: changePlanSummary, stepsText: changePlanStepsText) {
+            confirmReplacingPlanFields = true
+        } else {
+            app.draftChangePlan()
+        }
+    }
+
+    /// The answer to the replace question: either start drafting, or fill in a
+    /// draft that arrived after the form changed.
+    func confirmReplacingPlanFieldsWithDraft() {
+        confirmReplacingPlanFields = false
+        if let draft = pendingDraft {
+            pendingDraft = nil
+            fillPlanFields(with: draft)
+            app.status = "The draft is in the plan form. Edit it, then save it for review."
+        } else {
+            app.draftChangePlan()
+        }
+    }
+
+    func cancelReplacingPlanFields() {
+        confirmReplacingPlanFields = false
+        pendingDraft = nil
+    }
+
+    var planFields: ChangePlanDraftFill.Fields {
+        ChangePlanDraftFill.Fields(title: changePlanTitle, summary: changePlanSummary, stepsText: changePlanStepsText)
+    }
+
+    /// Fills a finished draft into the form when the form still shows what the
+    /// user agreed to replace; otherwise asks again before replacing new text.
+    func receiveDraft(_ draft: DraftedChangePlan, fieldsAtStart: ChangePlanDraftFill.Fields) {
+        if ChangePlanDraftFill.canFillWithoutAsking(current: planFields, atStart: fieldsAtStart) {
+            fillPlanFields(with: draft)
+            app.status = "The draft is in the plan form. Edit it, then save it for review."
+        } else {
+            pendingDraft = draft
+            confirmReplacingPlanFields = true
+            app.status = "The draft is ready. Choose whether it replaces the plan fields."
+        }
+    }
+
+    /// Fills the form only. The shared-memory choice stays the user's, and nothing is saved.
+    func fillPlanFields(with draft: DraftedChangePlan) {
+        let fields = ChangePlanDraftFill.fields(for: draft)
+        changePlanTitle = fields.title
+        changePlanSummary = fields.summary
+        changePlanStepsText = fields.stepsText
     }
 
     func saveChangePlan() {

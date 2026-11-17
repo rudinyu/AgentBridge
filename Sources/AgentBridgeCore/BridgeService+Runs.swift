@@ -834,7 +834,7 @@ extension BridgeService {
         return plan
     }
 
-    private func requireConfirmedSubscription(session: SessionRecord, profile: AccountProfile, executable: URL) async throws {
+    func requireConfirmedSubscription(session: SessionRecord, profile: AccountProfile, executable: URL) async throws {
         let sessionID = session.id
         let assessment = try await checkAuthentication(profile: profile, executable: executable)
         guard assessment.confirmedSubscription else {
@@ -1424,7 +1424,7 @@ extension BridgeService {
         try SharedMemoryScope(repositoryPath: session.sourceRepositoryPath, snapshotCommit: session.snapshotCommit)
     }
 
-    private func beginTrackedRun(
+    func beginTrackedRun(
         sessionID: UUID,
         summary: String,
         approvedChange: Bool = false
@@ -1445,7 +1445,7 @@ extension BridgeService {
         _ = try parallelTaskBoard.updateProgress(taskID: task.id, summary: summary)
     }
 
-    private func finishTrackedRun(
+    func finishTrackedRun(
         taskID: UUID,
         status: ParallelTaskStatus,
         summary: String,

@@ -10,15 +10,20 @@ extension MainWindowView {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("This session writes only inside its isolated workspace. Each change run requires an editable plan, an explicit approval, and official CLI subscription mode. The source repository is not changed by the run.")
                             .font(.caption).foregroundStyle(.secondary)
-                        TextField("Plan title", text: Bindable(model.changes).changePlanTitle)
-                        TextField("Plan summary", text: Bindable(model.changes).changePlanSummary, axis: .vertical)
-                            .lineLimit(2...4)
-                        Text("Plan steps · one step per line")
-                            .font(.caption.weight(.semibold))
-                        TextEditor(text: Bindable(model.changes).changePlanStepsText)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(minHeight: 70, maxHeight: 130)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                        changePlanDraftRequest(session)
+                        Group {
+                            TextField("Plan title", text: Bindable(model.changes).changePlanTitle)
+                            TextField("Plan summary", text: Bindable(model.changes).changePlanSummary, axis: .vertical)
+                                .lineLimit(2...4)
+                            Text("Plan steps · one step per line")
+                                .font(.caption.weight(.semibold))
+                            TextEditor(text: Bindable(model.changes).changePlanStepsText)
+                                .font(.system(.caption, design: .monospaced))
+                                .frame(minHeight: 70, maxHeight: 130)
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                        }
+                        // The draft fills these fields, so they wait until it is done.
+                        .disabled(model.changes.isDraftingSelectedPlan)
                         Toggle("Include shared memory in the change run", isOn: Bindable(model.changes).changePlanIncludesSharedMemory)
                             .font(.caption)
                         Text("Off by default. Earlier runs write shared memory, and its folder can be synced, so a run that edits files sees it only when you include it. Approval covers the memory as it is then; if it changes, approve again.")
@@ -70,6 +75,36 @@ extension MainWindowView {
                 changeDiffPanel(session)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Asks the model for a plan that fills the fields below; saving stays the user's step.
+    func changePlanDraftRequest(_ session: SessionRecord) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("What should change?", text: Bindable(model.changes).changeRequestText, axis: .vertical)
+                .lineLimit(1...3)
+                .disabled(model.changes.isDraftingSelectedPlan)
+            HStack {
+                Button("Draft plan") { model.changes.requestChangePlanDraft() }
+                    .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.changes.changeRequestText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.settings.usageMode != .subscription)
+                if model.changes.isDraftingSelectedPlan {
+                    ProgressView().controlSize(.small)
+                    Text("Drafting…").font(.caption).foregroundStyle(.secondary)
+                    Button("Cancel drafting") { model.cancelSession(session.id) }
+                }
+                Text("Sends one real read-only request to this session's provider. The draft is not saved, approved or run.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .alert(
+            model.localized("Replace the plan fields with the draft?"),
+            isPresented: Bindable(model.changes).confirmReplacingPlanFields
+        ) {
+            Button(model.localized("Replace"), role: .destructive) { model.changes.confirmReplacingPlanFieldsWithDraft() }
+            Button(model.localized("Cancel"), role: .cancel) { model.changes.cancelReplacingPlanFields() }
+        } message: {
+            Text(model.localized("The title, summary and steps already have text. The draft replaces them; nothing is saved until you save the plan."))
         }
     }
 
