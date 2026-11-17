@@ -335,14 +335,23 @@ public final class WorkspaceManager: @unchecked Sendable {
 
     /// Whether `.codex/ci.sh` is still the executable file from the pinned commit.
     func projectVerificationScriptIsUnchanged(for session: SessionRecord) async throws -> Bool {
+        try await workspaceFileMatchesPinnedCommit(".codex/ci.sh", modes: ["100755"], for: session)
+    }
+
+    /// Whether the workspace's root `AGENTS.md` is still the file from the pinned
+    /// commit, so a provider's earlier edit is never passed on as the project's.
+    func projectInstructionsFileIsUnchanged(for session: SessionRecord) async throws -> Bool {
+        try await workspaceFileMatchesPinnedCommit(ProjectInstructionsFile.fileName, modes: ["100644", "100755"], for: session)
+    }
+
+    private func workspaceFileMatchesPinnedCommit(_ path: String, modes: [String], for session: SessionRecord) async throws -> Bool {
         let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
-        let path = ".codex/ci.sh"
         try validateNoSymlinkParent(of: workspace.appendingPathComponent(path), inside: workspace)
         return try await withReviewRepository(session, workTree: workspace) { review in
             let hash = String(decoding: try await reviewGit(review, ["hash-object", "--no-filters", "--", path]).standardOutput, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let entry = try await reviewGit(review, ["ls-tree", "-z", session.snapshotCommit, "--", path])
-            return entry.standardOutput == Data("100755 blob \(hash)\t\(path)\0".utf8)
+            return modes.contains { entry.standardOutput == Data("\($0) blob \(hash)\t\(path)\0".utf8) }
         }
     }
 

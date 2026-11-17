@@ -69,6 +69,8 @@ Open **Chats** and choose **New Chat**. Select a provider/account and send the f
 
 Each session pins the source `HEAD` at creation and runs in its own isolated clone under `<chosen folder>/workspaces/<session-id>/`. Uncommitted and untracked files are not copied. If the source commit later changes, an existing session keeps its original snapshot. A new session uses the new source commit and a separate memory scope. AgentBridge does not merge or push workspace changes automatically.
 
+Project instructions: Codex reads the repository's `AGENTS.md` itself. For Claude (read-only, change, API and native terminal sessions) and local models, AgentBridge passes the `AGENTS.md` at the root of the session's workspace, at the session's pinned commit, so all three follow the same instructions. Only the root file is used, up to 32 KiB; CLAUDE.md, parent folders and subfolders are not read. For a local model the file is shortened or left out when it does not fit the context window. Because the session pins a commit, an edit to `AGENTS.md` takes effect only after you commit it and create a new session. The activity log records whether the file was included, its size and SHA-256, or why it was skipped.
+
 ### 4. Add accounts, sign in, and switch plans
 
 Adding an account does not sign in again to or change the current local account:

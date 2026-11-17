@@ -304,14 +304,16 @@ extension BridgeService {
         session: SessionRecord,
         profile: AccountProfile,
         includeMemory: Bool = true,
-        localSettings: LocalModelSettings? = nil
+        localSettings: LocalModelSettings? = nil,
+        reservedLocalInputBytes: Int = 0
     ) throws -> (prompt: String, context: SharedMemoryContext?, compression: CompressedContext) {
         let compression = try projectContextCompression(
             currentPrompt: prompt,
             session: session,
             profile: profile,
             includeMemory: includeMemory,
-            localSettings: localSettings
+            localSettings: localSettings,
+            reservedLocalInputBytes: reservedLocalInputBytes
         )
         guard let compressedPrompt = compression.prompt else {
             throw AgentBridgeError.invalidInput(compression.report.refusalReason ?? "The approved context cannot fit safely; no request was sent.")
@@ -357,7 +359,8 @@ extension BridgeService {
         session: SessionRecord,
         profile: AccountProfile,
         includeMemory: Bool,
-        localSettings: LocalModelSettings? = nil
+        localSettings: LocalModelSettings? = nil,
+        reservedLocalInputBytes: Int = 0
     ) throws -> CompressedContext {
         let scope = try memoryScope(for: session)
         let memoryAllowed = includeMemory && profile.allowsSharedMemory
@@ -416,7 +419,11 @@ extension BridgeService {
             persistedLocalSettings = nil
         }
         let budgetSettings = localSettings ?? persistedLocalSettings
-        let policy = try contextCompressionPolicy(currentPrompt: currentPrompt, localSettings: budgetSettings)
+        let policy = try contextCompressionPolicy(
+            currentPrompt: currentPrompt,
+            localSettings: budgetSettings,
+            reservedLocalInputBytes: reservedLocalInputBytes
+        )
         return ContextCompressor.compress(
             turns: turns,
             pinnedNotes: pinnedNotes,
@@ -437,18 +444,15 @@ extension BridgeService {
 
     func contextCompressionPolicy(
         currentPrompt: String,
-        localSettings: LocalModelSettings?
+        localSettings: LocalModelSettings?,
+        reservedLocalInputBytes: Int = 0
     ) throws -> ContextCompressionPolicy {
         if let localSettings {
-            try LocalModelClient.validateSettings(localSettings)
-            let availableTokens = localSettings.contextWindowTokens - localSettings.maxOutputTokens - 512
-            guard availableTokens > 0 else {
-                throw AgentBridgeError.invalidInput("The selected local context window is too small to reserve output space and safety margin. Increase the context window or lower the output reserve.")
-            }
-            // Bound UTF-8 input bytes to the remaining token budget. This is a
-            // conservative planning proxy, never an exact tokenizer count.
+            // Bytes set aside for the repository's AGENTS.md come out of the
+            // history allowance, never below half of the whole budget.
+            let budget = try localContextInputByteBudget(localSettings)
             return ContextCompressionPolicy(
-                maximumInputBytes: min(2 * 1_024 * 1_024, availableTokens),
+                maximumInputBytes: budget - min(max(0, reservedLocalInputBytes), budget / 2),
                 recentTurnCount: 6
             )
         }
@@ -456,6 +460,86 @@ extension BridgeService {
         // the complete current prompt and room for readable section wrappers.
         let maximumInputBytes = currentPrompt.utf8.count + 16 * 1_024 + 8 * 1_024
         return ContextCompressionPolicy(maximumInputBytes: maximumInputBytes, recentTurnCount: 8)
+    }
+
+    /// The UTF-8 input bytes a local request may use: the remaining token budget
+    /// after the output reserve and a safety margin. This is a conservative
+    /// planning proxy, never an exact tokenizer count.
+    func localContextInputByteBudget(_ localSettings: LocalModelSettings) throws -> Int {
+        try LocalModelClient.validateSettings(localSettings)
+        let availableTokens = localSettings.contextWindowTokens - localSettings.maxOutputTokens - 512
+        guard availableTokens > 0 else {
+            throw AgentBridgeError.invalidInput("The selected local context window is too small to reserve output space and safety margin. Increase the context window or lower the output reserve.")
+        }
+        return min(2 * 1_024 * 1_024, availableTokens)
+    }
+
+    // MARK: Repository instructions
+
+    /// The repository's root `AGENTS.md` at the session's commit, for a provider
+    /// that does not read it itself. Never throws: a refusal is a skip. A
+    /// writable workspace's copy is used only while it still matches the commit.
+    func projectInstructions(for session: SessionRecord) async -> ProjectInstructionsReadResult {
+        let workspaceURL = URL(fileURLWithPath: session.workspacePath, isDirectory: true)
+        let result = ProjectInstructionsFile.read(workspaceURL: workspaceURL)
+        guard case .loaded = result, session.policy.accessMode != .readOnly else { return result }
+        do {
+            return try await workspaceManager.projectInstructionsFileIsUnchanged(for: session)
+                ? result
+                : .skipped(.changedInWorkspace)
+        } catch {
+            return .skipped(.unverifiable)
+        }
+    }
+
+    /// The complete envelope for a Claude run, or why there is none.
+    func projectInstructionsOutcome(for session: SessionRecord) async -> ProjectInstructionsOutcome {
+        switch await projectInstructions(for: session) {
+        case .missing:
+            return .none
+        case .loaded(let instructions):
+            return .included(ProjectInstructionsFile.envelope(for: instructions, commit: session.snapshotCommit))
+        case .skipped(let reason):
+            return .skipped(reason)
+        }
+    }
+
+    /// The prompt with the instructions envelope in front, before any shared memory.
+    static func prependingProjectInstructions(_ prompt: String, withProjectInstructions outcome: ProjectInstructionsOutcome) -> String {
+        guard case .included(let envelope) = outcome else { return prompt }
+        return envelope.text + "\n\n" + prompt
+    }
+
+    /// One audit event for a run that included or skipped `AGENTS.md`; the file's
+    /// text is never written to the audit log.
+    func recordProjectInstructions(_ outcome: ProjectInstructionsOutcome, session: SessionRecord) {
+        let provider = session.provider.rawValue
+        let commit = session.snapshotCommit.prefix(12)
+        let event: AuditEvent
+        switch outcome {
+        case .none:
+            return
+        case .included(let envelope):
+            let bytes = envelope.includedByteCount
+            let digest = envelope.includedContentSHA256
+            let message: String
+            switch envelope.shortening {
+            case .none:
+                message = "Included the repository's AGENTS.md from commit \(commit) for \(provider): \(bytes) bytes, SHA-256 \(digest)."
+            case .fileLimit:
+                message = "Included the repository's AGENTS.md from commit \(commit) for \(provider), truncated at 32 KiB: \(bytes) bytes, SHA-256 \(digest)."
+            case .localContext:
+                message = "Included the repository's AGENTS.md from commit \(commit) for \(provider), shortened to fit the local context window: \(bytes) bytes, SHA-256 \(digest)."
+            }
+            event = AuditEvent(sessionID: session.id, kind: "project.instructions.loaded", message: message)
+        case .skipped(let reason):
+            event = AuditEvent(
+                sessionID: session.id,
+                kind: "project.instructions.skipped",
+                message: "Skipped the repository's AGENTS.md for \(provider): \(reason.auditDescription)"
+            )
+        }
+        try? store.appendEvent(event)
     }
 
     static let legacyTruncationNotice = "[Storage note]"
@@ -611,18 +695,39 @@ extension BridgeService {
         return best
     }
 
-    func writeInteractiveMemoryContext(session: SessionRecord, profile: AccountProfile) throws -> URL? {
-        guard profile.allowsSharedMemory else { return nil }
-        let scope = try memoryScope(for: session)
-        let snapshot = try sharedMemoryStore.snapshot(scope: scope)
-        let (contextPrompt, _) = try legacyPromptWithSharedMemory(
-            "This file contains prior user/assistant text and explicit notes for continuity only.",
-            session: session,
-            profile: profile,
-            includeSameCommitProviderHandoff: false
-        )
-        let requestMarker = "Current user request:\nThis file contains prior user/assistant text and explicit notes for continuity only."
-        guard !snapshot.notes.isEmpty || !snapshot.turns.isEmpty || contextPrompt != requestMarker else { return nil }
+    struct InteractiveContextFile {
+        let url: URL
+        let includesSharedMemory: Bool
+    }
+
+    /// Writes the context file an interactive terminal reads at launch: the
+    /// repository instructions envelope first, when given, then shared memory.
+    /// Returns nil when there is nothing to provide.
+    func writeInteractiveMemoryContext(
+        session: SessionRecord,
+        profile: AccountProfile,
+        projectInstructions: ProjectInstructionsEnvelope? = nil
+    ) throws -> InteractiveContextFile? {
+        var memoryText: String?
+        if profile.allowsSharedMemory {
+            let scope = try memoryScope(for: session)
+            let snapshot = try sharedMemoryStore.snapshot(scope: scope)
+            let placeholder = "This file contains prior user/assistant text and explicit notes for continuity only."
+            let (contextPrompt, _) = try legacyPromptWithSharedMemory(
+                placeholder,
+                session: session,
+                profile: profile,
+                includeSameCommitProviderHandoff: false
+            )
+            let requestMarker = "Current user request:\n" + placeholder
+            // With no memory the result is the placeholder alone, which is not worth a file.
+            if !snapshot.notes.isEmpty || !snapshot.turns.isEmpty || (contextPrompt != requestMarker && contextPrompt != placeholder) {
+                memoryText = contextPrompt
+            }
+        }
+        let sections = [projectInstructions?.text, memoryText].compactMap { $0 }
+        guard !sections.isEmpty else { return nil }
+        let contextText = sections.joined(separator: "\n\n")
         let filename = ".agentbridge-context-\(session.id.uuidString.lowercased())-\(UUID().uuidString.lowercased()).md"
         let workspaceURL = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
         let directoryDescriptor = open(workspaceURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
@@ -646,12 +751,12 @@ extension BridgeService {
               fchmod(fileDescriptor, mode_t(0o600)) == 0 else {
             throw AgentBridgeError.persistence("The interactive memory file is not a secure private regular file.")
         }
-        try Self.writeAll(Data(contextPrompt.utf8), to: fileDescriptor)
+        try Self.writeAll(Data(contextText.utf8), to: fileDescriptor)
         guard fsync(fileDescriptor) == 0 else {
             throw AgentBridgeError.persistence("Could not synchronize the interactive memory file.")
         }
         shouldRemove = false
-        return workspaceURL.appendingPathComponent(filename)
+        return InteractiveContextFile(url: workspaceURL.appendingPathComponent(filename), includesSharedMemory: memoryText != nil)
     }
 
     func removeWorkspaceContextFile(_ url: URL, workspacePath: String) {

@@ -149,7 +149,6 @@ Could not write shared-memory document (errno %@).
 Could not write the autonomous run document.
 Current request (verbatim)
 Current user request (verbatim)
-Current user request:\nThis file contains prior user/assistant text and explicit notes for continuity only.
 Custom verification must bind an executable and its digest.
 Dependency outputs exceed the approved transfer limit.
 Descriptor files must be 64 KiB or smaller.

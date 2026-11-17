@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Claude and local models now follow the repository's `AGENTS.md`, as Codex already did. AgentBridge passes the `AGENTS.md` at the root of the session's workspace, at the session's pinned commit, to Claude read-only, change and API runs, the native Claude terminal and local-model conversations. Only that file is read, up to 32 KiB; for a local model it is shortened or left out when it does not fit the context window. A copy that a provider edited in an isolated-change or terminal workspace is not used. An edit to `AGENTS.md` takes effect once it is committed and a new session is created. The activity log records whether it was included, its size and SHA-256, or why it was skipped.
+
 ## 0.16.1 — 2026-11-16
 
 ### Fixed
