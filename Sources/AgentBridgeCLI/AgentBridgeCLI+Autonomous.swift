@@ -38,6 +38,14 @@ extension AgentBridgeCLI {
         }
     }
 
+    static func autonomousRole(forModelOption option: String) throws -> AutonomousRole {
+        let name = option.dropFirst(2).split(separator: "-").first.map(String.init) ?? ""
+        guard let role = AutonomousRole(rawValue: name) else {
+            throw AgentBridgeError.invalidInput("Unknown autonomous role \(option).")
+        }
+        return role
+    }
+
     static func parseProviderProfile(_ value: String) throws -> (AgentProvider, UUID) {
         let parts = value.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2,
@@ -90,7 +98,7 @@ extension AgentBridgeCLI {
             print("Frozen project memory: none (no bound profile allows shared memory)")
         }
         print("Save final summary to project memory: \(plan.saveRunSummaryToMemory) · destination \(plan.memoryDestinationProfileID?.uuidString.lowercased() ?? "none")")
-        print("Planner: \(plan.plannerBinding.provider.rawValue) / \(plan.plannerBinding.accountProfileID.uuidString.lowercased())")
+        print("Planner: \(plan.plannerBinding.provider.rawValue) / \(plan.plannerBinding.accountProfileID.uuidString.lowercased()) · model \(ProviderModelOptions.label(model: plan.plannerBinding.model, reasoningEffort: plan.plannerBinding.reasoningEffort))")
         print("Concurrency: \(plan.limits.maxConcurrentAgents); review rounds: \(plan.limits.maxReviewRounds); duration: \(plan.limits.maxDurationSeconds)s; provider calls: \(plan.limits.maxProviderInvocations)")
         print("Dependency outputs shared: \(plan.shareOutputsWithDependencies); exact diff shared with reviewer: \(plan.shareDiffWithReviewer)")
         print("Verification: \(plan.verification.mode.rawValue)\(plan.verification.executablePath.map { " · \($0)" } ?? "")")
@@ -98,7 +106,7 @@ extension AgentBridgeCLI {
             print("Verification trust: \(disclosure)")
         }
         for binding in plan.roleProfiles {
-            print("Role \(binding.binding.role.rawValue): \(binding.binding.provider.rawValue) / \(binding.profile.name) / \(binding.profile.id.uuidString.lowercased()) · shared memory \(binding.profile.allowsSharedMemory ? "allowed" : "off") · extensions \(binding.binding.extensionIDs.joined(separator: ", "))")
+            print("Role \(binding.binding.role.rawValue): \(binding.binding.provider.rawValue) / \(binding.profile.name) / \(binding.profile.id.uuidString.lowercased()) · shared memory \(binding.profile.allowsSharedMemory ? "allowed" : "off") · model \(ProviderModelOptions.label(model: binding.binding.model, reasoningEffort: binding.binding.reasoningEffort)) · extensions \(binding.binding.extensionIDs.joined(separator: ", "))")
         }
         print("\nChange scope: \(plan.changeScope.title)\n\(OutputRedactor.redact(plan.changeScope.summary))")
         for (offset, step) in plan.changeScope.steps.enumerated() { print("  \(offset + 1). \(OutputRedactor.redact(step))") }
@@ -162,6 +170,10 @@ extension AgentBridgeCLI {
         var plannerBinding: (AgentProvider, UUID)?
         var roleBindings: [AutonomousRole: (AgentProvider, UUID)] = [:]
         var extensions: [AutonomousRole: [String]] = [:]
+        // Unlike a new session, a role does not take the saved defaults: the plan
+        // digest binds exactly what is passed here, and nothing means the CLI default.
+        var roleModels: [AutonomousRole: String] = [:]
+        var roleEfforts: [AutonomousRole: String] = [:]
         var maxConcurrentAgents = 3
         var maxReviewRounds = 2
         var maxDurationSeconds = 1_800
@@ -196,6 +208,12 @@ extension AgentBridgeCLI {
                 default: role = .reviewer
                 }
                 extensions[role, default: []].append(try nextOptionValue(option, arguments: arguments, index: &index))
+            case "--planner-model", "--researcher-model", "--implementer-model", "--reviewer-model":
+                let role = try autonomousRole(forModelOption: option)
+                roleModels[role] = try nextOptionValue(option, arguments: arguments, index: &index)
+            case "--planner-effort", "--researcher-effort", "--implementer-effort", "--reviewer-effort":
+                let role = try autonomousRole(forModelOption: option)
+                roleEfforts[role] = try nextOptionValue(option, arguments: arguments, index: &index)
             case "--max-concurrent":
                 maxConcurrentAgents = try parseInteger(try nextOptionValue(option, arguments: arguments, index: &index), option: option)
             case "--max-review-rounds":
@@ -240,11 +258,23 @@ extension AgentBridgeCLI {
             throw AgentBridgeError.invalidInput("Saving a run summary requires both --save-summary-to-memory and --memory-destination PROFILE-ID.")
         }
         let goal = try readBoundedStandardInput(maximumBytes: 8_000, label: "Autonomous goal")
-        let planner = try AutonomousRoleBinding(role: .planner, provider: plannerBinding.0, accountProfileID: plannerBinding.1)
+        let planner = try AutonomousRoleBinding(
+            role: .planner, provider: plannerBinding.0, accountProfileID: plannerBinding.1,
+            model: roleModels[.planner], reasoningEffort: roleEfforts[.planner]
+        )
         let bindings = try [
-            AutonomousRoleBinding(role: .researcher, provider: researcherBinding.0, accountProfileID: researcherBinding.1, extensionIDs: extensions[.researcher] ?? []),
-            AutonomousRoleBinding(role: .implementer, provider: implementerBinding.0, accountProfileID: implementerBinding.1, extensionIDs: extensions[.implementer] ?? []),
-            AutonomousRoleBinding(role: .reviewer, provider: reviewerBinding.0, accountProfileID: reviewerBinding.1, extensionIDs: extensions[.reviewer] ?? [])
+            AutonomousRoleBinding(
+                role: .researcher, provider: researcherBinding.0, accountProfileID: researcherBinding.1,
+                extensionIDs: extensions[.researcher] ?? [], model: roleModels[.researcher], reasoningEffort: roleEfforts[.researcher]
+            ),
+            AutonomousRoleBinding(
+                role: .implementer, provider: implementerBinding.0, accountProfileID: implementerBinding.1,
+                extensionIDs: extensions[.implementer] ?? [], model: roleModels[.implementer], reasoningEffort: roleEfforts[.implementer]
+            ),
+            AutonomousRoleBinding(
+                role: .reviewer, provider: reviewerBinding.0, accountProfileID: reviewerBinding.1,
+                extensionIDs: extensions[.reviewer] ?? [], model: roleModels[.reviewer], reasoningEffort: roleEfforts[.reviewer]
+            )
         ]
         let limits = try AutonomousRunLimits(
             maxConcurrentAgents: maxConcurrentAgents,

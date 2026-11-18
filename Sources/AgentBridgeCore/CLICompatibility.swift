@@ -65,7 +65,7 @@ public enum CLICompatibility {
                     "--tools", "--no-session-persistence", "--input-format", "--add-dir",
                     "--setting-sources", "--settings", "--append-system-prompt",
                     "--disable-slash-commands", "--max-budget-usd", "--mcp-config",
-                    "--no-chrome", "--resume", "--session-id", "--strict-mcp-config"
+                    "--no-chrome", "--resume", "--session-id", "--strict-mcp-config", "--model", "--effort"
                 ])]
             )
         case .codex:

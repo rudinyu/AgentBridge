@@ -40,6 +40,49 @@ public enum ProviderOutputParser {
         }
     }
 
+    /// The provider's own reason for a failed run, such as a rejected model, so
+    /// the user sees why instead of only an exit code. It is redacted and short;
+    /// the error event the CLI wrote comes first, then its last error-output line.
+    public static func failureDetail(provider: AgentProvider, standardOutput: Data, standardError: Data) -> String? {
+        var detail: String?
+        if let text = String(data: standardOutput, encoding: .utf8) {
+            for line in text.split(whereSeparator: \Character.isNewline) {
+                guard let data = String(line).data(using: .utf8),
+                      let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let type = event["type"] as? String else { continue }
+                switch (provider, type) {
+                case (.codex, "error"), (.codex, "turn_error"):
+                    if let message = event["message"] as? String { detail = message }
+                case (.codex, "turn.failed"):
+                    if let error = event["error"] as? [String: Any], let message = error["message"] as? String { detail = message }
+                case (.claude, "result") where event["is_error"] as? Bool == true:
+                    if let message = event["result"] as? String {
+                        detail = message
+                    } else if let errors = event["errors"] as? [String], let first = errors.first {
+                        detail = first
+                    }
+                case (.claude, "error"):
+                    if let message = event["message"] as? String { detail = message }
+                default:
+                    continue
+                }
+            }
+        }
+        if detail?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+            detail = String(decoding: standardError, as: UTF8.self)
+                .split(whereSeparator: \Character.isNewline)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .last { !$0.isEmpty }
+        }
+        guard let detail else { return nil }
+        let cleaned = OutputRedactor.redact(detail)
+            .unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) || $0 == " " }
+            .reduce(into: "") { $0.unicodeScalars.append($1) }
+            .trimmingCharacters(in: .whitespaces)
+        guard !cleaned.isEmpty else { return nil }
+        return cleaned.count > 500 ? String(cleaned.prefix(500)) + "…" : cleaned
+    }
+
     public static func parse(provider: AgentProvider, data: Data, truncated: Bool = false) throws -> ProviderOutput {
         guard !truncated, let text = String(data: data, encoding: .utf8) else {
             throw AgentBridgeError.unsupportedProviderOutput(provider)

@@ -10,6 +10,19 @@ extension AgentBridgeCLI {
         return provider
     }
 
+    /// The model choice for a new session or chat. With neither option, nil lets
+    /// the service apply the saved defaults; an option given overrides only its
+    /// part, and an empty value asks for the CLI default.
+    static func requestedModelChoice(model: String?, effort: String?, provider: AgentProvider, service: BridgeService) throws -> ProviderModelChoice? {
+        guard model != nil || effort != nil else { return nil }
+        let defaults = try service.settings().modelDefaults(for: provider)
+        return ProviderModelChoice(model: model ?? defaults.model, reasoningEffort: effort ?? defaults.reasoningEffort)
+    }
+
+    static func modelLabel(model: String?, reasoningEffort: String?) -> String {
+        ProviderModelOptions.label(model: model, reasoningEffort: reasoningEffort)
+    }
+
     static func readPromptFromStandardInput(maximumBytes: Int) throws -> String {
         try readBoundedStandardInput(maximumBytes: maximumBytes, label: "Prompt")
     }

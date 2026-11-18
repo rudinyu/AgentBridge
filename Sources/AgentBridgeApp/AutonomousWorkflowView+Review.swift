@@ -140,6 +140,14 @@ extension AutonomousWorkflowView {
             Text(model.localizedFormat("Planner · %@ · %@ · extensions disabled during planning", plan.plannerBinding.provider.rawValue, profileName(provider: plan.plannerBinding.provider, id: plan.plannerBinding.accountProfileID)))
                 .font(.caption2)
             ForEach(plan.roleProfiles, id: \.binding.role) { snapshot in
+                Text(model.localizedFormat(
+                    "Role %@ model · %@",
+                    model.localized(snapshot.binding.role.rawValue.capitalized),
+                    ModelChoicePresentation.label(model: snapshot.binding.model, reasoningEffort: snapshot.binding.reasoningEffort, language: model.appLanguage)
+                ))
+                .font(.caption2)
+            }
+            ForEach(plan.roleProfiles, id: \.binding.role) { snapshot in
                 Text(model.localizedFormat("Role %@ · %@ · %@ · shared memory %@ · extension fingerprint %@", model.localized(snapshot.binding.role.rawValue.capitalized), snapshot.binding.provider.rawValue, model.displayName(of: snapshot.profile), model.localized(snapshot.profile.allowsSharedMemory ? "allowed" : "off"), snapshot.extensionFingerprint))
                     .font(.system(size: 9, design: .monospaced))
                     .textSelection(.enabled)

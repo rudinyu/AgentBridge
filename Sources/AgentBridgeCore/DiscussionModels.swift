@@ -203,6 +203,11 @@ public struct DiscussionRecord: Codable, Equatable, Identifiable, Sendable {
     public var dataRootPath: String
     public var provider: AgentProvider
     public var accountProfileID: UUID
+    /// The Codex or Claude model and reasoning effort chosen when the chat was
+    /// created; nil means the CLI default. They belong to one provider, so a
+    /// switch to another provider clears them.
+    public internal(set) var model: String?
+    public internal(set) var reasoningEffort: String?
     public var usageProfileIDs: Set<UUID>
     public var turns: [DiscussionTurn]
     public var transcriptWasTruncated: Bool
@@ -223,7 +228,9 @@ public struct DiscussionRecord: Codable, Equatable, Identifiable, Sendable {
         transcriptWasTruncated: Bool = false,
         handoffs: [DiscussionProjectHandoff] = [],
         linkedSessionIDs: [UUID] = [],
-        status: DiscussionStatus = .ready
+        status: DiscussionStatus = .ready,
+        model: String? = nil,
+        reasoningEffort: String? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -238,5 +245,7 @@ public struct DiscussionRecord: Codable, Equatable, Identifiable, Sendable {
         self.handoffs = handoffs
         self.linkedSessionIDs = linkedSessionIDs
         self.status = status
+        self.model = model
+        self.reasoningEffort = reasoningEffort
     }
 }

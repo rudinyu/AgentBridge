@@ -208,6 +208,8 @@ extension AutonomousWorkflowView {
                 set: { newProvider in
                     providers[role] = newProvider
                     profileIDs[role] = model.selectedProfileIDs[newProvider]
+                    // Model names and effort levels belong to one provider.
+                    roleModelChoices[role] = nil
                     reviewAcknowledged = false
                 }
             )) {
@@ -224,6 +226,10 @@ extension AutonomousWorkflowView {
                 }
             }
             .disabled(profiles.isEmpty)
+            ModelChoiceFields(model: model, provider: provider, choice: Binding(
+                get: { selectedModelChoice(for: role) },
+                set: { roleModelChoices[role] = $0; reviewAcknowledged = false }
+            ))
             HStack(spacing: 5) {
                 Image(systemName: authentication?.confirmedSubscription == true ? "checkmark.seal.fill" : "questionmark.circle")
                 Text(authentication?.confirmedSubscription == true ? "Subscription sign-in confirmed" : "Subscription sign-in not checked")

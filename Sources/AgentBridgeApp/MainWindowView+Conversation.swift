@@ -40,6 +40,11 @@ extension MainWindowView {
                     .font(.headline)
                 Text("\(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent) · \(session.snapshotCommit.prefix(12))")
                     .font(.caption).foregroundStyle(.secondary)
+                if let modelLabel = model.modelLabel(for: session) {
+                    Label(modelLabel, systemImage: "cpu")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .help(model.localized("The model and reasoning effort are fixed when the session is created."))
+                }
             }
             Spacer()
             if let assessment = model.selectedSessionAuthentication {

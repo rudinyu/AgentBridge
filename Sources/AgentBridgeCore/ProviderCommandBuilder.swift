@@ -6,8 +6,11 @@ public enum ProviderCommandBuilder {
     /// Builds a disposable Codex conversation outside any Git project. The
     /// working directory is an empty AgentBridge-owned directory, and no MCP
     /// servers, project instructions, Skills, or resume ID are supplied.
-    public static func codexDiscussionArguments(workspacePath: String) -> [String] {
-        [
+    public static func codexDiscussionArguments(
+        workspacePath: String,
+        modelChoice: ProviderModelChoice = .cliDefault
+    ) throws -> [String] {
+        try [
             "--no-daemon",
             "--disable", "hooks", "--disable", "plugins", "--disable", "apps",
             "--disable", "skill_mcp_dependency_install", "--disable", "in_app_browser",
@@ -22,22 +25,21 @@ public enum ProviderCommandBuilder {
             "-c", "features.memories=false",
             "-c", "features.remote_plugin=false",
             "-c", "web_search=\"disabled\"",
-            "-c", "history.persistence=\"none\"",
-            "-"
-        ]
+            "-c", "history.persistence=\"none\""
+        ] + codexModelArguments(modelChoice) + ["-"]
     }
 
     /// Builds a Claude subscription conversation without persistent vendor
     /// history or any built-in, MCP, browser, or slash-command tools.
-    public static func claudeDiscussionArguments() -> [String] {
-        [
+    public static func claudeDiscussionArguments(modelChoice: ProviderModelChoice = .cliDefault) throws -> [String] {
+        try [
             "--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
             "--permission-mode", "dontAsk", "--permission-prompts", "none", "--restricted", "--safe-mode",
             "--setting-sources", "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
             "--disable-slash-commands", "--no-chrome",
             "--settings", "{\"disableAllHooks\":true,\"apiKeyHelper\":\"\",\"forceLoginMethod\":\"claudeai\"}",
             "--tools", "", "--no-session-persistence", "--input-format", "text"
-        ]
+        ] + claudeModelArguments(modelChoice)
     }
 
     public static func codexRunArguments(
@@ -46,7 +48,8 @@ public enum ProviderCommandBuilder {
         ephemeral: Bool = false,
         activeMCPServers: [MCPServerCommandConfiguration] = [],
         mcpWorkingDirectory: String? = nil,
-        mcpEnvironment: [String: String] = [:]
+        mcpEnvironment: [String: String] = [:],
+        modelChoice: ProviderModelChoice = .cliDefault
     ) throws -> [String] {
         var arguments = [
             "--no-daemon",
@@ -71,6 +74,7 @@ public enum ProviderCommandBuilder {
             environment: mcpEnvironment
         )
         arguments += extensionArguments
+        arguments += try codexModelArguments(modelChoice)
         arguments.append("-")
         return arguments
     }
@@ -82,7 +86,8 @@ public enum ProviderCommandBuilder {
         resumeID: String? = nil,
         activeMCPServers: [MCPServerCommandConfiguration] = [],
         mcpWorkingDirectory: String? = nil,
-        mcpEnvironment: [String: String] = [:]
+        mcpEnvironment: [String: String] = [:],
+        modelChoice: ProviderModelChoice = .cliDefault
     ) throws -> [String] {
         var arguments = [
             "--no-daemon",
@@ -105,6 +110,7 @@ public enum ProviderCommandBuilder {
             workingDirectory: mcpWorkingDirectory ?? workspacePath,
             environment: mcpEnvironment
         )
+        arguments += try codexModelArguments(modelChoice)
         arguments.append("-")
         return arguments
     }
@@ -116,7 +122,8 @@ public enum ProviderCommandBuilder {
         stateless: Bool = false,
         activeMCPServers: [MCPServerCommandConfiguration] = [],
         mcpWorkingDirectory: String? = nil,
-        mcpEnvironment: [String: String] = [:]
+        mcpEnvironment: [String: String] = [:],
+        modelChoice: ProviderModelChoice = .cliDefault
     ) throws -> [String] {
         let mcpConfiguration = try claudeMCPConfiguration(
             servers: activeMCPServers,
@@ -140,6 +147,7 @@ public enum ProviderCommandBuilder {
             "--input-format", "text"
         ]
         if stateless { arguments.append("--no-session-persistence") }
+        arguments += try claudeModelArguments(modelChoice)
         if !mcpToolNames.isEmpty { arguments += ["--allowedTools"] + mcpToolNames }
         if stateless {
             // The application-owned compressed transcript is the complete
@@ -161,7 +169,8 @@ public enum ProviderCommandBuilder {
         resumeID: String? = nil,
         activeMCPServers: [MCPServerCommandConfiguration] = [],
         mcpWorkingDirectory: String? = nil,
-        mcpEnvironment: [String: String] = [:]
+        mcpEnvironment: [String: String] = [:],
+        modelChoice: ProviderModelChoice = .cliDefault
     ) throws -> [String] {
         let mcpConfiguration = try claudeMCPConfiguration(
             servers: activeMCPServers,
@@ -184,6 +193,7 @@ public enum ProviderCommandBuilder {
             "--tools", builtInTools.joined(separator: ","), "--add-dir", workspacePath,
             "--input-format", "text"
         ]
+        arguments += try claudeModelArguments(modelChoice)
         if !mcpToolNames.isEmpty { arguments += ["--allowedTools"] + mcpToolNames }
         if let resumeID {
             try validateResumeID(resumeID)
@@ -197,7 +207,8 @@ public enum ProviderCommandBuilder {
     public static func codexInteractiveArguments(
         workspacePath: String,
         resumeID: String? = nil,
-        contextFilePath: String? = nil
+        contextFilePath: String? = nil,
+        modelChoice: ProviderModelChoice = .cliDefault
     ) throws -> [String] {
         var arguments = [
             "--no-daemon",
@@ -211,6 +222,7 @@ public enum ProviderCommandBuilder {
             let contents = try contextFileContents(at: contextFilePath)
             arguments += ["-c", "developer_instructions=\(tomlBasicString(contents))"]
         }
+        arguments += try codexModelArguments(modelChoice)
         if let resumeID {
             try validateResumeID(resumeID)
             arguments += ["resume", resumeID]
@@ -327,7 +339,8 @@ public enum ProviderCommandBuilder {
         workspacePath: String,
         sessionID: UUID,
         resumeID: String? = nil,
-        contextFilePath: String? = nil
+        contextFilePath: String? = nil,
+        modelChoice: ProviderModelChoice = .cliDefault
     ) throws -> [String] {
         var arguments = [
             "--restricted", "--safe-mode", "--setting-sources", "",
@@ -340,12 +353,34 @@ public enum ProviderCommandBuilder {
         if let contextFilePath {
             arguments += ["--append-system-prompt-file", try validatedContextFilePath(contextFilePath)]
         }
+        arguments += try claudeModelArguments(modelChoice)
         if let resumeID {
             try validateResumeID(resumeID)
             arguments += ["--resume", resumeID]
         } else {
             arguments += ["--session-id", sessionID.uuidString.lowercased()]
         }
+        return arguments
+    }
+
+    /// `-m <model>` and the effort as a TOML string. Both are checked again here,
+    /// so a stored value that was edited by hand cannot become another option.
+    /// The `/usage` terminal never gets these: it only shows quota.
+    static func codexModelArguments(_ choice: ProviderModelChoice) throws -> [String] {
+        let checked = try choice.validated(for: .codex)
+        var arguments: [String] = []
+        if let model = checked.model { arguments += ["-m", model] }
+        if let effort = checked.reasoningEffort { arguments += ["-c", "model_reasoning_effort=\(tomlBasicString(effort))"] }
+        return arguments
+    }
+
+    /// `--model` and `--effort`. No `--fallback-model`: a rejected model fails the
+    /// run instead of quietly running on another one.
+    static func claudeModelArguments(_ choice: ProviderModelChoice) throws -> [String] {
+        let checked = try choice.validated(for: .claude)
+        var arguments: [String] = []
+        if let model = checked.model { arguments += ["--model", model] }
+        if let effort = checked.reasoningEffort { arguments += ["--effort", effort] }
         return arguments
     }
 
@@ -360,7 +395,8 @@ public enum ProviderCommandBuilder {
         budgetUSD: Double,
         activeMCPServers: [MCPServerCommandConfiguration] = [],
         mcpWorkingDirectory: String? = nil,
-        mcpEnvironment: [String: String] = [:]
+        mcpEnvironment: [String: String] = [:],
+        modelChoice: ProviderModelChoice = .cliDefault
     ) throws -> [String] {
         let cents = (budgetUSD * 100).rounded()
         guard budgetUSD.isFinite, budgetUSD >= 0.01, budgetUSD <= 140, abs((cents / 100) - budgetUSD) < 0.000_000_1 else {
@@ -389,6 +425,7 @@ public enum ProviderCommandBuilder {
             "--input-format", "text", "--no-session-persistence",
             "--max-budget-usd", formattedBudget, "--max-turns", "3"
         ]
+        arguments += try claudeModelArguments(modelChoice)
         if !mcpToolNames.isEmpty { arguments += ["--allowedTools"] + mcpToolNames }
         return arguments
     }

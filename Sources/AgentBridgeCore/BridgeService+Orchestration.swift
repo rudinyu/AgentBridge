@@ -110,7 +110,8 @@ extension BridgeService {
             sourcePath: request.sourceRepositoryPath,
             provider: request.planner.provider,
             accessMode: .readOnly,
-            accountProfileID: request.planner.accountProfileID
+            accountProfileID: request.planner.accountProfileID,
+            modelChoice: request.planner.modelChoice
         )
         guard plannerSession.snapshotCommit.lowercased() == sourceFingerprint.headCommit.lowercased() else {
             throw AutonomousOrchestrationError.staleConfiguration("the source HEAD changed while the planning workspace was being created")
@@ -165,7 +166,8 @@ extension BridgeService {
                 provider: binding.provider,
                 accessMode: accessMode,
                 snapshotCommit: plannerSession.snapshotCommit,
-                accountProfileID: binding.accountProfileID
+                accountProfileID: binding.accountProfileID,
+                modelChoice: binding.modelChoice
             )
             let invocation = try activeExtensionsForSession(sessionID: session.id, extensionIDs: binding.extensionIDs)
             try validateInvocation(invocation, binding: binding, selectedExtensionIDs: binding.extensionIDs)
@@ -193,7 +195,8 @@ extension BridgeService {
                 provider: reviewerBinding.provider,
                 accessMode: .readOnly,
                 snapshotCommit: plannerSession.snapshotCommit,
-                accountProfileID: reviewerBinding.accountProfileID
+                accountProfileID: reviewerBinding.accountProfileID,
+                modelChoice: reviewerBinding.modelChoice
             )
             let invocation = try activeExtensionsForSession(sessionID: session.id, extensionIDs: reviewerBinding.extensionIDs)
             try validateInvocation(invocation, binding: reviewerBinding, selectedExtensionIDs: reviewerBinding.extensionIDs)
@@ -1003,8 +1006,9 @@ extension BridgeService {
                   let session = try store.session(id: agent.sessionID),
                   session.provider == roleSnapshot.binding.provider,
                   session.accountProfileID == roleSnapshot.binding.accountProfileID,
+                  session.modelChoice == roleSnapshot.binding.modelChoice,
                   session.snapshotCommit.lowercased() == plan.baseCommit.lowercased() else {
-                throw AutonomousOrchestrationError.staleConfiguration("a planned isolated session no longer matches its approved provider, profile, or base commit")
+                throw AutonomousOrchestrationError.staleConfiguration("a planned isolated session no longer matches its approved provider, profile, model, or base commit")
             }
             let expectedAccess: AccessMode = agent.role == .implementer ? .isolatedChanges : .readOnly
             guard session.policy.accessMode == expectedAccess else {
@@ -1023,6 +1027,7 @@ extension BridgeService {
               let plannerSession = try store.session(id: plan.plannerSessionID),
               plannerSession.provider == plannerSnapshot.binding.provider,
               plannerSession.accountProfileID == plannerSnapshot.binding.accountProfileID,
+              plannerSession.modelChoice == plannerSnapshot.binding.modelChoice,
               plannerSession.snapshotCommit.lowercased() == plan.baseCommit.lowercased() else {
             throw AutonomousOrchestrationError.staleConfiguration("the planning session changed")
         }

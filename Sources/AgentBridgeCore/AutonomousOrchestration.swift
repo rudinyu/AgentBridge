@@ -14,22 +14,32 @@ public struct AutonomousRoleBinding: Codable, Equatable, Sendable {
     public let provider: AgentProvider
     public let accountProfileID: UUID
     public let extensionIDs: [String]
+    /// The role's model and reasoning effort; nil means the CLI default. Both are
+    /// left out of the encoded binding when unset, so the digest of a plan made
+    /// before they existed stays the same.
+    public let model: String?
+    public let reasoningEffort: String?
 
     public init(
         role: AutonomousRole,
         provider: AgentProvider,
         accountProfileID: UUID,
-        extensionIDs: [String] = []
+        extensionIDs: [String] = [],
+        model: String? = nil,
+        reasoningEffort: String? = nil
     ) throws {
         guard extensionIDs.count <= 16,
               Set(extensionIDs).count == extensionIDs.count,
               extensionIDs.allSatisfy(AutonomousValidation.isValidExtensionID) else {
             throw AutonomousOrchestrationError.invalidRequest("Extension selections must be unique valid IDs, with at most 16 per role.")
         }
+        let choice = try ProviderModelChoice(model: model, reasoningEffort: reasoningEffort).validated(for: provider)
         self.role = role
         self.provider = provider
         self.accountProfileID = accountProfileID
         self.extensionIDs = extensionIDs.sorted()
+        self.model = choice.model
+        self.reasoningEffort = choice.reasoningEffort
     }
 }
 

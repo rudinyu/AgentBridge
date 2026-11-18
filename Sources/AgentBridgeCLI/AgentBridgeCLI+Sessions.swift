@@ -4,7 +4,7 @@ import AgentBridgeCore
 
 extension AgentBridgeCLI {
     static func settingsCommand(_ arguments: [String], service: BridgeService) throws {
-        guard let subcommand = arguments.first else { throw AgentBridgeError.invalidInput("Specify settings show, usage or binary.") }
+        guard let subcommand = arguments.first else { throw AgentBridgeError.invalidInput("Specify settings show, usage, binary or model.") }
         switch subcommand {
         case "show":
             let settings = try service.settings()
@@ -31,6 +31,30 @@ extension AgentBridgeCLI {
             settings.setBinaryPath(path, for: provider)
             try service.saveSettings(settings)
             print("Updated the \(provider.rawValue) CLI path.")
+        case "model":
+            // Defaults for new sessions and chats only; existing ones keep theirs.
+            guard arguments.count >= 2,
+                  let provider = AgentProvider(rawValue: arguments[1]),
+                  provider != .local else {
+                throw AgentBridgeError.invalidInput("Usage: agentbridge settings model codex|claude [--model NAME] [--effort LEVEL]")
+            }
+            var model: String?
+            var effort: String?
+            var index = 2
+            while index < arguments.count {
+                let option = arguments[index]
+                index += 1
+                switch option {
+                case "--model": model = try nextOptionValue(option, arguments: arguments, index: &index)
+                case "--effort": effort = try nextOptionValue(option, arguments: arguments, index: &index)
+                default: throw AgentBridgeError.invalidInput("Usage: agentbridge settings model codex|claude [--model NAME] [--effort LEVEL]")
+                }
+            }
+            var settings = try service.settings()
+            settings.setModelDefaults(try ProviderModelChoice(model: model, reasoningEffort: effort).validated(for: provider), for: provider)
+            try service.saveSettings(settings)
+            let saved = try service.settings().modelDefaults(for: provider)
+            print("New \(provider.rawValue) sessions and chats will use: \(modelLabel(model: saved.model, reasoningEffort: saved.reasoningEffort)). Existing sessions keep their own.")
         default:
             throw AgentBridgeError.invalidInput("Unknown settings subcommand.")
         }
@@ -46,7 +70,8 @@ extension AgentBridgeCLI {
             case .interactiveManualApproval: mode = "interactive, manual approval"
             case .isolatedChanges: mode = "isolated changes (plan approval)"
             }
-            print("\(session.id.uuidString.lowercased())  \(session.provider.rawValue)  \(mode)  \(session.status.rawValue)  \(session.snapshotCommit.prefix(12))")
+            let model = session.provider == .local ? "" : "  \(modelLabel(model: session.model, reasoningEffort: session.reasoningEffort))"
+            print("\(session.id.uuidString.lowercased())  \(session.provider.rawValue)  \(mode)  \(session.status.rawValue)  \(session.snapshotCommit.prefix(12))\(model)")
             print("  \(session.workspacePath)")
         }
     }
@@ -54,12 +79,14 @@ extension AgentBridgeCLI {
     static func sessionCommand(_ arguments: [String], service: BridgeService) async throws {
         if arguments.first == "remove" { return try await removeSessionCommand(Array(arguments.dropFirst()), service: service) }
         guard arguments.first == "create" else {
-            throw AgentBridgeError.invalidInput("Usage: agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes]\n       agentbridge session remove SESSION-ID [--confirm]")
+            throw AgentBridgeError.invalidInput("Usage: agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes] [--model NAME] [--effort LEVEL]\n       agentbridge session remove SESSION-ID [--confirm]")
         }
         var provider: AgentProvider?
         var repoPath: String?
         var interactive = false
         var isolatedChanges = false
+        var model: String?
+        var effort: String?
         var index = 1
         while index < arguments.count {
             switch arguments[index] {
@@ -75,6 +102,14 @@ extension AgentBridgeCLI {
                 interactive = true
             case "--changes":
                 isolatedChanges = true
+            case "--model":
+                index += 1
+                guard index < arguments.count else { throw AgentBridgeError.invalidInput("--model needs a value.") }
+                model = arguments[index]
+            case "--effort":
+                index += 1
+                guard index < arguments.count else { throw AgentBridgeError.invalidInput("--effort needs a value.") }
+                effort = arguments[index]
             default:
                 throw AgentBridgeError.invalidInput("Unknown session create option \(arguments[index]).")
             }
@@ -89,8 +124,16 @@ extension AgentBridgeCLI {
             throw AgentBridgeError.sessionMismatch("Isolated changes support only the official CLI subscription sign-in; Claude API supports read-only sessions only.")
         }
         let access: AccessMode = isolatedChanges ? .isolatedChanges : (interactive ? .interactiveManualApproval : .readOnly)
-        let session = try await service.createSession(sourcePath: repoPath, provider: provider, accessMode: access)
+        let session = try await service.createSession(
+            sourcePath: repoPath,
+            provider: provider,
+            accessMode: access,
+            modelChoice: requestedModelChoice(model: model, effort: effort, provider: provider, service: service)
+        )
         print("Created an isolated session: \(session.id.uuidString.lowercased())")
+        if provider != .local {
+            print("Model: \(modelLabel(model: session.model, reasoningEffort: session.reasoningEffort))")
+        }
         print("Workspace: \(session.workspacePath)")
         print("Pinned commit: \(session.snapshotCommit)")
         if session.sourceWasDirty { print("The source has uncommitted changes; they were not copied into the workspace.") }
