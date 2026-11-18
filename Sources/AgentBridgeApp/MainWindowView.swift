@@ -105,7 +105,12 @@ struct MainWindowView: View {
             guard (notification.object as? TerminalModel) === model.terminal else { return }
             selectMainArea(.conversation)
         }
-        .onAppear { model.refresh() }
+        .onChange(of: model.openedFinishedWork) { _, _ in showOpenedFinishedWork() }
+        .onAppear {
+            model.refresh()
+            // A notification click can open work before this window first appears.
+            showOpenedFinishedWork()
+        }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in model.refreshInBackground() }
     }
 
@@ -225,6 +230,16 @@ struct MainWindowView: View {
         case .autonomous, .extensions:
             model.chats.selectedDiscussionID = nil
             model.isProjectConversationActive = model.selectedSessionID != nil
+        }
+    }
+
+    /// Switches to the area that shows the work a clicked notification opened.
+    private func showOpenedFinishedWork() {
+        guard let target = model.openedFinishedWork else { return }
+        model.openedFinishedWork = nil
+        switch target {
+        case .session: selectMainArea(.conversation, focusProjectConversation: true)
+        case .autonomousRun: selectMainArea(.autonomous)
         }
     }
 

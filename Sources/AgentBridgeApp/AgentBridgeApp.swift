@@ -1,5 +1,18 @@
+import AppKit
 import Combine
 import SwiftUI
+import UserNotifications
+
+/// Sets the notification delegate before launch finishes, so a click that
+/// launches the app is still delivered.
+final class AgentBridgeAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // UNUserNotificationCenter stops the process when it is not running from an
+        // app bundle, as with `swift run`.
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return }
+        UNUserNotificationCenter.current().delegate = WorkNotificationDelegate.shared
+    }
+}
 
 /// Owns one `AppModel` per window. `AppModel.init` opens the store and
 /// refreshes, so it must run once per window; `@StateObject` guarantees that,
@@ -11,6 +24,8 @@ private final class AppModelOwner: ObservableObject {
 
 @main
 struct AgentBridgeApp: App {
+    @NSApplicationDelegateAdaptor(AgentBridgeAppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             ContentView()
