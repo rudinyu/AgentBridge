@@ -1148,6 +1148,69 @@ final class AppModel {
         }
     }
 
+    /// Sends one read-only request that drafts a plan into the form. It takes a run
+    /// slot like any other run and never saves, approves or runs the plan.
+    func draftChangePlan() {
+        guard !hasActiveAutonomousWorkflow else {
+            errorMessage = localized("Changes are locked while an autonomous workflow is active.")
+            return
+        }
+        guard let service, let session = selectedSession, session.policy.accessMode == .isolatedChanges else {
+            errorMessage = "Create an isolated-changes session first."
+            return
+        }
+        guard settings.usageMode == .subscription else {
+            errorMessage = "Isolated changes support only the official CLI subscription sign-in."
+            return
+        }
+        guard canStartAnotherRun else {
+            errorMessage = "Up to three different sessions can run at once; the current session also cannot run twice."
+            return
+        }
+        let request = changes.changeRequestText
+        guard !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "Describe what should change before drafting a plan."
+            return
+        }
+        let fieldsAtStart = changes.planFields
+        let cancellation = CancellationFlag()
+        activeRunFlags[session.id] = cancellation
+        activeRunSessionID = session.id
+        isRunning = true
+        changes.draftingSessionID = session.id
+        errorMessage = nil
+        status = "Drafting a change plan with one read-only request…"
+        Task { @MainActor [self] in
+            defer {
+                activeRunFlags.removeValue(forKey: session.id)
+                isRunning = !activeRunFlags.isEmpty
+                activeRunSessionID = activeRunFlags.keys.first
+                changes.draftingSessionID = nil
+                refresh()
+                refreshSelectedEvents()
+            }
+            do {
+                let draft = try await service.draftChangePlan(
+                    sessionID: session.id,
+                    request: request,
+                    cancellation: cancellation
+                ) { [weak self] message in
+                    Task { @MainActor [weak self] in
+                        self?.status = message
+                    }
+                }
+                guard selectedSessionID == session.id else {
+                    status = "The drafted plan was for a session that is no longer selected, so it was not filled in."
+                    return
+                }
+                changes.receiveDraft(draft, fieldsAtStart: fieldsAtStart)
+            } catch {
+                errorMessage = error.localizedDescription
+                status = "Drafting the plan ended."
+            }
+        }
+    }
+
     func runVerification(custom: Bool = false) {
         guard let service, let session = selectedSession,
               session.policy.accessMode == .isolatedChanges else { return }

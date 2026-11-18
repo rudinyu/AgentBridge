@@ -5,6 +5,7 @@
 ### Added
 
 - A new App-wide setting, "Notify when work finishes" (off by default, in the usage area beside the threshold notifications), sends a macOS notification when a change run or verification ends, or an autonomous workflow ends for any reason, while AgentBridge is in the background. A change run or verification you cancel yourself does not notify, and neither does work started from the CLI. The notification names only what happened, the repository folder and the provider, so no prompt, output, path or error text reaches the lock screen. Clicking it brings AgentBridge forward and opens that session or workflow run; if it no longer exists, the App just comes forward. Turning the setting on asks for notification permission and turns it back off if permission is refused.
+- The model can draft an isolated-change plan. In **Changes**, describe what should change and click **Draft plan**; AgentBridge sends one read-only request to the session's provider in its isolated workspace and fills the plan's title, summary and steps with the answer, asking first if those fields already have text. The draft is never saved, approved or run, and it never includes shared memory; you edit and save it as before. The run is cancellable and counts like any other run. The CLI has `changes draft SESSION-ID [--json]`, which reads the request from standard input and prints the draft without saving it.
 
 ## 0.16.3 — 2026-11-17
 

@@ -167,13 +167,15 @@ printf '%s' 'Summarize the repository architecture.' | \
 
 預設的存取模式是原生互動終端。若要隔離修改，請在「新工作階段存取模式」選「隔離變更」，並在訂閱模式建立新工作階段。它會依來源 Repository 已提交的 `HEAD` 建立新工作區；來源未提交檔案不會複製。原生互動 TUI 是獨立模式。
 
-在 **Changes** 填入計畫標題、摘要和步驟，保存後先完整檢視。除非勾選 **在變更執行中包含共享記憶**（或對 `changes plan` 加上 `--with-memory`），變更執行不會看到共享記憶；核准涵蓋當下的記憶，記憶變更後請重新核准。可先調整計畫，確認符合預期後再按 **Approve reviewed plan**；只有核准後 **Run approved changes** 才能執行。Provider 只會在隔離工作階段工作區寫檔。Codex 變更使用非互動 `codex exec`：AgentBridge 不會啟用自動核准，也無法在執行途中顯示核准提示。需要超出 sandbox 權限的命令會失敗停止；請將工作限制在已核准計畫和隔離工作區內。CLI 流程如下：
+在 **Changes** 填入計畫標題、摘要和步驟，保存後先完整檢視。若想從草稿開始，可在 **要變更什麼？** 描述變更並按 **草擬計畫**：AgentBridge 會向此工作階段的供應商送出一次實際的唯讀請求，供應商可讀取工作區但不能修改，並以回覆填入標題、摘要和步驟。若這些欄位已有內容，取代前會先詢問；草擬期間可取消。草稿不會被儲存、核准或執行，也不會開啟共享記憶；編輯後照常儲存即可。這次請求與其他執行一樣計入。CLI 可用 `changes draft SESSION-ID < request.txt` 印出草稿（`--json` 輸出 JSON）而不儲存；再把要保留的內容交給 `changes plan`。除非勾選 **在變更執行中包含共享記憶**（或對 `changes plan` 加上 `--with-memory`），變更執行不會看到共享記憶；核准涵蓋當下的記憶，記憶變更後請重新核准。可先調整計畫，確認符合預期後再按 **Approve reviewed plan**；只有核准後 **Run approved changes** 才能執行。Provider 只會在隔離工作階段工作區寫檔。Codex 變更使用非互動 `codex exec`：AgentBridge 不會啟用自動核准，也無法在執行途中顯示核准提示。需要超出 sandbox 權限的命令會失敗停止；請將工作限制在已核准計畫和隔離工作區內。CLI 流程如下：
 
 ```sh
 CLI=build/swiftpm/debug/agentbridge
 "$CLI" session create --provider codex --repo "$HOME/Projects/example" --changes
 # 複製上方輸出的工作階段 ID。
 SESSION_ID="在此貼上工作階段 ID"
+# 可選：請模型草擬計畫。只會印出計畫，不會儲存。
+printf '%s' '讓 parser 支援新的記錄格式。' | "$CLI" changes draft "$SESSION_ID"
 "$CLI" changes plan "$SESSION_ID" --title "更新 parser" \
   --summary "支援新的記錄格式。" --step "更新解碼方式" --step "調整重點驗證"
 # 複製輸出的 PLAN_ID 與 REVIEW_DIGEST。核准時會顯示完整計畫，並要求
