@@ -110,9 +110,14 @@ public enum ProviderOutputParser {
             case "thread.started":
                 sessionID = event["thread_id"] as? String
             case "item.completed":
+                // Codex can send progress messages ("I'll inspect the repository…")
+                // before its answer. Only the last message is the answer, as with
+                // `codex exec --output-last-message` and Claude's `result`; joining
+                // them glued the progress text onto chat replies and broke every
+                // caller that expects the answer to be exactly one JSON object.
                 if let item = event["item"] as? [String: Any], item["type"] as? String == "agent_message",
                    let message = item["text"] as? String {
-                    finalText += message
+                    finalText = message
                 }
             case "turn.completed":
                 completed = true

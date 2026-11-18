@@ -384,6 +384,17 @@ final class AgentBridgeCoreTests: XCTestCase {
         XCTAssertEqual(codexResult.text, "Done")
         XCTAssertEqual(codexResult.providerSessionID, "3b12f1df-5232-4804-897e-917bf397618a")
 
+        // A progress message before the answer is not part of the answer.
+        let codexWithProgress = [
+            #"{"type":"item.completed","item":{"type":"agent_message","text":"I'll inspect the repository first."}}"#,
+            #"{"type":"item.completed","item":{"type":"command_execution","command":"ls"}}"#,
+            #"{"type":"item.completed","item":{"type":"agent_message","text":"{\"title\":\"T\",\"summary\":\"S\",\"steps\":[\"A\"]}"}}"#,
+            #"{"type":"turn.completed"}"#
+        ].joined(separator: "\n")
+        let codexAnswer = try ProviderOutputParser.parse(provider: .codex, data: Data(codexWithProgress.utf8))
+        XCTAssertEqual(codexAnswer.text, #"{"title":"T","summary":"S","steps":["A"]}"#)
+        XCTAssertEqual(try ChangePlanDraftParser.parse(codexAnswer.text), DraftedChangePlan(title: "T", summary: "S", steps: ["A"]))
+
         let codexFailure = Data(#"{"type":"turn.failed","error":{"message":"private details"}}"#.utf8)
         XCTAssertThrowsError(try ProviderOutputParser.parse(provider: .codex, data: codexFailure))
 

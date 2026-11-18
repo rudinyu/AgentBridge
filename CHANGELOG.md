@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- When Codex sent a progress message such as "I'll inspect the repository…" before its answer, AgentBridge joined the two into one reply. Chat replies started with the progress text, and drafting a change plan with Codex failed with "The drafted plan was not a single JSON object", although the plan itself was valid; any other step that expects the answer to be one JSON object, such as an autonomous workflow's plan or review, could fail the same way. AgentBridge now uses only Codex's last message as the reply, as Claude's final result already was.
+
 ## 0.17.0 — 2026-11-18
 
 ### Added
