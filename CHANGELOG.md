@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **New Session Like This…** creates a new session from an existing one, to try another model, effort or account on the same task without setting it up again. It is in the context menu of both session lists; a failed Codex or Claude run also offers **Try Another Model…** in its error alert, and a failed session shows it next to its title. The new session keeps the source's provider, repository and access mode, and starts from its model, effort and account (same provider only), which the sheet can change; it pins the source's commit or the source repository's current HEAD. An isolated-changes session's change plan is saved on the new session unapproved and must be approved again; approvals, verification results, changes, provider sessions and enabled extensions are never copied. If the plan cannot be saved, the new session is still created and the error says the plan was not copied. A read-only conversation's composer gets the prompt last sent in the source session during this App launch, unsent. The new session's activity log records which session it was created from and whether a plan was copied, with no prompt text. The CLI has `session create --like SESSION-ID [--model NAME] [--effort LEVEL] [--latest-commit] [--profile PROFILE-ID]`.
+
 ## 0.17.1 — 2026-11-18
 
 ### Fixed

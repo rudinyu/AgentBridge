@@ -64,9 +64,23 @@ struct MainWindowView: View {
                 .interactiveDismissDisabled(!model.workspaceRootIsConfigured || model.isChangingWorkspaceRoot || model.terminal.terminalLaunch != nil)
         }
         .alert(model.localized("AgentBridge"), isPresented: Binding(get: { model.errorMessage != nil && !model.setupWizard.isPresented }, set: { if !$0 { model.errorMessage = nil } })) {
+            if let failedSession = model.sessionForTryAnotherModel {
+                Button(model.localized("Try Another Model…")) {
+                    model.errorMessage = nil
+                    // Open the sheet once the alert has gone.
+                    Task { @MainActor in model.reviewNewSessionLike(failedSession.id) }
+                }
+            }
             Button(model.localized("OK"), role: .cancel) { model.errorMessage = nil }
         } message: {
             Text(model.localized(model.errorMessage ?? ""))
+        }
+        .sheet(item: Binding(get: { model.sessionCopyDraft }, set: { if $0 == nil { model.cancelNewSessionLike() } })) { draft in
+            SessionCopySheet(model: model, draft: draft) { sessionID in
+                openProjectConversation(sessionID)
+            }
+            .environment(\.locale, model.appLanguage.locale)
+            .interactiveDismissDisabled(model.isCreatingSessionCopy)
         }
         .alert(
             model.localized("Remove this session?"),

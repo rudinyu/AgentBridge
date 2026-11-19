@@ -97,7 +97,10 @@ extension MainWindowView {
                                     projectSessionRow(session)
                                 }
                                 .buttonStyle(.plain)
-                                .contextMenu { removeSessionMenuItem(session) }
+                                .contextMenu {
+                                    newSessionLikeMenuItem(session)
+                                    removeSessionMenuItem(session)
+                                }
                             }
                         }
                     }
@@ -422,6 +425,15 @@ extension MainWindowView {
         .disabled(model.hasActiveAutonomousWorkflow || model.chats.hasActiveDiscussionOperation)
     }
 
+    /// Opens a new session with this session's settings, to try another model
+    /// or account on the same task.
+    func newSessionLikeMenuItem(_ session: SessionRecord) -> some View {
+        Button(model.localized("New Session Like This…")) {
+            model.reviewNewSessionLike(session.id)
+        }
+        .disabled(model.isCreatingSessionCopy || model.hasActiveAutonomousWorkflow || model.isChangingWorkspaceRoot)
+    }
+
     /// Removes the session after showing what that deletes.
     func removeSessionMenuItem(_ session: SessionRecord) -> some View {
         Button(model.localized("Remove Session…"), role: .destructive) {
@@ -462,7 +474,10 @@ extension MainWindowView {
                     }
                     .padding(.vertical, 3)
                     .tag(session.id)
-                    .contextMenu { removeSessionMenuItem(session) }
+                    .contextMenu {
+                        newSessionLikeMenuItem(session)
+                        removeSessionMenuItem(session)
+                    }
                 }
                 .frame(minHeight: 120, maxHeight: 280)
             }

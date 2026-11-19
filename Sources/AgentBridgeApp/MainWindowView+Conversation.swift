@@ -47,6 +47,11 @@ extension MainWindowView {
                 }
             }
             Spacer()
+            if session.status == .failed, SessionCopyPresentation.canTryAnotherModel(session) {
+                Button(model.localized("Try Another Model…")) { model.reviewNewSessionLike(session.id) }
+                    .help(model.localized("Create a new session for the same task with another model, effort or account."))
+                    .disabled(model.isCreatingSessionCopy || model.hasActiveAutonomousWorkflow)
+            }
             if let assessment = model.selectedSessionAuthentication {
                 Label(model.localized(assessment.message), systemImage: assessment.confirmedSubscription ? "checkmark.seal" : "exclamationmark.shield")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)

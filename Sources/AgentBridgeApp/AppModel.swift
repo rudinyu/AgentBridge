@@ -113,6 +113,14 @@ final class AppModel {
     /// What removing a session would delete, while the user decides.
     var sessionRemovalPreview: SessionRemovalPreview?
     var isRemovingSession = false
+    /// "New Session Like This", while the user edits it.
+    var sessionCopyDraft: SessionCopyDraft?
+    var isCreatingSessionCopy = false
+    /// The last failed Codex or Claude run and the error it showed.
+    @ObservationIgnored var lastRunFailure: (sessionID: UUID, message: String)?
+    /// The last prompt sent in each read-only project conversation, kept in
+    /// memory only, so a session created like it can start with it unsent.
+    @ObservationIgnored var recentProjectPrompts: [UUID: String] = [:]
     /// Sends finished-work notifications. Tests get one of their own that is off.
     @ObservationIgnored let workNotifier: WorkNotifier
     /// Work a clicked notification opened, for the window to show; it clears it.
@@ -1078,6 +1086,7 @@ final class AppModel {
             apiRequest = APIUsageRequest(requestedBudgetUSD: budget, explicitlyAuthorized: true, apiKey: apiKey)
         }
         let promptValue = prompt
+        recentProjectPrompts[session.id] = promptValue
         let cancellation = CancellationFlag()
         activeRunFlags[session.id] = cancellation
         activeRunSessionID = session.id
@@ -1111,6 +1120,7 @@ final class AppModel {
                 isReviewingProviderHandoffPrompt = false
             } catch {
                 errorMessage = error.localizedDescription
+                noteRunFailure(sessionID: session.id, error: error)
                 status = "Run ended."
             }
         }
@@ -1185,6 +1195,7 @@ final class AppModel {
                 succeeded = true
             } catch {
                 errorMessage = error.localizedDescription
+                noteRunFailure(sessionID: session.id, error: error)
                 status = "The change run ended."
             }
         }
