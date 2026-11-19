@@ -78,6 +78,10 @@ struct MainWindowView: View {
         } message: { preview in
             Text(model.sessionRemovalMessage(preview))
         }
+        .sheet(item: $model.bulkSessionRemovalReview) { review in
+            SessionBulkRemovalSheet(model: model, review: review)
+                .environment(\.locale, model.appLanguage.locale)
+        }
         .alert(
             model.localized("Remove this chat?"),
             isPresented: Binding(get: { model.chats.discussionPendingRemoval != nil }, set: { if !$0 { model.chats.cancelDiscussionRemoval() } }),
@@ -314,3 +318,4 @@ struct MainWindowView: View {
         return trimmedValue.isEmpty ? nil : trimmedValue
     }
 }
+

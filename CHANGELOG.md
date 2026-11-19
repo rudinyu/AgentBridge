@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Both session lists have a search field and filters. The search matches, ignoring case, the source repository's folder name, the model, the start of the pinned commit and the change plan title; filters choose the provider, status and access mode. Both lists share the filter, which is not saved across launches. When nothing matches, the list says so and offers **Clear filter**.
+- Several sessions can be removed at once. **Select** turns the session lists into checklists, with **Select all shown** and **Remove N sessions…**. AgentBridge checks each selected session as single removal does, then shows one confirmation grouped into sessions that are safe to remove, sessions that may lose work, with the files and references each would lose, and sessions that cannot be removed now, with the reason; those are left in place. Confirming removes the others one at a time, each against its own check, goes on past a failure, and reports how many were removed. Single removal from the context menu is unchanged.
+- `agentbridge sessions` takes `--provider codex|claude|local`, `--status STATUS`, `--mode read-only|changes|interactive` and `--repo PATH` to list only the matching sessions.
+
 ## 0.17.1 — 2026-11-18
 
 ### Fixed

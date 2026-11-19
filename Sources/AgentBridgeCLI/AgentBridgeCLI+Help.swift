@@ -27,7 +27,7 @@ extension AgentBridgeCLI {
           agentbridge profile-login PROFILE-ID
           agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes] [--model NAME] [--effort LEVEL]
           agentbridge session remove SESSION-ID [--confirm [--discard-unsaved-work]]
-          agentbridge sessions
+          agentbridge sessions [--provider codex|claude|local] [--status created|running|completed|failed|cancelled] [--mode read-only|changes|interactive] [--repo PATH]
           agentbridge run SESSION-ID [--api-budget USD --confirm-api-spend --api-key-env ANTHROPIC_API_KEY]
           agentbridge changes draft SESSION-ID [--json] < request.txt
           agentbridge changes plan SESSION-ID --title TITLE --summary SUMMARY --step STEP [--step STEP ...] [--with-memory]
@@ -82,6 +82,7 @@ extension AgentBridgeCLI {
         Custom accounts have their own provider config folders; create the profile, then run profile-login in an interactive Terminal.
         `session create --interactive` creates an isolated Codex or Claude Terminal workspace, still subject to manual approval and the bound account.
         `session create --model NAME --effort LEVEL` binds a Codex or Claude model and reasoning effort to the new session, like its account; without them the defaults from `settings model` apply, and an empty value means the CLI default. The model name is passed to the CLI as is: letters, digits and . - _ : / @ [ ], up to 128 bytes, not starting with -. Codex effort levels: \(ProviderModelOptions.effortLevels(for: .codex).joined(separator: ", ")); Claude: \(ProviderModelOptions.effortLevels(for: .claude).joined(separator: ", ")). If the CLI rejects the model, the run fails with the CLI's error; AgentBridge never retries with another model. The usage terminal never sets a model, and local models keep their own model setting.
+        `sessions` lists every session; `--provider`, `--status`, `--mode` and `--repo` show only the sessions that match all the options given, using the same rules as the App's session filter. `--repo` compares the source repository path after resolving symbolic links.
         `session create --changes` creates a subscription-mode isolated-changes session that is read-only by default; save and review a plan, then retype its digest in the approve command before anything can run.
         `changes draft` reads up to 8,000 bytes describing what should change from standard input and sends one real read-only request to the session's provider in its isolated workspace, then prints the drafted title, summary and steps (`--json` prints them as JSON). It counts as a run like any other, uses no shared memory and saves nothing; to save the plan, pass the edited text to `changes plan`.
         `changes verify` runs .codex/ci.sh only when you call it explicitly. Custom verification needs `--approve-custom` and passes separate argv values with repeated `--arg`; nothing goes through a shell.
