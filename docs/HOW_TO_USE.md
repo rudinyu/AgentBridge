@@ -153,9 +153,17 @@ printf '%s' 'Summarize the repository architecture.' | \
 
 To return to subscription login, run `"$CLI" settings usage subscription`, then create or switch back to a subscription session. API mode cannot resume a subscription session that already has a provider session. The ledger only counts AgentBridge API calls; the provider's actual charges and Anthropic Console limits are authoritative.
 
+#### Finding sessions
+
+Both session lists have a search field and filters above them. The search matches, ignoring case, the source repository's folder name, the model and reasoning effort, the start of the pinned commit, and the title of the session's change plan. **Provider**, **Status** and **Access mode** narrow the list further; a session must match everything you set. **Clear filter** shows every session again. The two lists share one filter, and it is not saved: every launch starts unfiltered.
+
+From the CLI, `"$CLI" sessions` lists every session, and `--provider codex|claude|local`, `--status created|running|completed|failed|cancelled`, `--mode read-only|changes|interactive` and `--repo PATH` show only those that match all the options given. `--repo` compares the source repository path after resolving symbolic links.
+
 #### Removing a session
 
 To remove a session you no longer need, right-click it in either session list and choose **Remove Session…**. AgentBridge first checks the session's isolated workspace and shows what removal would delete: files that differ from what the source repository has; ignored files and folders, such as `.env` files, which Git does not keep; and branches, tags, notes or stash entries whose commits exist only in the workspace. If it cannot complete that check, it says so instead of calling the workspace clean. Removal deletes the workspace and cannot be undone; the session's audit events and usage records are kept, so usage statistics still count its runs. A running session, one with a terminal open in its workspace, or a Claude session with an unreconciled API call cannot be removed. If the workspace changes after you review it, nothing is deleted and you are asked to review it again.
+
+To remove several sessions at once, click **Select** above either list, tick the sessions, or click **Select all shown** to take every session the filter shows, then click **Remove N sessions…**. AgentBridge checks each selected session in turn and shows one confirmation in three groups: sessions that are safe to remove, sessions that may lose work, each with the files and references that would be lost, and sessions that cannot be removed now, with the reason; those are left in place. Confirming removes the others one at a time, each against its own check, and keeps going if one fails; afterwards it reports how many were removed and why any were not. Only selected sessions the filter still shows are removed. Bulk removal is unavailable while an autonomous workflow or another removal is running. The CLI removes one session at a time.
 
 From the CLI, `"$CLI" session remove SESSION-ID` shows the same check without removing anything, and `"$CLI" session remove SESSION-ID --confirm` checks again and removes the session. If the check finds work that would be lost, or could not finish, `--confirm` alone removes nothing; add `--discard-unsaved-work` to delete it.
 

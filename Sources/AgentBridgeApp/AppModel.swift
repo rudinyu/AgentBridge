@@ -113,6 +113,15 @@ final class AppModel {
     /// What removing a session would delete, while the user decides.
     var sessionRemovalPreview: SessionRemovalPreview?
     var isRemovingSession = false
+    /// What both session lists show. Not saved; every launch starts unfiltered.
+    var sessionFilter = SessionFilter()
+    /// Whether the session lists pick sessions for bulk removal instead of opening them.
+    var isSelectingSessions = false
+    var sessionsSelectedForRemoval: Set<UUID> = []
+    /// The combined confirmation for removing several sessions, while the user decides.
+    var bulkSessionRemovalReview: SessionBulkRemovalReview?
+    /// How far checking or removing several sessions has got, while it runs.
+    var bulkSessionRemovalProgress: String?
     /// Sends finished-work notifications. Tests get one of their own that is off.
     @ObservationIgnored let workNotifier: WorkNotifier
     /// Work a clicked notification opened, for the window to show; it clears it.

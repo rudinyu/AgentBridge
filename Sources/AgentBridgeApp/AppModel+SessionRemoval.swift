@@ -86,6 +86,18 @@ extension AppModel {
     /// The confirmation text for `preview`, in the app language.
     func sessionRemovalMessage(_ preview: SessionRemovalPreview) -> String {
         var parts = [localizedFormat("AgentBridge deletes this session's isolated workspace: %@", preview.workspacePath)]
+        parts += sessionRemovalDetails(preview)
+        parts.append(localized(preview.mayLoseWork
+            ? "Anything listed here is lost. Removal cannot be undone."
+            : "Nothing in the workspace is missing from the source repository."))
+        parts.append(localized("The session's audit events and usage records are kept."))
+        return parts.joined(separator: "\n\n")
+    }
+
+    /// What `preview` found that removal would lose or could not check, in the
+    /// app language: one paragraph per finding, none when nothing is at risk.
+    func sessionRemovalDetails(_ preview: SessionRemovalPreview) -> [String] {
+        var parts: [String] = []
         if !preview.workspaceExists {
             parts.append(localized("The workspace folder no longer exists."))
         }
@@ -110,10 +122,6 @@ extension AppModel {
                 String(preview.ignoredPathCount)
             ) + "\n" + listedPaths(preview.ignoredPaths, total: preview.ignoredPathCount))
         }
-        parts.append(localized(preview.mayLoseWork
-            ? "Anything listed here is lost. Removal cannot be undone."
-            : "Nothing in the workspace is missing from the source repository."))
-        parts.append(localized("The session's audit events and usage records are kept."))
-        return parts.joined(separator: "\n\n")
+        return parts
     }
 }

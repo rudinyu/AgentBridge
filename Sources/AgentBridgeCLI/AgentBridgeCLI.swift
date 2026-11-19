@@ -53,7 +53,7 @@ enum AgentBridgeCLI {
         case "extensions":
             try await extensionsCommand(Array(arguments.dropFirst()), service: service)
         case "sessions":
-            try listSessions(service: service)
+            try listSessions(Array(arguments.dropFirst()), service: service)
         case "session":
             try await sessionCommand(Array(arguments.dropFirst()), service: service)
         case "changes":

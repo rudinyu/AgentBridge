@@ -90,11 +90,19 @@ extension MainWindowView {
                             .padding(.vertical, 5)
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
-                            ForEach(model.sessions) { session in
+                            sessionFilterControls
+                            ForEach(model.filteredSessions) { session in
                                 Button {
-                                    openProjectConversation(session.id)
+                                    if model.isSelectingSessions {
+                                        model.toggleSessionSelectedForRemoval(session.id)
+                                    } else {
+                                        openProjectConversation(session.id)
+                                    }
                                 } label: {
-                                    projectSessionRow(session)
+                                    HStack(spacing: 4) {
+                                        if model.isSelectingSessions { sessionSelectionMark(session) }
+                                        projectSessionRow(session)
+                                    }
                                 }
                                 .buttonStyle(.plain)
                                 .contextMenu { removeSessionMenuItem(session) }
@@ -430,35 +438,116 @@ extension MainWindowView {
         .disabled(model.isRemovingSession)
     }
 
+    /// Search, filters and bulk selection, shared by both session lists.
+    var sessionFilterControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("Search sessions", text: $model.sessionFilter.query)
+                .textFieldStyle(.roundedBorder)
+                .help("Matches the repository folder, model, commit and change plan title.")
+            Picker("Provider", selection: $model.sessionFilter.provider) {
+                Text("All").tag(AgentProvider?.none)
+                Text("Codex").tag(AgentProvider?.some(.codex))
+                Text("Claude").tag(AgentProvider?.some(.claude))
+                Text("Local").tag(AgentProvider?.some(.local))
+            }
+            Picker("Status", selection: $model.sessionFilter.status) {
+                Text("All").tag(SessionStatus?.none)
+                Text("Created").tag(SessionStatus?.some(.created))
+                Text("Running").tag(SessionStatus?.some(.running))
+                Text("Completed").tag(SessionStatus?.some(.completed))
+                Text("Failed").tag(SessionStatus?.some(.failed))
+                Text("Cancelled").tag(SessionStatus?.some(.cancelled))
+            }
+            Picker("Access mode", selection: $model.sessionFilter.accessMode) {
+                Text("All").tag(AccessMode?.none)
+                Text("Read-only").tag(AccessMode?.some(.readOnly))
+                Text("Isolated changes").tag(AccessMode?.some(.isolatedChanges))
+                Text(model.localized("value.terminal")).tag(AccessMode?.some(.interactiveManualApproval))
+            }
+            HStack(spacing: 6) {
+                Toggle("Select", isOn: Binding(
+                    get: { model.isSelectingSessions },
+                    set: { model.setSelectingSessions($0) }
+                ))
+                .toggleStyle(.button)
+                if model.isSelectingSessions {
+                    Button("Select all shown") { model.selectAllShownSessions() }
+                        .disabled(model.filteredSessions.isEmpty)
+                }
+                Spacer(minLength: 0)
+                if model.sessionFilter.isActive {
+                    Button("Clear filter") { model.clearSessionFilter() }
+                }
+            }
+            if model.isSelectingSessions {
+                Button(model.localizedFormat("Remove %@ sessions…", String(model.shownSessionsSelectedForRemoval.count)), role: .destructive) {
+                    model.reviewBulkSessionRemoval()
+                }
+                .disabled(!model.canReviewBulkSessionRemoval)
+            }
+            if let progress = model.bulkSessionRemovalProgress {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(verbatim: progress).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if model.filteredSessions.isEmpty {
+                Text("No sessions match the filter.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            }
+        }
+        .font(.caption)
+    }
+
+    /// The checkbox shown beside a session while picking sessions to remove.
+    func sessionSelectionMark(_ session: SessionRecord) -> some View {
+        let isSelected = model.sessionsSelectedForRemoval.contains(session.id)
+        return Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+            .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+            .accessibilityLabel(model.localized(isSelected ? "Selected for removal" : "Not selected for removal"))
+    }
+
     var sessionList: some View {
         GroupBox("Sessions") {
             if model.sessions.isEmpty {
                 ContentUnavailableView("No Sessions Yet", systemImage: "bubble.left.and.bubble.right")
                     .frame(minHeight: 120)
             } else {
-                List(model.sessions, selection: Binding(
-                    get: { model.selectedSessionID },
-                    set: { if let id = $0 { openProjectConversation(id) } }
+                sessionFilterControls
+                List(model.filteredSessions, selection: Binding(
+                    get: { model.isSelectingSessions ? nil : model.selectedSessionID },
+                    set: { id in
+                        guard let id else { return }
+                        if model.isSelectingSessions {
+                            model.toggleSessionSelectedForRemoval(id)
+                        } else {
+                            openProjectConversation(id)
+                        }
+                    }
                 )) { session in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Image(systemName: session.provider == .codex ? "sparkle" : (session.provider == .local ? "desktopcomputer" : "message"))
-                            Text(session.provider.rawValue.capitalized)
-                                .font(.headline)
-                            if session.policy.accessMode == .interactiveManualApproval {
-                                Text(model.localized("value.terminal")).font(.caption2).padding(.horizontal, 5).padding(.vertical, 2).background(.quaternary, in: Capsule())
-                            } else if session.policy.accessMode == .isolatedChanges {
-                                Text("Isolated changes").font(.caption2).padding(.horizontal, 5).padding(.vertical, 2).background(.orange.opacity(0.14), in: Capsule())
+                    HStack(spacing: 6) {
+                        if model.isSelectingSessions { sessionSelectionMark(session) }
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Image(systemName: session.provider == .codex ? "sparkle" : (session.provider == .local ? "desktopcomputer" : "message"))
+                                Text(session.provider.rawValue.capitalized)
+                                    .font(.headline)
+                                if session.policy.accessMode == .interactiveManualApproval {
+                                    Text(model.localized("value.terminal")).font(.caption2).padding(.horizontal, 5).padding(.vertical, 2).background(.quaternary, in: Capsule())
+                                } else if session.policy.accessMode == .isolatedChanges {
+                                    Text("Isolated changes").font(.caption2).padding(.horizontal, 5).padding(.vertical, 2).background(.orange.opacity(0.14), in: Capsule())
+                                }
                             }
+                            Text("\(model.profileName(for: session)) · \(model.localized(session.status.rawValue.capitalized))")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if let modelLabel = model.modelLabel(for: session) {
+                                Text(verbatim: modelLabel)
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Text("\(session.snapshotCommit.prefix(12)) · \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent) · \(model.formattedDate(session.createdAt, date: .abbreviated, time: .shortened))")
+                                .font(.caption2).foregroundStyle(.tertiary)
                         }
-                        Text("\(model.profileName(for: session)) · \(model.localized(session.status.rawValue.capitalized))")
-                            .font(.caption).foregroundStyle(.secondary)
-                        if let modelLabel = model.modelLabel(for: session) {
-                            Text(verbatim: modelLabel)
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                        Text("\(session.snapshotCommit.prefix(12)) · \(URL(fileURLWithPath: session.sourceRepositoryPath).lastPathComponent) · \(model.formattedDate(session.createdAt, date: .abbreviated, time: .shortened))")
-                            .font(.caption2).foregroundStyle(.tertiary)
                     }
                     .padding(.vertical, 3)
                     .tag(session.id)

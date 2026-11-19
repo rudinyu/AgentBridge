@@ -60,9 +60,12 @@ extension AgentBridgeCLI {
         }
     }
 
-    static func listSessions(service: BridgeService) throws {
-        let sessions = try service.sessions()
-        if sessions.isEmpty { print("No Sessions Yet."); return }
+    static func listSessions(_ arguments: [String], service: BridgeService) throws {
+        let filter = try SessionFilter.parseCommandLine(arguments)
+        let all = try service.sessions()
+        if all.isEmpty { print("No Sessions Yet."); return }
+        let sessions = filter.apply(to: all)
+        if sessions.isEmpty { print("No sessions match the filter."); return }
         for session in sessions {
             let mode: String
             switch session.policy.accessMode {
