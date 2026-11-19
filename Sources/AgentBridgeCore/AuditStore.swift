@@ -67,33 +67,50 @@ public final class AuditStore: @unchecked Sendable {
     }
 
     public func loadSettings() throws -> BridgeSettings {
-        try withStoreLock(exclusive: false) {
-            guard fileManager.fileExists(atPath: settingsURL.path) else { return BridgeSettings() }
-            try Self.requireRegularFile(settingsURL)
-            let attributes = try fileManager.attributesOfItem(atPath: settingsURL.path)
-            guard (attributes[.size] as? NSNumber)?.intValue ?? 0 <= 256_000 else {
-                throw AgentBridgeError.persistence("The settings file exceeds the size limit.")
-            }
-            do {
-                return try decoder.decode(BridgeSettings.self, from: Data(contentsOf: settingsURL))
-            } catch {
-                throw AgentBridgeError.persistence("The settings file is malformed.")
-            }
-        }
+        try withStoreLock(exclusive: false) { try readSettingsFile() }
     }
 
     public func saveSettings(_ settings: BridgeSettings) throws {
+        try withStoreLock(exclusive: true) { try writeSettingsFile(settings) }
+    }
+
+    /// Reads the saved settings, applies `change` and writes the result, all
+    /// under one exclusive lock, so a field another process or window saved in
+    /// the meantime is kept instead of being overwritten by a stale copy.
+    @discardableResult
+    public func updateSettings(_ change: (inout BridgeSettings) throws -> Void) throws -> BridgeSettings {
         try withStoreLock(exclusive: true) {
-            if fileManager.fileExists(atPath: settingsURL.path) { try Self.requireRegularFile(settingsURL) }
-            do {
-                let data = try encoder.encode(settings)
-                try data.write(to: settingsURL, options: .atomic)
-                try Self.setPrivateFilePermissions(settingsURL, fileManager: fileManager)
-            } catch let error as AgentBridgeError {
-                throw error
-            } catch {
-                throw AgentBridgeError.persistence("Could not write the settings file.")
-            }
+            var settings = try readSettingsFile()
+            try change(&settings)
+            try writeSettingsFile(settings)
+            return settings
+        }
+    }
+
+    private func readSettingsFile() throws -> BridgeSettings {
+        guard fileManager.fileExists(atPath: settingsURL.path) else { return BridgeSettings() }
+        try Self.requireRegularFile(settingsURL)
+        let attributes = try fileManager.attributesOfItem(atPath: settingsURL.path)
+        guard (attributes[.size] as? NSNumber)?.intValue ?? 0 <= 256_000 else {
+            throw AgentBridgeError.persistence("The settings file exceeds the size limit.")
+        }
+        do {
+            return try decoder.decode(BridgeSettings.self, from: Data(contentsOf: settingsURL))
+        } catch {
+            throw AgentBridgeError.persistence("The settings file is malformed.")
+        }
+    }
+
+    private func writeSettingsFile(_ settings: BridgeSettings) throws {
+        if fileManager.fileExists(atPath: settingsURL.path) { try Self.requireRegularFile(settingsURL) }
+        do {
+            let data = try encoder.encode(settings)
+            try data.write(to: settingsURL, options: .atomic)
+            try Self.setPrivateFilePermissions(settingsURL, fileManager: fileManager)
+        } catch let error as AgentBridgeError {
+            throw error
+        } catch {
+            throw AgentBridgeError.persistence("Could not write the settings file.")
         }
     }
 

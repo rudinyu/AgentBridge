@@ -230,7 +230,7 @@ final class SetupWizardModel {
             cliStatus = app.localized("Local models do not require a command-line app.")
             return
         }
-        guard let service = app.service else {
+        guard app.service != nil else {
             errorMessage = app.localized("Choose a workspace folder before saving CLI settings.")
             return
         }
@@ -248,7 +248,8 @@ final class SetupWizardModel {
         let previousPath = app.settings.binaryPath(for: provider)?.trimmingCharacters(in: .whitespacesAndNewlines)
         app.settings.setBinaryPath(path.isEmpty ? nil : path, for: provider)
         do {
-            try service.saveSettings(app.settings)
+            let provider = provider
+            try app.persistSettings { $0.setBinaryPath(path.isEmpty ? nil : path, for: provider) }
             if previousPath != path {
                 for profile in app.accountProfiles[provider] ?? [] {
                     app.authStatus.removeValue(forKey: profile.id)
@@ -264,7 +265,7 @@ final class SetupWizardModel {
     }
 
     func selectDefaultProvider() {
-        guard let service = app.service else {
+        guard app.service != nil else {
             errorMessage = app.localized("Choose a workspace folder before saving provider settings.")
             return
         }
@@ -273,7 +274,11 @@ final class SetupWizardModel {
         if provider == .codex { app.settings.usageMode = .subscription }
         app.applyAccessModeLimits()
         do {
-            try service.saveSettings(app.settings)
+            let provider = provider
+            try app.persistSettings { saved in
+                saved.defaultProvider = provider
+                if provider == .codex { saved.usageMode = .subscription }
+            }
             if previous.defaultProvider != app.settings.defaultProvider || previous.usageMode != app.settings.usageMode {
                 app.clearAPIAuthorization()
             }

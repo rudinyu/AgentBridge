@@ -425,8 +425,9 @@ final class AppModel {
             let previousSelectedSessionID = selectedSessionID
             var loadedSettings = try reads.settings.get()
             if loadedSettings.defaultProvider == .codex, loadedSettings.usageMode == .api {
-                loadedSettings.usageMode = .subscription
-                try service.saveSettings(loadedSettings)
+                loadedSettings = try service.updateSettings { saved in
+                    if saved.defaultProvider == .codex, saved.usageMode == .api { saved.usageMode = .subscription }
+                }
                 status = "Codex uses its official CLI subscription sign-in. An older incompatible setting was corrected."
                 clearAPIAuthorization()
             }
@@ -648,7 +649,7 @@ final class AppModel {
             }
             return
         }
-        guard let service else { return }
+        guard service != nil else { return }
         let previous = settings
         settings.defaultProvider = provider
         if provider == .codex, settings.usageMode == .api {
@@ -657,8 +658,12 @@ final class AppModel {
         applyAccessModeLimits()
         clearAPIAuthorization()
         do {
-            updateBinaryPathsInSettings()
-            try service.saveSettings(settings)
+            let editedPaths = editedBinaryPaths()
+            try persistSettings { saved in
+                saved.defaultProvider = provider
+                if provider == .codex, saved.usageMode == .api { saved.usageMode = .subscription }
+                editedPaths.apply(to: &saved)
+            }
             terminal.providerUsageReport = nil
             status = provider == .codex && previous.usageMode == .api
                 ? "Switched to Codex and saved official CLI subscription mode."
@@ -682,14 +687,17 @@ final class AppModel {
         }
         guard settings.defaultProvider == .claude,
               settings.usageMode != usageMode,
-              let service else { return }
+              service != nil else { return }
         let previous = settings
         settings.usageMode = usageMode
         applyAccessModeLimits()
         clearAPIAuthorization()
         do {
-            updateBinaryPathsInSettings()
-            try service.saveSettings(settings)
+            let editedPaths = editedBinaryPaths()
+            try persistSettings { saved in
+                saved.usageMode = usageMode
+                editedPaths.apply(to: &saved)
+            }
             if usageMode == .api { terminal.providerUsageReport = nil }
             status = "Claude usage mode was saved."
             refresh(forceUsageStatistics: true)
@@ -701,7 +709,7 @@ final class AppModel {
     }
 
     func saveLocalModelSettings() {
-        guard let service else { return }
+        guard service != nil else { return }
         guard (1_024...131_072).contains(settings.localModel.contextWindowTokens),
               (1...32_768).contains(settings.localModel.maxOutputTokens),
               settings.localModel.contextWindowTokens - settings.localModel.maxOutputTokens > 512 else {
@@ -710,9 +718,8 @@ final class AppModel {
         }
         do {
             let previousSavedLocalModel = savedLocalModelSettings
-            try service.saveSettings(settings)
-            let savedLocalModel = try service.settings().localModel
-            savedLocalModelSettings = savedLocalModel
+            let draft = settings.localModel
+            let savedLocalModel = try persistSettings { $0.localModel = draft }.localModel
             if previousSavedLocalModel.map({ $0 != savedLocalModel }) ?? true {
                 invalidateLocalModelConnectionState()
                 localModelStatus = localized("Settings saved. Connection not checked.")
@@ -795,9 +802,55 @@ final class AppModel {
         )
     }
 
-    private func updateBinaryPathsInSettings() {
-        settings.codexBinaryPath = codexPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : codexPath
-        settings.claudeBinaryPath = claudePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : claudePath
+    /// CLI path changes to save. A nil field leaves the saved path as it is.
+    struct BinaryPathEdits {
+        /// `.some(nil)` saves "automatic"; nil keeps the saved value.
+        var codex: String??
+        var claude: String??
+
+        func apply(to settings: inout BridgeSettings) {
+            if let codex { settings.codexBinaryPath = codex }
+            if let claude { settings.claudeBinaryPath = claude }
+        }
+    }
+
+    private func normalizedPathSetting(_ field: String) -> String? {
+        field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : field
+    }
+
+    /// The CLI path fields the user changed since they were last loaded, so a
+    /// provider or usage-mode change saves those edits as before without
+    /// writing back a path another window or the CLI has since changed.
+    func editedBinaryPaths() -> BinaryPathEdits {
+        let codex = normalizedPathSetting(codexPath)
+        let claude = normalizedPathSetting(claudePath)
+        return BinaryPathEdits(
+            codex: codex == settings.codexBinaryPath ? nil : .some(codex),
+            claude: claude == settings.claudeBinaryPath ? nil : .some(claude)
+        )
+    }
+
+    /// Saves only the fields `change` sets on top of the latest saved settings,
+    /// then adopts the result, so settings another window or the CLI saved in
+    /// the meantime are kept. An unsaved Local model draft stays in the form.
+    @discardableResult
+    func persistSettings(_ change: (inout BridgeSettings) throws -> Void) throws -> BridgeSettings {
+        guard let service else {
+            throw AgentBridgeError.invalidInput(localized("Choose a workspace folder before saving provider settings."))
+        }
+        let localDraft = settings.localModel
+        let previouslySavedLocalModel = savedLocalModelSettings
+        let hasUnsavedLocalModelDraft = previouslySavedLocalModel.map { localDraft != $0 } ?? false
+        let saved = try service.updateSettings(change)
+        var adopted = saved
+        if hasUnsavedLocalModelDraft { adopted.localModel = localDraft }
+        settings = adopted
+        savedLocalModelSettings = saved.localModel
+        if previouslySavedLocalModel.map({ $0 != saved.localModel }) ?? false {
+            invalidateLocalModelConnectionState()
+        }
+        applyAccessModeLimits()
+        return saved
     }
 
     /// The amount a paid call would reserve for the budget being typed.
@@ -906,15 +959,22 @@ final class AppModel {
         return lines
     }
 
-    func saveSettings() {
+    /// Saves the CLI paths, and the model defaults when `includingModelDefaults`.
+    func saveSettings(includingModelDefaults: Bool = false) {
         guard !hasActiveAutonomousWorkflow, !chats.hasActiveDiscussionOperation else {
             errorMessage = localized("Provider and account settings are locked while a discussion request is active.")
             return
         }
-        guard let service else { return }
+        guard service != nil else { return }
         do {
-            updateBinaryPathsInSettings()
-            try service.saveSettings(settings)
+            let paths = BinaryPathEdits(codex: normalizedPathSetting(codexPath), claude: normalizedPathSetting(claudePath))
+            let defaults = [AgentProvider.codex, .claude].map { ($0, settings.modelDefaults(for: $0)) }
+            try persistSettings { saved in
+                paths.apply(to: &saved)
+                if includingModelDefaults {
+                    for (provider, choice) in defaults { saved.setModelDefaults(choice, for: provider) }
+                }
+            }
             status = "Settings saved."
             refresh()
             refreshCLICompatibility()
@@ -946,7 +1006,7 @@ final class AppModel {
         }
         defaultModelDraftsEdited = false
         newModelDrafts = [:]
-        saveSettings()
+        saveSettings(includingModelDefaults: true)
     }
 
     func checkAuthentication() {
@@ -1042,7 +1102,7 @@ final class AppModel {
             return
         }
         do {
-            try service.saveSettings(settings)
+            try persistSettings { $0.defaultProvider = provider }
         } catch {
             errorMessage = error.localizedDescription
             return

@@ -16,9 +16,7 @@ extension AgentBridgeCLI {
             guard arguments.count == 2, let mode = UsageMode(rawValue: arguments[1]) else {
                 throw AgentBridgeError.invalidInput("Usage: agentbridge settings usage subscription|api")
             }
-            var settings = try service.settings()
-            settings.usageMode = mode
-            try service.saveSettings(settings)
+            try service.updateSettings { $0.usageMode = mode }
             print("Usage mode set: \(mode.rawValue). API runs still need a one-run budget and explicit confirmation.")
         case "binary":
             guard arguments.count == 3,
@@ -26,10 +24,8 @@ extension AgentBridgeCLI {
                   provider != .local else {
                 throw AgentBridgeError.invalidInput("Usage: agentbridge settings binary codex|claude /absolute/path/to/cli|auto")
             }
-            var settings = try service.settings()
             let path = arguments[2] == "auto" ? nil : arguments[2]
-            settings.setBinaryPath(path, for: provider)
-            try service.saveSettings(settings)
+            try service.updateSettings { $0.setBinaryPath(path, for: provider) }
             print("Updated the \(provider.rawValue) CLI path.")
         case "model":
             // Defaults for new sessions and chats only; existing ones keep theirs.
@@ -50,10 +46,8 @@ extension AgentBridgeCLI {
                 default: throw AgentBridgeError.invalidInput("Usage: agentbridge settings model codex|claude [--model NAME] [--effort LEVEL]")
                 }
             }
-            var settings = try service.settings()
-            settings.setModelDefaults(try ProviderModelChoice(model: model, reasoningEffort: effort).validated(for: provider), for: provider)
-            try service.saveSettings(settings)
-            let saved = try service.settings().modelDefaults(for: provider)
+            let choice = try ProviderModelChoice(model: model, reasoningEffort: effort).validated(for: provider)
+            let saved = try service.updateSettings { $0.setModelDefaults(choice, for: provider) }.modelDefaults(for: provider)
             print("New \(provider.rawValue) sessions and chats will use: \(modelLabel(model: saved.model, reasoningEffort: saved.reasoningEffort)). Existing sessions keep their own.")
         default:
             throw AgentBridgeError.invalidInput("Unknown settings subcommand.")
