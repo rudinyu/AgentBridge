@@ -978,8 +978,13 @@ extension BridgeService {
     }
 
     private func validateAutonomousPlanConfiguration(_ plan: AutonomousRunPlan) throws {
-        let currentSettings = try settings()
-        guard currentSettings == plan.settingsSnapshot, currentSettings.usageMode == .subscription else {
+        // The local model helper's switches play no part in an autonomous run, so
+        // switching them does not make an approved plan stale.
+        var currentSettings = try settings()
+        var approvedSettings = plan.settingsSnapshot
+        currentSettings.localModelHelper = nil
+        approvedSettings.localModelHelper = nil
+        guard currentSettings == approvedSettings, currentSettings.usageMode == .subscription else {
             throw AutonomousOrchestrationError.staleConfiguration("usage mode or provider executable settings changed")
         }
         guard plan.sourceRepositoryFingerprint.isIntact,
