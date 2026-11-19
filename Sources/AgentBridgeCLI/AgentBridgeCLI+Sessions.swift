@@ -82,8 +82,9 @@ extension AgentBridgeCLI {
     static func sessionCommand(_ arguments: [String], service: BridgeService) async throws {
         if arguments.first == "remove" { return try await removeSessionCommand(Array(arguments.dropFirst()), service: service) }
         guard arguments.first == "create" else {
-            throw AgentBridgeError.invalidInput("Usage: agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes] [--model NAME] [--effort LEVEL]\n       agentbridge session remove SESSION-ID [--confirm]")
+            throw AgentBridgeError.invalidInput("Usage: agentbridge session create --provider codex|claude|local --repo PATH [--interactive|--changes] [--model NAME] [--effort LEVEL]\n       agentbridge session create --like SESSION-ID [--model NAME] [--effort LEVEL] [--latest-commit] [--profile PROFILE-ID]\n       agentbridge session remove SESSION-ID [--confirm]")
         }
+        if arguments.contains("--like") { return try await createSessionLikeCommand(Array(arguments.dropFirst()), service: service) }
         var provider: AgentProvider?
         var repoPath: String?
         var interactive = false
@@ -133,6 +134,12 @@ extension AgentBridgeCLI {
             accessMode: access,
             modelChoice: requestedModelChoice(model: model, effort: effort, provider: provider, service: service)
         )
+        printCreatedSession(session)
+    }
+
+    /// Prints a new session the way `session create` always has.
+    static func printCreatedSession(_ session: SessionRecord) {
+        let provider = session.provider
         print("Created an isolated session: \(session.id.uuidString.lowercased())")
         if provider != .local {
             print("Model: \(modelLabel(model: session.model, reasoningEffort: session.reasoningEffort))")
@@ -140,12 +147,34 @@ extension AgentBridgeCLI {
         print("Workspace: \(session.workspacePath)")
         print("Pinned commit: \(session.snapshotCommit)")
         if session.sourceWasDirty { print("The source has uncommitted changes; they were not copied into the workspace.") }
-        if interactive {
+        if session.policy.accessMode == .interactiveManualApproval {
             let profileID = session.accountProfileID?.uuidString.lowercased() ?? AccountProfile.defaultID(for: provider).uuidString.lowercased()
             print("Interactive mode must run in Terminal: agentbridge interactive \(session.id.uuidString.lowercased()) --profile \(profileID)")
         }
-        if isolatedChanges {
+        if session.policy.accessMode == .isolatedChanges {
             print("Created an isolated changes session. Read-only remains the default; nothing is written until you create and explicitly approve a work plan.")
+        }
+    }
+
+    /// `session create --like SESSION-ID`: a new session with the source's
+    /// provider, repository, access mode, account and model, unless overridden.
+    static func createSessionLikeCommand(_ arguments: [String], service: BridgeService) async throws {
+        let parsed = try SessionLikeArguments.parse(arguments)
+        // A missing --model or --effort keeps the source's; an empty value means
+        // the CLI default, as with `session create`.
+        let source = try service.sessionCopySource(parsed.sourceSessionID)
+        let result = try await service.createSession(
+            like: parsed.sourceSessionID,
+            modelChoice: parsed.modelChoice(source: source),
+            accountProfileID: parsed.profileID,
+            commit: parsed.commit
+        )
+        printCreatedSession(result.session)
+        if result.copiedChangePlan != nil {
+            print("Copied the change plan; approve it again before running.")
+        }
+        if let error = result.changePlanCopyError {
+            throw AgentBridgeError.invalidChangePlan(error)
         }
     }
 
