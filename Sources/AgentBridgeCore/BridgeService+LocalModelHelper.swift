@@ -39,23 +39,21 @@ extension BridgeService {
                 throw AgentBridgeError.invalidInput("The configured local model is not in the server's model list, so the helper stays off.")
             }
         }
-        var settings = try store.loadSettings()
-        var helper = settings.localHelper
-        helper.enabled = enabled
-        settings.localHelper = helper
-        try saveSettings(settings)
-        return helper
+        return try updateSettings { settings in
+            var helper = settings.localHelper
+            helper.enabled = enabled
+            settings.localHelper = helper
+        }.localHelper
     }
 
     /// A task's own switch. It has no effect while the master switch is off.
     @discardableResult
     public func setLocalHelperTask(_ task: LocalHelperTask, on: Bool) throws -> LocalModelHelperSettings {
-        var settings = try store.loadSettings()
-        var helper = settings.localHelper
-        helper.setTask(task, on: on)
-        settings.localHelper = helper
-        try saveSettings(settings)
-        return helper
+        return try updateSettings { settings in
+            var helper = settings.localHelper
+            helper.setTask(task, on: on)
+            settings.localHelper = helper
+        }.localHelper
     }
 
     // MARK: 1. Commit and pull request text

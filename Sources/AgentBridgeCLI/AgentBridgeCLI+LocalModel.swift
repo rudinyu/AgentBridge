@@ -105,7 +105,7 @@ extension AgentBridgeCLI {
         guard arguments.count > 1 else {
             throw AgentBridgeError.invalidInput("Usage: agentbridge local configure --backend ollama|openai-compatible --endpoint URL --model NAME [--context-window TOKENS] [--max-output TOKENS]")
         }
-        var bridgeSettings = try service.settings()
+        let bridgeSettings = try service.settings()
         var local = bridgeSettings.localModel
         var seen = Set<String>()
         var index = 1
@@ -150,8 +150,7 @@ extension AgentBridgeCLI {
               local.contextWindowTokens - local.maxOutputTokens > 512 else {
             throw AgentBridgeError.invalidInput("The context window must be 1,024–131,072 tokens, the output reserve must be 1–32,768 tokens, and at least 513 tokens must remain beyond the output reserve for input and a safety margin.")
         }
-        bridgeSettings.localModel = local
-        try service.saveSettings(bridgeSettings)
+        try service.updateSettings { $0.localModel = local }
         print("Saved the local model settings. AgentBridge never starts a service, downloads a model or switches to a cloud service on its own.")
         print("Run `agentbridge local test` to test the connection explicitly, or `agentbridge local models` to refresh the model list.")
     }

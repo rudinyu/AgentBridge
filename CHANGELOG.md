@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Settings saved from the CLI, or from another AgentBridge window, while the App was open were overwritten the next time the App saved any setting, because the App wrote back its whole in-memory copy. For example, a Local model set up with `agentbridge local configure` went back to the default Ollama settings after the provider was changed in the App. The App and the CLI now change only the setting being saved, on top of the latest saved settings, under one lock. A Local model draft you have typed but not saved stays in the form and is no longer saved by another change, and CLI paths are written only when you edited them.
+
 ## 0.18.0 — 2026-11-19
 
 ### Added

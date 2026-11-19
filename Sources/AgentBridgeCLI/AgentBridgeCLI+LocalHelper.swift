@@ -84,13 +84,13 @@ extension AgentBridgeCLI {
             let percent = progress.percent.map { " \($0)%" } ?? ""
             FileHandle.standardError.write(Data("• \(progress.status)\(percent)\n".utf8))
         }
-        var settings = try service.settings()
-        if settings.localModel.backend != .ollama {
-            settings.localModel.backend = .ollama
-            settings.localModel.endpoint = LocalModelSettings().endpoint
+        let settings = try service.updateSettings { settings in
+            if settings.localModel.backend != .ollama {
+                settings.localModel.backend = .ollama
+                settings.localModel.endpoint = LocalModelSettings().endpoint
+            }
+            settings.localModel.model = model
         }
-        settings.localModel.model = model
-        try service.saveSettings(settings)
         print("Downloaded \(model) and saved it as the Local model (Ollama, \(settings.localModel.endpoint)).")
         _ = try await service.testLocalModelConnection(settings: settings.localModel)
         print("Local model connection succeeded: \(model) · \(settings.localModel.endpoint)")

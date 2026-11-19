@@ -80,13 +80,30 @@ public final class BridgeService: @unchecked Sendable {
     }
 
     public func settings() throws -> BridgeSettings { try store.loadSettings() }
+    /// Replaces every saved setting with `settings`. Prefer `updateSettings`,
+    /// which changes only the fields it sets and keeps what other windows or
+    /// the CLI saved since `settings` was read.
     public func saveSettings(_ settings: BridgeSettings) throws {
+        try store.saveSettings(try Self.checkedSettings(settings))
+    }
+
+    /// Reads the latest saved settings, applies `change` and saves the result
+    /// atomically. Only the fields `change` sets are changed.
+    @discardableResult
+    public func updateSettings(_ change: (inout BridgeSettings) throws -> Void) throws -> BridgeSettings {
+        try store.updateSettings { settings in
+            try change(&settings)
+            settings = try Self.checkedSettings(settings)
+        }
+    }
+
+    private static func checkedSettings(_ settings: BridgeSettings) throws -> BridgeSettings {
         try LocalModelClient.validateSettings(settings.localModel)
         var checked = settings
         for provider in [AgentProvider.codex, .claude] {
             checked.setModelDefaults(try settings.modelDefaults(for: provider).validated(for: provider), for: provider)
         }
-        try store.saveSettings(checked)
+        return checked
     }
     public func localModels(settings: LocalModelSettings? = nil) async throws -> [LocalModelDescriptor] {
         let localSettings = try settings ?? store.loadSettings().localModel
