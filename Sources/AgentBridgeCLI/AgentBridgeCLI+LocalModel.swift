@@ -5,7 +5,7 @@ import AgentBridgeCore
 extension AgentBridgeCLI {
     static func localModelCommand(_ arguments: [String], service: BridgeService) async throws {
         guard let action = arguments.first else {
-            throw AgentBridgeError.invalidInput("Usage: agentbridge local settings|configure|models|test|preview discussion|project …")
+            throw AgentBridgeError.invalidInput("Usage: agentbridge local settings|configure|models|test|preview discussion|project|helper|setup-check|pull …")
         }
         switch action {
         case "settings", "current":
@@ -49,8 +49,14 @@ extension AgentBridgeCLI {
             }
         case "preview":
             try await localModelPreview(arguments, service: service)
+        case "helper":
+            try await localHelperCommand(arguments, service: service)
+        case "setup-check":
+            try await localSetupCheck(arguments, service: service)
+        case "pull":
+            try await localPull(arguments, service: service)
         default:
-            throw AgentBridgeError.invalidInput("Unknown local subcommand \(action). Usage: agentbridge local settings|configure|models|test|preview …")
+            throw AgentBridgeError.invalidInput("Unknown local subcommand \(action). Usage: agentbridge local settings|configure|models|test|preview|helper|setup-check|pull …")
         }
     }
 

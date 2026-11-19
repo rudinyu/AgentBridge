@@ -22,6 +22,13 @@ public final class BridgeService: @unchecked Sendable {
     let runtimeProxyExecutableURL: URL?
     /// Where `gh` is looked for after the PATH; tests clear it.
     var gitHubCLISearchDirectories = BridgeService.gitHubCLIFallbackDirectories
+    /// How long a local model helper request may take; tests shorten it.
+    var localHelperTimeout: TimeInterval = 180
+    /// Where `ollama` and the Ollama app are looked for after the PATH, and the
+    /// program that opens an app; tests replace them.
+    var ollamaExecutableCandidates = BridgeService.ollamaFallbackExecutables
+    var ollamaAppBundleCandidates = BridgeService.ollamaFallbackAppBundles
+    var openExecutablePath = "/usr/bin/open"
 
     public init(
         store: AuditStore,

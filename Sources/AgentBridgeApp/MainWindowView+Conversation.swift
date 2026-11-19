@@ -177,6 +177,9 @@ extension MainWindowView {
                             VStack(alignment: .leading, spacing: 7) {
                                 Text("Add what you know. Blank fields use a conservative local fallback that asks the next assistant to inspect shared memory, repository files, the current worktree and Git state; continue without repeating completed work; and ask you if the original intent is unclear.")
                                     .font(.caption2).foregroundStyle(.secondary)
+                                if model.localHelper.allows(.handoffSummary), let source = model.selectedSession {
+                                    handoffDraftWithLocalModel(source)
+                                }
                                 Text("What is done? (optional)").font(.caption.weight(.semibold))
                                 TextEditor(text: $model.continuationDoneSummary)
                                     .font(.system(.caption, design: .monospaced))
@@ -516,5 +519,29 @@ extension MainWindowView {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Asks the local model helper for the three fields from the conversation's
+    /// recent saved turns; text already typed is replaced only after the user agrees.
+    func handoffDraftWithLocalModel(_ source: SessionRecord) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LocalHelperRunButton(model: model, task: .handoffSummary, title: "Draft with local model") {
+                model.localHelper.draftHandoff(session: source)
+            }
+            Text(model.localized("Sends this conversation's recent saved turns to the local model. Its draft fills the three fields below for you to edit; nothing is saved until you switch."))
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            LocalHelperPreviewDisclosure(model: model, task: .handoffSummary, session: source)
+            LocalHelperNotes(model: model, task: .handoffSummary)
+        }
+        .alert(
+            model.localized("Replace the handoff details with the local model's draft?"),
+            isPresented: Bindable(model.localHelper).confirmReplacingHandoffText
+        ) {
+            Button(model.localized("Replace"), role: .destructive) { model.localHelper.confirmReplacingHandoff() }
+            Button(model.localized("Keep my text"), role: .cancel) { model.localHelper.keepHandoffText() }
+        } message: {
+            Text(model.localized("What is done, what should happen next and the suggested prompt already have text. The draft replaces all three."))
+        }
     }
 }

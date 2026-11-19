@@ -9,6 +9,8 @@ struct LocalModelSettingsSection: View {
     var body: some View {
         GroupBox(model.localized("Local model settings")) {
             VStack(alignment: .leading, spacing: 9) {
+                OllamaSetupSection(model: model)
+
                 Picker(model.localized("Backend"), selection: $model.settings.localModel.backend) {
                     Text(model.localized("Ollama")).tag(LocalModelBackend.ollama)
                     Text(model.localized("OpenAI-compatible · LM Studio")).tag(LocalModelBackend.openAICompatible)
@@ -85,9 +87,11 @@ struct LocalModelSettingsSection: View {
                         .font(.caption2).foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Label(model.localized("Only explicit Refresh models and Test connection actions contact the configured loopback service. AgentBridge does not start it, download models, or use cloud fallback."), systemImage: "lock.shield")
+                Label(model.localized("Only explicit actions contact the configured loopback service: Refresh models, Test connection, the guided setup's check, and helper requests. AgentBridge downloads a model or opens Ollama only when you click to, and never uses cloud fallback."), systemImage: "lock.shield")
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                LocalHelperSettingsSection(model: model)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 3)

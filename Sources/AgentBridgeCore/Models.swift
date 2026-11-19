@@ -112,6 +112,9 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
     /// CLI default; existing sessions keep the choice they were created with.
     public var codexModelDefaults: ProviderModelChoice?
     public var claudeModelDefaults: ProviderModelChoice?
+    /// The local model helper switches. Nil means everything is off, which is
+    /// how a settings file written before the helper existed reads.
+    public var localModelHelper: LocalModelHelperSettings?
 
     public init(
         defaultProvider: AgentProvider = .codex,
@@ -120,7 +123,8 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
         claudeBinaryPath: String? = nil,
         localModel: LocalModelSettings = LocalModelSettings(),
         codexModelDefaults: ProviderModelChoice? = nil,
-        claudeModelDefaults: ProviderModelChoice? = nil
+        claudeModelDefaults: ProviderModelChoice? = nil,
+        localModelHelper: LocalModelHelperSettings? = nil
     ) {
         self.defaultProvider = defaultProvider
         self.usageMode = usageMode
@@ -129,6 +133,14 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
         self.localModel = localModel
         self.codexModelDefaults = codexModelDefaults
         self.claudeModelDefaults = claudeModelDefaults
+        self.localModelHelper = localModelHelper
+    }
+
+    /// The helper switches, all off when none are saved. Setting them back to all
+    /// off stores nothing, so the settings file is written exactly as before.
+    public var localHelper: LocalModelHelperSettings {
+        get { localModelHelper ?? LocalModelHelperSettings() }
+        set { localModelHelper = newValue == LocalModelHelperSettings() ? nil : newValue }
     }
 
     public func modelDefaults(for provider: AgentProvider) -> ProviderModelChoice {
@@ -174,6 +186,7 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
         case localModel
         case codexModelDefaults
         case claudeModelDefaults
+        case localModelHelper
     }
 
     public init(from decoder: Decoder) throws {
@@ -185,6 +198,7 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
         localModel = try values.decodeIfPresent(LocalModelSettings.self, forKey: .localModel) ?? LocalModelSettings()
         codexModelDefaults = try values.decodeIfPresent(ProviderModelChoice.self, forKey: .codexModelDefaults)
         claudeModelDefaults = try values.decodeIfPresent(ProviderModelChoice.self, forKey: .claudeModelDefaults)
+        localModelHelper = try values.decodeIfPresent(LocalModelHelperSettings.self, forKey: .localModelHelper)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -196,6 +210,7 @@ public struct BridgeSettings: Codable, Equatable, Sendable {
         try values.encode(localModel, forKey: .localModel)
         try values.encodeIfPresent(codexModelDefaults, forKey: .codexModelDefaults)
         try values.encodeIfPresent(claudeModelDefaults, forKey: .claudeModelDefaults)
+        try values.encodeIfPresent(localModelHelper, forKey: .localModelHelper)
     }
 }
 

@@ -101,6 +101,7 @@ struct PullRequestSheet: View {
                     .frame(minHeight: 90, maxHeight: 160)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                     .disabled(changes.isOpeningPullRequest)
+                localModelRewrite(preview)
                 Toggle("Draft pull request", isOn: Bindable(changes).pullRequestDraft)
                     .disabled(changes.isOpeningPullRequest)
                 Text(model.localizedFormat(
@@ -118,6 +119,34 @@ struct PullRequestSheet: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Asks the local model helper for the text above. Its draft replaces text
+    /// the user edited only after they agree; nothing runs until the confirm button.
+    @ViewBuilder
+    private func localModelRewrite(_ preview: PullRequestPreview) -> some View {
+        if model.localHelper.allows(.commitText), preview.appliedCommit == nil, preview.pullRequestURL == nil,
+           let session = model.sessions.first(where: { $0.id == preview.sessionID }) {
+            VStack(alignment: .leading, spacing: 4) {
+                LocalHelperRunButton(model: model, task: .commitText, title: "Rewrite with local model", disabled: changes.isOpeningPullRequest) {
+                    model.localHelper.rewritePullRequestText()
+                }
+                Text(model.localized("Sends the plan, the file list, the recorded verification and the verified diff to the local model. Its draft fills the fields above for you to edit."))
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                LocalHelperPreviewDisclosure(model: model, task: .commitText, session: session)
+                LocalHelperNotes(model: model, task: .commitText)
+            }
+            .alert(
+                model.localized("Replace the commit and pull request text with the local model's draft?"),
+                isPresented: Bindable(model.localHelper).confirmReplacingPullRequestText
+            ) {
+                Button(model.localized("Replace"), role: .destructive) { model.localHelper.confirmReplacingPullRequest() }
+                Button(model.localized("Keep my text"), role: .cancel) { model.localHelper.keepPullRequestText() }
+            } message: {
+                Text(model.localized("You edited the commit message, title or description. The draft replaces all three; nothing is committed until you confirm."))
+            }
         }
     }
 

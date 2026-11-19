@@ -15,6 +15,9 @@ public struct ProcessSpec: Sendable {
     /// killed App or CLI would leave a provider running, and editing, with no limit.
     public let endsWithParent: Bool
     let standardOutputLineHandler: (@Sendable (String) -> Void)?
+    /// Error-output lines, split at a line feed or a carriage return, for a tool
+    /// that reports progress there by redrawing one line.
+    let standardErrorLineHandler: (@Sendable (String) -> Void)?
 
     public init(
         executableURL: URL,
@@ -26,7 +29,8 @@ public struct ProcessSpec: Sendable {
         outputLimit: Int = 1_048_576,
         cancellationRequestURL: URL? = nil,
         endsWithParent: Bool = false,
-        standardOutputLineHandler: (@Sendable (String) -> Void)? = nil
+        standardOutputLineHandler: (@Sendable (String) -> Void)? = nil,
+        standardErrorLineHandler: (@Sendable (String) -> Void)? = nil
     ) {
         self.executableURL = executableURL
         self.arguments = arguments
@@ -38,6 +42,7 @@ public struct ProcessSpec: Sendable {
         self.cancellationRequestURL = cancellationRequestURL
         self.endsWithParent = endsWithParent
         self.standardOutputLineHandler = standardOutputLineHandler
+        self.standardErrorLineHandler = standardErrorLineHandler
     }
 }
 
@@ -270,6 +275,7 @@ public final class SafeProcessRunner: Sendable {
         var errorOutput = Data()
         var truncated = false
         let lineFramer = StandardOutputLineFramer(maximumLineBytes: 65_536, handler: spec.standardOutputLineHandler)
+        let errorLineFramer = StandardOutputLineFramer(maximumLineBytes: 65_536, handler: spec.standardErrorLineHandler, splitsAtCarriageReturn: true)
         var inputOffset = 0
         var inputClosed = interactive || spec.standardInput.isEmpty
         if inputClosed, !interactive, inputPair[0] >= 0 {
@@ -371,7 +377,7 @@ public final class SafeProcessRunner: Sendable {
                         Self.drain(fd: stdoutPipe[0], destination: &output, limit: spec.outputLimit, truncated: &truncated, open: &stdoutOpen, onChunk: { lineFramer.append($0) })
                         if !stdoutOpen { _ = close(stdoutPipe[0]); stdoutPipe[0] = -1 }
                     } else if descriptor.fd == stderrPipe[0], stderrOpen {
-                        Self.drain(fd: stderrPipe[0], destination: &errorOutput, limit: min(spec.outputLimit, 128_000), truncated: &truncated, open: &stderrOpen, onChunk: nil)
+                        Self.drain(fd: stderrPipe[0], destination: &errorOutput, limit: min(spec.outputLimit, 128_000), truncated: &truncated, open: &stderrOpen, onChunk: { errorLineFramer.append($0) })
                         if !stderrOpen { _ = close(stderrPipe[0]); stderrPipe[0] = -1 }
                     } else if descriptor.fd == inputPair[0], !inputClosed {
                         let remaining = spec.standardInput.count - inputOffset
@@ -529,16 +535,18 @@ private final class StandardOutputLineFramer {
     private var current = Data()
     private var dropping = false
     private(set) var didOverflow = false
+    private let splitsAtCarriageReturn: Bool
 
-    init(maximumLineBytes: Int, handler: (@Sendable (String) -> Void)?) {
+    init(maximumLineBytes: Int, handler: (@Sendable (String) -> Void)?, splitsAtCarriageReturn: Bool = false) {
         self.maximumLineBytes = maximumLineBytes
         self.handler = handler
+        self.splitsAtCarriageReturn = splitsAtCarriageReturn
     }
 
     func append(_ data: Data) {
         guard handler != nil else { return }
         for byte in data {
-            if byte == 0x0A {
+            if byte == 0x0A || (splitsAtCarriageReturn && byte == 0x0D) {
                 if !dropping, let line = String(data: current, encoding: .utf8), !line.isEmpty { handler?(line) }
                 current.removeAll(keepingCapacity: true)
                 dropping = false

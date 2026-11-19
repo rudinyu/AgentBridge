@@ -88,6 +88,7 @@ public final class LocalModelClient: @unchecked Sendable {
         cancellationRequestURL: URL?,
         cancellation: CancellationFlag = CancellationFlag(),
         maximumOutputBytes: Int = LocalModelClient.maximumResponseBytes,
+        timeout: TimeInterval = LocalModelClient.requestTimeout,
         onProgress: (@Sendable (String) -> Void)? = nil
     ) async throws -> LocalModelResponse {
         try settings.validate()
@@ -107,7 +108,7 @@ public final class LocalModelClient: @unchecked Sendable {
         let session = sessionFactory()
         defer { session.invalidateAndCancel() }
         let estimatedInputTokens = max(1, (prompt.utf8.count + 1) / 2)
-        let deadline = Date().addingTimeInterval(Self.requestTimeout)
+        let deadline = Date().addingTimeInterval(min(max(timeout, 0.5), Self.requestTimeout))
         do {
             return try await withTaskCancellationHandler {
                 try await withThrowingTaskGroup(of: LocalModelResponse.self) { group in
@@ -563,7 +564,7 @@ public final class LocalModelClient: @unchecked Sendable {
             || normalized.contains("ollama.com")
     }
 
-    private static func requireLocalModelName(_ value: String) throws {
+    static func requireLocalModelName(_ value: String) throws {
         guard !isRemoteModelTag(value) else {
             throw AgentBridgeError.invalidInput("This model tag indicates a cloud, hosted or remote model; local mode refuses to use it.")
         }

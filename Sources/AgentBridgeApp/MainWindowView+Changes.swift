@@ -156,7 +156,65 @@ extension MainWindowView {
                         Text(result.standardError).font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    if !result.succeeded, !result.wasCancelled, result.skippedReason == nil, model.localHelper.allows(.explainFailure) {
+                        failureExplanation(session, result: result)
+                    }
                 }
+            }
+        }
+    }
+
+    /// The local model's explanation of a failed verification, shown here and never saved.
+    func failureExplanation(_ session: SessionRecord, result: VerificationResult) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Divider()
+            LocalHelperRunButton(model: model, task: .explainFailure, title: "Explain this failure") {
+                model.localHelper.explainFailure(session: session, result: result)
+            }
+            LocalHelperPreviewDisclosure(model: model, task: .explainFailure, session: session)
+            LocalHelperNotes(model: model, task: .explainFailure)
+            if let explanation = model.localHelper.explanation(for: session, result: result) {
+                Text(model.localized("The local model's explanation. It may be wrong, and it is not saved."))
+                    .font(.caption.weight(.semibold))
+                Text(explanation)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+                Button(model.localized("Use as change request")) { model.localHelper.useExplanationAsChangeRequest() }
+                    .help(model.localized("Copies the explanation into the change request field used by Draft plan. Nothing is sent."))
+            }
+        }
+        .alert(
+            model.localized("Replace the change request with the explanation?"),
+            isPresented: Bindable(model.localHelper).confirmReplacingChangeRequest
+        ) {
+            Button(model.localized("Replace"), role: .destructive) { model.localHelper.copyExplanationIntoChangeRequest() }
+            Button(model.localized("Cancel"), role: .cancel) { model.localHelper.confirmReplacingChangeRequest = false }
+        } message: {
+            Text(model.localized("The change request field already has text. Nothing is sent until you choose Draft plan."))
+        }
+    }
+
+    /// The local model's summary of the diff and things to check: an opinion, never saved.
+    func changeSummary(_ session: SessionRecord, diff: WorkspaceChangeDiff) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            LocalHelperRunButton(model: model, task: .changeSummary, title: "Summarize with local model") {
+                model.localHelper.summarizeChanges(session: session, diff: diff)
+            }
+            LocalHelperPreviewDisclosure(model: model, task: .changeSummary, session: session)
+            LocalHelperNotes(model: model, task: .changeSummary)
+            if let summary = model.localHelper.summary(for: session, diff: diff) {
+                Label(model.localized("The local model's opinion. It is not a substitute for verification or your own review, and it is not saved."), systemImage: "exclamationmark.bubble")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(summary)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
             }
         }
     }
@@ -175,6 +233,9 @@ extension MainWindowView {
                         model.changes.restoreAllChangeFiles()
                     }
                     .disabled(model.changes.changeDiff?.files.isEmpty != false)
+                }
+                if let diff = model.changes.changeDiff, !diff.files.isEmpty, model.localHelper.allows(.changeSummary) {
+                    changeSummary(session, diff: diff)
                 }
                 if let diff = model.changes.changeDiff, !diff.files.isEmpty {
                     ForEach(diff.files, id: \.path) { file in
