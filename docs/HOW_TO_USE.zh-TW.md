@@ -177,6 +177,8 @@ printf '%s' 'Summarize the repository architecture.' | \
 
 ### 9. 安全修改、活動紀錄、記憶交接與擴充權限
 
+Local 是下方訂閱模式限制的例外：Local 工作階段可在訂閱或 Claude API 用量模式下選擇「隔離變更」。Local 不提供原生互動終端。
+
 預設的存取模式是原生互動終端。若要隔離修改，請在「新工作階段存取模式」選「隔離變更」，並在訂閱模式建立新工作階段。它會依來源 Repository 已提交的 `HEAD` 建立新工作區；來源未提交檔案不會複製。原生互動 TUI 是獨立模式。
 
 在 **Changes** 填入計畫標題、摘要和步驟，保存後先完整檢視。若想從草稿開始，可在 **要變更什麼？** 描述變更並按 **草擬計畫**：AgentBridge 會向此工作階段的供應商送出一次實際的唯讀請求，供應商可讀取工作區但不能修改，並以回覆填入標題、摘要和步驟。若這些欄位已有內容，取代前會先詢問；草擬期間可取消。草稿不會被儲存、核准或執行，也不會開啟共享記憶；編輯後照常儲存即可。這次請求與其他執行一樣計入。CLI 可用 `changes draft SESSION-ID < request.txt` 印出草稿（`--json` 輸出 JSON）而不儲存；再把要保留的內容交給 `changes plan`。除非勾選 **在變更執行中包含共享記憶**（或對 `changes plan` 加上 `--with-memory`），變更執行不會看到共享記憶；核准涵蓋當下的記憶，記憶變更後請重新核准。可先調整計畫，確認符合預期後再按 **Approve reviewed plan**；只有核准後 **Run approved changes** 才能執行。Provider 只會在隔離工作階段工作區寫檔。Codex 變更使用非互動 `codex exec`：AgentBridge 不會啟用自動核准，也無法在執行途中顯示核准提示。需要超出 sandbox 權限的命令會失敗停止；請將工作限制在已核准計畫和隔離工作區內。CLI 流程如下：
@@ -264,6 +266,28 @@ AgentBridge 其他的 Git 指令使用私人 home 資料夾且不讀全域 Git �
 ```
 
 各工作送出的內容與截短方式，請見[本機模型與上下文](LOCAL_MODELS_AND_CONTEXT.zh-TW.md#本機模型輔助)。
+
+#### Local 隔離變更
+
+建立 Local 專案工作階段時選擇「隔離變更」。在 **Changes** 建立或草擬計畫，保存、檢視並明確核准。Local 計畫草稿只會傳送需求及工作區候選路徑清單，不會傳送檔案內容或共享記憶。
+
+搜尋候選清單並選取要完整傳送的既有檔案。每行加入一個新檔相對路徑，輸入需求，並檢視輸入位元組數預覽，再選 **Generate changes with Local model** 執行。模型沒有工具，不能執行命令。回應必須是根層只有 summary 與 files 的單一 JSON 物件。每個檔案項目只能有 path、action、content；modify/create 的 content 是完整新 UTF-8 檔案內容，delete 可省略 content 或設為 null。AgentBridge 會先驗證完整回應再寫入，並顯示結果 diff 供檢視。
+
+既有輸入必須是隔離工作區內未被 Git 忽略、無符號連結且為 UTF-8 的一般檔案，每個不超過 256 KiB。每個新檔路徑都要明確列出。回應上限為 200 個檔案操作、每個輸出檔 256 KiB、輸出內容合計 1 MiB、JSON 回應 2 MiB。輸入預算是上下文視窗減去輸出保留量和 512 token 緩衝，以每位元組一個 token 估算，最高 2 MiB。變更需求與計畫草稿上限為 8 KiB；超出預算會在連線模型前拒絕。
+
+驗證失敗後，**Fix with Local model** 可使用驗證輸出的最後 12 KiB 與最多 8 KiB 選填備註；按鈕不會執行驗證。每次 Local 執行都會消耗計畫核准，下次執行前要重新檢視並核准計畫。
+
+CLI 使用相同流程：
+
+~~~sh
+"$CLI" session create --provider local --repo "$HOME/Projects/example" --changes
+printf '%s' '支援新的檔案格式。' | "$CLI" changes draft SESSION_ID
+"$CLI" changes plan SESSION_ID --title "更新 parser" --summary "支援新格式。" --step "更新解碼"
+printf '%s\n' 'APPROVE REVIEW_DIGEST' | "$CLI" changes approve SESSION_ID PLAN_ID REVIEW_DIGEST
+printf '%s' '依核准計畫完成修改。' | "$CLI" changes run SESSION_ID PLAN_ID REVIEW_DIGEST --file Sources/Parser.swift --new-file Sources/NewFormat.swift --preview
+~~~
+
+正式執行時移除 --preview。每個既有輸入加上 --file PATH，每個允許的新檔加上 --new-file PATH。修復時將失敗驗證輸出導入 changes fix SESSION_ID；--note、--command 與 --exit-code 可提供選填備註和失敗標籤。
 
 ### 10. 自主工作流程
 

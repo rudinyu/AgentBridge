@@ -175,6 +175,8 @@ To remove a chat, right-click it in the Chats list and choose **Remove Chat…**
 
 ### 9. Safe changes, activity, memory handoff, and extensions
 
+Local is an exception to the subscription-mode rule described below: Local sessions may use **Isolated changes** in either subscription or Claude API usage mode. Local does not provide a native interactive Terminal.
+
 The native interactive terminal is the default access mode. For an isolated change, choose **Isolated changes** under **New session access mode** and create a new session while subscription mode is selected. It uses a fresh workspace based on the source repository's committed `HEAD`; uncommitted source files are not copied. Native interactive TUI mode is separate.
 
 In **Changes**, write a title, summary, and steps for the plan, then save and review it. To start from a draft, describe the change in **What should change?** and click **Draft plan**: AgentBridge sends one real read-only request to the session's provider, which may read the workspace but not edit it, and fills the title, summary and steps with its answer. If those fields already have text, it asks before replacing them. You can cancel while it drafts. The draft is not saved, approved or run, and it never turns on shared memory; edit it, then save it as usual. The request counts as a run like any other. From the CLI, `changes draft SESSION-ID < request.txt` prints a draft (`--json` for JSON) without saving it; pass the text you keep to `changes plan`. The change run sees no shared memory unless you select **Include shared memory in the change run** (or pass `--with-memory` to `changes plan`); approval then covers the memory as it is, so approve again if it changes. Edit the plan until it matches the work you want. Click **Approve reviewed plan** before **Run approved changes** becomes available. The provider writes only in the isolated session workspace. Codex change runs use headless `codex exec`: AgentBridge does not enable automatic approval, and no runtime approval prompt is available. A command that needs permissions outside the configured sandbox fails closed; keep the work within the approved plan and workspace. The CLI offers the same sequence:
@@ -262,6 +264,28 @@ The local model helper lets your configured Local model draft text inside Codex 
 ```
 
 See [Local Models and Context](LOCAL_MODELS_AND_CONTEXT.md#local-model-helper) for what each task sends and how it is truncated.
+
+#### Local patch mode
+
+Create a Local project session with **Isolated changes** selected. In **Changes**, create or draft a plan, save it, review it, and explicitly approve it. A Local plan draft sends the request and candidate workspace path list only; it does not send file contents or shared memory.
+
+Search the candidate list and select the existing files to send in full. Add new relative file paths one per line, enter the change request, and inspect the input-byte preview. Select **Generate changes with Local model** to run. The model has no tools and cannot run commands. Its response must be exactly one JSON object with root keys summary and files. Each file entry has only path, action and content; modify/create content is the complete new UTF-8 file, and delete content may be omitted or null. AgentBridge validates the entire response before writing and shows the resulting diff for review.
+
+Existing inputs must be regular UTF-8 files inside the isolated workspace, not Git-ignored or symlinks, and no larger than 256 KiB each. Explicitly list each new path. The response limit is 200 file operations, 256 KiB per output file, 1 MiB total output contents and 2 MiB for the JSON response. The input budget is the context window less the output reserve and a 512-token margin, estimated at one byte per token and capped at 2 MiB. Change requests and plan drafts are limited to 8 KiB. Over-budget input is refused before contacting the model.
+
+After a failed verification, **Fix with Local model** can use the last 12 KiB of the output and an optional note up to 8 KiB. It does not run verification. Every Local run consumes the plan approval; review and approve the plan again before the next run.
+
+The CLI accepts the same flow:
+
+~~~sh
+"$CLI" session create --provider local --repo "$HOME/Projects/example" --changes
+printf '%s' 'Handle the new file format.' | "$CLI" changes draft SESSION_ID
+"$CLI" changes plan SESSION_ID --title "Update parser" --summary "Support the new format." --step "Update decoding"
+printf '%s\n' 'APPROVE REVIEW_DIGEST' | "$CLI" changes approve SESSION_ID PLAN_ID REVIEW_DIGEST
+printf '%s' 'Implement the approved plan.' | "$CLI" changes run SESSION_ID PLAN_ID REVIEW_DIGEST --file Sources/Parser.swift --new-file Sources/NewFormat.swift --preview
+~~~
+
+Remove --preview to run. Add --file PATH for each existing input and --new-file PATH for each allowed new file. For a fix, pipe the failed verification output to changes fix SESSION_ID; --note, --command and --exit-code supply the optional note and failure label.
 
 ### 10. Autonomous workflows
 

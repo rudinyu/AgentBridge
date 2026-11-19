@@ -299,7 +299,7 @@ final class LocalModelCoreIntegrationTests: XCTestCase {
         XCTAssertEqual(usage.apiDailyRuns, 0)
     }
 
-    func testUnsupportedLocalProjectModesRefuseBeforeWorkspaceOrGitMutation() async throws {
+    func testLocalReadOnlyAndInteractiveRulesRemainUnchanged() async throws {
         let root = try temporaryDirectory("AgentBridge-LocalUnsupported")
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("source", isDirectory: true)
@@ -313,19 +313,6 @@ final class LocalModelCoreIntegrationTests: XCTestCase {
             model: "unused-local-model"
         )
         try service.saveSettings(settings)
-
-        do {
-            _ = try await service.createSession(
-                sourcePath: source.path,
-                provider: .local,
-                accessMode: .isolatedChanges
-            )
-            XCTFail("Local isolated-change sessions must be rejected before workspace creation.")
-        } catch let error as AgentBridgeError {
-            guard case .sessionMismatch = error else { return XCTFail("Unexpected local isolated-session error: \(error)") }
-        }
-        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: store.workspacesURL.path).isEmpty)
-        XCTAssertTrue(try service.sessions().isEmpty)
 
         let localProfileID = AccountProfile.defaultID(for: .local)
         let planner = try AutonomousRoleBinding(role: .planner, provider: .local, accountProfileID: localProfileID)
@@ -363,9 +350,9 @@ final class LocalModelCoreIntegrationTests: XCTestCase {
         }
         XCTAssertThrowsError(try service.createChangePlan(
             sessionID: session.id,
-            title: "Unsupported",
-            summary: "Local changes are not enabled",
-            steps: ["Modify a file"]
+            title: "Read-only",
+            summary: "A read-only Local session cannot create an isolated change plan",
+            steps: ["Create an isolated-change session first"]
         ))
         do {
             _ = try await service.runChanges(

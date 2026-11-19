@@ -89,6 +89,7 @@ public final class LocalModelClient: @unchecked Sendable {
         cancellation: CancellationFlag = CancellationFlag(),
         maximumOutputBytes: Int = LocalModelClient.maximumResponseBytes,
         timeout: TimeInterval = LocalModelClient.requestTimeout,
+        redactResponse: Bool = true,
         onProgress: (@Sendable (String) -> Void)? = nil
     ) async throws -> LocalModelResponse {
         try settings.validate()
@@ -139,6 +140,7 @@ public final class LocalModelClient: @unchecked Sendable {
                             backend: settings.backend,
                             estimatedInputTokens: estimatedInputTokens,
                             maximumOutputBytes: maximumOutputBytes,
+                            redactResponse: redactResponse,
                             onProgress: onProgress
                         )
                     }
@@ -181,6 +183,7 @@ public final class LocalModelClient: @unchecked Sendable {
         backend: LocalModelBackend,
         estimatedInputTokens: Int,
         maximumOutputBytes: Int,
+        redactResponse: Bool,
         onProgress: (@Sendable (String) -> Void)?
     ) async throws -> LocalModelResponse {
         let (bytes, response) = try await session.bytes(for: request, delegate: LocalModelNoRedirectDelegate())
@@ -323,7 +326,7 @@ public final class LocalModelClient: @unchecked Sendable {
         }
         onProgress?("The local model finished replying.")
         return LocalModelResponse(
-            text: OutputRedactor.redact(output),
+            text: redactResponse ? OutputRedactor.redact(output) : output,
             usage: LocalModelUsage(inputTokens: inputTokens, outputTokens: outputTokens, estimatedInputTokens: estimatedInputTokens)
         )
     }

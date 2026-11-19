@@ -8,16 +8,16 @@ extension MainWindowView {
             if let session = model.selectedSession {
                 conversationHeader(session)
                 memoryPanel(session)
-                if session.provider == .local {
+                if session.policy.accessMode == .isolatedChanges {
+                    changeWorkflowPanel(session)
+                    activityTimeline
+                } else if session.provider == .local {
                     chatTimeline
                     composer(session)
                     activityTimeline
                 } else if session.policy.accessMode == .readOnly {
                     chatTimeline
                     composer(session)
-                    activityTimeline
-                } else if session.policy.accessMode == .isolatedChanges {
-                    changeWorkflowPanel(session)
                     activityTimeline
                 } else {
                     interactivePanel(session)

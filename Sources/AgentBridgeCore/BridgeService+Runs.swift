@@ -630,7 +630,7 @@ extension BridgeService {
 
         let initialSession = try loadSession(sessionID)
         guard initialSession.provider != .local else {
-            throw AgentBridgeError.sessionMismatch("Local models currently support only read-only project conversations; no changes were run.")
+            throw AgentBridgeError.sessionMismatch("Local patch runs use the selected-file change path; no changes were run.")
         }
 
         let lease = try await acquireProviderRunLease(for: sessionID, waitsForRunSlot: waitsForRunSlot, cancellation: cancellation)
@@ -817,7 +817,7 @@ extension BridgeService {
 
     /// The plan the user approved, or an audited refusal when the identifier or
     /// review digest does not match what is currently approved.
-    private func requireApprovedPlan(session: SessionRecord, planID: UUID, reviewedDigest: String) throws -> ChangePlan {
+    func requireApprovedPlan(session: SessionRecord, planID: UUID, reviewedDigest: String) throws -> ChangePlan {
         let sessionID = session.id
         guard let plan = session.changePlan,
               plan.sessionID == sessionID,

@@ -40,6 +40,25 @@ final class ChangeReviewModel {
     var changePlanIncludesSharedMemory = false
     var changeDiff: WorkspaceChangeDiff?
     var verificationResult: VerificationResult?
+    var localFileCandidates: [LocalChangeFileCandidate] = []
+    var localFileCandidatesError: String?
+    var isLoadingLocalFileCandidates = false
+    var selectedLocalPaths: Set<String> = []
+    var localFileSearchText = ""
+    var localNewFilePathsText = ""
+    var localFixNote = ""
+    var localChangePreview: LocalChangeInputPreview?
+    var localFixPreview: LocalChangeInputPreview?
+    var localChangePreviewError: String?
+    var localFixPreviewError: String?
+    var localChangeResult: LocalChangeRunResult?
+    var isLoadingLocalChangePreview = false
+    var isLoadingLocalFixPreview = false
+    @ObservationIgnored private var localChangePreviewRevision = 0
+    @ObservationIgnored private var localFixPreviewRevision = 0
+    @ObservationIgnored private var localPreviewTask: Task<Void, Never>?
+    @ObservationIgnored private var localFileCandidatesRevision = 0
+    @ObservationIgnored private var localFileCandidatesTask: Task<Void, Never>?
     var branchName = ""
     var customVerifierPath = ""
     var customVerifierArgumentsText = ""
@@ -120,6 +139,191 @@ final class ChangeReviewModel {
             changePlanSummary = ""
             changePlanStepsText = ""
             changePlanIncludesSharedMemory = false
+        }
+        selectedLocalPaths = []
+        localNewFilePathsText = ""
+        localFixNote = ""
+        localChangePreviewRevision += 1
+        localFixPreviewRevision += 1
+        localChangePreview = nil
+        localFixPreview = nil
+        localChangePreviewError = nil
+        localFixPreviewError = nil
+        localChangeResult = nil
+        isLoadingLocalChangePreview = false
+        isLoadingLocalFixPreview = false
+        localFileCandidates = []
+        reloadLocalFileCandidates()
+    }
+
+    func reloadLocalFileCandidates() {
+        localFileCandidatesRevision += 1
+        let candidatesRevision = localFileCandidatesRevision
+        localFileCandidatesTask?.cancel()
+        localFileCandidatesTask = nil
+        localFileCandidatesError = nil
+        isLoadingLocalFileCandidates = false
+        if let session = app.selectedSession, session.provider == .local, session.policy.accessMode == .isolatedChanges {
+            isLoadingLocalFileCandidates = true
+            localFileCandidatesTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Selecting an isolated-changes session also starts an initial
+                // diff load. Both calls need the session run lease, so let that
+                // read finish before fetching the picker's file list.
+                while self.app.changeDiffLoadsInFlight.contains(session.id) {
+                    guard !Task.isCancelled,
+                          self.localFileCandidatesRevision == candidatesRevision,
+                          self.app.selectedSessionID == session.id else { return }
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                }
+                guard !Task.isCancelled,
+                      self.localFileCandidatesRevision == candidatesRevision,
+                      self.app.selectedSessionID == session.id,
+                      let service = self.app.service else { return }
+                do {
+                    let candidates = try await service.localChangeFileCandidates(sessionID: session.id)
+                    guard !Task.isCancelled,
+                          self.localFileCandidatesRevision == candidatesRevision,
+                          self.app.selectedSessionID == session.id else { return }
+                    self.localFileCandidates = candidates
+                    self.localFileCandidatesError = nil
+                    self.isLoadingLocalFileCandidates = false
+                    self.refreshLocalPreviews()
+                } catch {
+                    guard !Task.isCancelled,
+                          self.localFileCandidatesRevision == candidatesRevision,
+                          self.app.selectedSessionID == session.id else { return }
+                    self.localFileCandidatesError = error.localizedDescription
+                    self.isLoadingLocalFileCandidates = false
+                }
+            }
+        }
+    }
+
+    var localNewFilePaths: [String] {
+        localNewFilePathsText.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    var filteredLocalFileCandidates: [LocalChangeFileCandidate] {
+        let query = localFileSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return localFileCandidates }
+        return localFileCandidates.filter { $0.path.localizedCaseInsensitiveContains(query) }
+    }
+
+    func refreshLocalPreviews() {
+        localChangePreviewRevision += 1
+        localFixPreviewRevision += 1
+        let changeRevision = localChangePreviewRevision
+        let fixRevision = localFixPreviewRevision
+        localChangePreview = nil
+        localFixPreview = nil
+        localChangePreviewError = nil
+        localFixPreviewError = nil
+        isLoadingLocalChangePreview = true
+        isLoadingLocalFixPreview = false
+        let previousTask = localPreviewTask
+        localPreviewTask = Task { @MainActor [weak self] in
+            await previousTask?.value
+            guard let self,
+                  self.localChangePreviewRevision == changeRevision,
+                  self.localFixPreviewRevision == fixRevision else { return }
+            await self.loadLocalPreview(forFix: false, revision: changeRevision)
+            guard self.localChangePreviewRevision == changeRevision,
+                  self.localFixPreviewRevision == fixRevision else { return }
+            await self.loadLocalPreview(forFix: true, revision: fixRevision)
+        }
+    }
+
+    private func loadLocalPreview(forFix: Bool, revision: Int) async {
+        guard let service = app.service, let session = app.selectedSession,
+              session.provider == .local, let plan = session.changePlan,
+              session.approvedChangePlanDigest == plan.reviewDigest else {
+            if forFix {
+                localFixPreview = nil
+                localFixPreviewError = nil
+                isLoadingLocalFixPreview = false
+            } else {
+                localChangePreview = nil
+                localChangePreviewError = nil
+                isLoadingLocalChangePreview = false
+            }
+            return
+        }
+        let failure: LocalHelperVerificationFailure?
+        if forFix, session.verificationPassed == false,
+           let result = verificationResult, !result.succeeded, !result.wasCancelled, result.skippedReason == nil {
+            failure = LocalHelperVerificationFailure(result: result, workspacePath: session.workspacePath)
+        } else {
+            failure = nil
+        }
+        guard !forFix || failure != nil else {
+            localFixPreview = nil
+            localFixPreviewError = nil
+            isLoadingLocalFixPreview = false
+            return
+        }
+        if forFix {
+            localFixPreview = nil
+            localFixPreviewError = nil
+            isLoadingLocalFixPreview = true
+        } else {
+            localChangePreview = nil
+            localChangePreviewError = nil
+            isLoadingLocalChangePreview = true
+        }
+        let selected = selectedLocalPaths.sorted()
+        let filePaths = forFix
+            ? Array(Set(selected + (changeDiff?.files.compactMap { $0.status == .deleted ? nil : $0.path } ?? []))).sorted()
+            : selected
+        while app.changeDiffLoadsInFlight.contains(session.id) {
+            let isCurrent = forFix
+                ? revision == localFixPreviewRevision
+                : revision == localChangePreviewRevision
+            guard isCurrent else { return }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        let isCurrent = forFix
+            ? revision == localFixPreviewRevision
+            : revision == localChangePreviewRevision
+        guard isCurrent else { return }
+        do {
+            let preview = try await service.previewLocalChangeInput(
+                sessionID: session.id,
+                planID: plan.id,
+                reviewedDigest: plan.reviewDigest,
+                request: forFix ? "" : app.prompt,
+                filePaths: filePaths,
+                newFilePaths: localNewFilePaths,
+                failure: failure,
+                note: forFix ? localFixNote : ""
+            )
+            let isCurrent = forFix
+                ? revision == localFixPreviewRevision
+                : revision == localChangePreviewRevision
+            guard isCurrent else { return }
+            if forFix {
+                localFixPreview = preview
+                isLoadingLocalFixPreview = false
+            } else {
+                localChangePreview = preview
+                isLoadingLocalChangePreview = false
+            }
+        } catch {
+            let isCurrent = forFix
+                ? revision == localFixPreviewRevision
+                : revision == localChangePreviewRevision
+            guard isCurrent else { return }
+            if forFix {
+                localFixPreview = nil
+                localFixPreviewError = error.localizedDescription
+                isLoadingLocalFixPreview = false
+            } else {
+                localChangePreview = nil
+                localChangePreviewError = error.localizedDescription
+                isLoadingLocalChangePreview = false
+            }
         }
     }
 
@@ -204,6 +408,7 @@ final class ChangeReviewModel {
             changePlanStepsText = plan.steps.joined(separator: "\n")
             app.status = "The plan was saved as awaiting review; writes are not authorized yet."
             app.refresh()
+            if session.provider == .local { refreshLocalPreviews() }
         } catch {
             app.errorMessage = error.localizedDescription
         }
@@ -226,6 +431,7 @@ final class ChangeReviewModel {
             _ = try service.approveChangePlan(sessionID: session.id, planID: plan.id, reviewedDigest: plan.reviewDigest)
             app.status = "Explicitly approved the plan shown; you can now run isolated changes."
             app.refresh()
+            if session.provider == .local { refreshLocalPreviews() }
         } catch {
             app.errorMessage = error.localizedDescription
         }

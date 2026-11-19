@@ -403,18 +403,21 @@ extension MainWindowView {
                 TextField("Git Repository Path", text: $model.repositoryPath)
                 Button("Choose Repository…") { model.chooseRepository() }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                Picker("New session access mode", selection: Binding(
+                    get: { model.requestedAccessMode },
+                    set: { model.setRequestedAccessMode($0) }
+                )) {
+                    Text("Native interactive terminal (default)").tag(AccessMode.interactiveManualApproval)
+                        .disabled(model.settings.defaultProvider == .local || model.settings.usageMode == .api)
+                    Text("Isolated changes (plan approval required)").tag(AccessMode.isolatedChanges)
+                        .disabled(model.settings.defaultProvider != .local && model.settings.usageMode == .api)
+                    Text("Read-only").tag(AccessMode.readOnly)
+                }
+                .font(.caption)
                 if model.settings.defaultProvider == .local {
-                    Label("Local project chat is read-only. Editing, terminal, autonomy, Skills, and MCP are unavailable.", systemImage: "lock.fill")
+                    Label("Local supports read-only chat and plan-approved isolated changes. Interactive Terminal, autonomy, Skills, and MCP are unavailable.", systemImage: "lock.fill")
                         .font(.caption2).foregroundStyle(.secondary)
                 } else {
-                    Picker("New session access mode", selection: $model.requestedAccessMode) {
-                        Text("Native interactive terminal (default)").tag(AccessMode.interactiveManualApproval)
-                            .disabled(model.settings.usageMode == .api)
-                        Text("Isolated changes (plan approval required)").tag(AccessMode.isolatedChanges)
-                            .disabled(model.settings.usageMode == .api)
-                        Text("Read-only").tag(AccessMode.readOnly)
-                    }
-                    .font(.caption)
                     newModelChoiceFields(for: model.settings.defaultProvider)
                 }
                 if model.settings.usageMode == .api && model.settings.defaultProvider != .local {
@@ -424,7 +427,7 @@ extension MainWindowView {
                 Button("Create a New Session for This Project") { model.createSession() }
                     .disabled(model.repositoryPath.isEmpty || model.isSwitchingTarget)
                 Text(model.settings.defaultProvider == .local
-                    ? "AgentBridge pins the commit and runs in its own isolated workspace. Local project chat is read-only and shares memory according to the bound local account's consent setting."
+                    ? "AgentBridge pins the commit and runs in its own isolated workspace. Local change runs send only the approved plan, your request, and files you select; no tools are provided."
                     : "AgentBridge pins the commit and runs in its own isolated workspace. Codex and Claude share chat memory when they use the same source and commit.")
                     .font(.caption2).foregroundStyle(.secondary)
             }

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Local models can now make plan-approved changes in an isolated project session without provider tools or a native terminal. In **Changes**, select complete UTF-8 workspace files and explicitly listed new paths, preview the bounded input, and review the resulting diff. The response must be one strict JSON object; every operation is validated before atomic writes with rollback on failure. The feature supports repair after a failed verification and the same flow is available in the CLI with file selection and a no-send preview. Local sessions may use isolated changes in subscription or Claude API usage mode. The English and Traditional Chinese interfaces and guides describe the path, schema and limits.
+
 ### Fixed
 
 - Settings saved from the CLI, or from another AgentBridge window, while the App was open were overwritten the next time the App saved any setting, because the App wrote back its whole in-memory copy. For example, a Local model set up with `agentbridge local configure` went back to the default Ollama settings after the provider was changed in the App. The App and the CLI now change only the setting being saved, on top of the latest saved settings, under one lock. A Local model draft you have typed but not saved stays in the form and is no longer saved by another change, and CLI paths are written only when you edited them.

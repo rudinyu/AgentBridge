@@ -402,6 +402,26 @@ public final class WorkspaceManager: @unchecked Sendable {
         }
     }
 
+    /// Tracked and non-ignored untracked file paths available for an explicitly
+    /// selected Local patch request. The session's writable Git metadata is not
+    /// trusted; paths are listed against the pinned private base and workspace.
+    public func localChangeCandidatePaths(for session: SessionRecord) async throws -> [String] {
+        guard session.provider == .local,
+              session.policy.accessMode == .isolatedChanges else {
+            throw AgentBridgeError.sessionMismatch("Create a Local isolated-changes session to list patch input files.")
+        }
+        try await validateWorkspace(for: session, accessMode: .isolatedChanges)
+        let workspace = URL(fileURLWithPath: session.workspacePath, isDirectory: true).standardizedFileURL
+        return try await withReviewRepository(session, workTree: workspace) { review in
+            let tracked = try await reviewGit(review, ["ls-files", "--cached", "-z", "--"], outputLimit: Self.maximumIndexListingBytes)
+            let untracked = try await reviewGit(review, ["ls-files", "--others", "--exclude-standard", "-z", "--"], outputLimit: Self.maximumIndexListingBytes)
+            guard !tracked.outputWasTruncated, !untracked.outputWasTruncated else {
+                throw AgentBridgeError.git("The Git file index exceeds the size limit.")
+            }
+            return Array(Set(try parseNULSeparatedPaths(tracked.standardOutput) + parseNULSeparatedPaths(untracked.standardOutput))).sorted()
+        }
+    }
+
     private func changeDiff(_ review: ReviewRepository, baseCommit: String) async throws -> WorkspaceChangeDiff {
         let trackedResult = try await reviewGit(review, [
             "diff", "--name-status", "-z", "--no-renames", baseCommit, "--"

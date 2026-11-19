@@ -215,8 +215,8 @@ public final class BridgeService: @unchecked Sendable {
         guard settings.usageMode != .api || provider == .claude || provider == .local else {
             throw AgentBridgeError.sessionMismatch("API mode supports Claude only. Switch to subscription sign-in mode to use Codex.")
         }
-        guard provider != .local || accessMode == .readOnly else {
-            throw AgentBridgeError.sessionMismatch("Local models currently support only read-only project sessions; no workspace was created.")
+        guard provider != .local || accessMode != .interactiveManualApproval else {
+            throw AgentBridgeError.sessionMismatch("Local models do not support native interactive terminal sessions; no workspace was created.")
         }
         let selectedProfile: AccountProfile
         if let accountProfileID {

@@ -115,8 +115,8 @@ extension AgentBridgeCLI {
         }
         guard let provider, let repoPath else { throw AgentBridgeError.invalidInput("Specify --provider and --repo.") }
         guard !(interactive && isolatedChanges) else { throw AgentBridgeError.invalidInput("--interactive and --changes are mutually exclusive.") }
-        if provider == .local && (interactive || isolatedChanges) {
-            throw AgentBridgeError.invalidInput("Local project chat only supports read-only sessions.")
+        if provider == .local && interactive {
+            throw AgentBridgeError.invalidInput("Local sessions support read-only chat or isolated changes; interactive Terminal is unavailable.")
         }
         if provider != .local, isolatedChanges, try service.settings().usageMode != .subscription {
             throw AgentBridgeError.sessionMismatch("Isolated changes support only the official CLI subscription sign-in; Claude API supports read-only sessions only.")

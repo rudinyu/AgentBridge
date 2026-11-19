@@ -410,8 +410,8 @@ extension BridgeService {
         record.handoffs.removeAll {
             $0.consumedSessionID != nil || $0.discussionRevision != currentDiscussionRevision
         }
-        guard targetProvider != .local || accessMode == .readOnly else {
-            throw AgentBridgeError.sessionMismatch("Local models support only read-only project sessions; no handoff preview was created.")
+        guard targetProvider != .local || accessMode != .interactiveManualApproval else {
+            throw AgentBridgeError.sessionMismatch("Local sessions support read-only chat or isolated changes; interactive Terminal is unavailable.")
         }
         guard record.handoffs.count < DiscussionStore.maximumHandoffsPerDiscussion else {
             throw AgentBridgeError.invalidInput("This discussion has reached its handoff preview limit.")

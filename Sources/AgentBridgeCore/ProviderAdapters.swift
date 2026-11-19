@@ -386,7 +386,7 @@ public final class ProviderAdapter: Sendable {
                 modelChoice: session.modelChoice
             )
         case .local:
-            throw AgentBridgeError.sessionMismatch("Local models do not support isolated changes.")
+            throw AgentBridgeError.sessionMismatch("Local change runs use the direct selected-file patch operation.")
         }
         let lineHandler: (@Sendable (String) -> Void)?
         if let onProgress {

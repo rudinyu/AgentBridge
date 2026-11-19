@@ -37,7 +37,7 @@ final class AppModel {
     var isRefreshingLocalModels = false
     var isTestingLocalModel = false
     /// The access mode for the next session. The native interactive terminal is
-    /// the default; local models and Claude API mode allow only read-only.
+    /// the default; Local allows isolated changes, and Claude API allows only read-only.
     var requestedAccessMode: AccessMode = .interactiveManualApproval
     /// Whether `requestedAccessMode` was set to read-only only because the
     /// provider or usage mode allowed nothing else, so it can go back to the
@@ -137,12 +137,18 @@ final class AppModel {
     var openedFinishedWork: WorkNotificationTarget?
 
     /// Keeps `requestedAccessMode` to what the provider and usage mode allow:
-    /// read-only for local models and Claude API mode. When those allow more
-    /// again, a mode that was limited goes back to the interactive default; a
-    /// read-only mode the user chose stays.
+    /// read-only for Claude API mode and no interactive mode for Local. When
+    /// those allow more again, an automatically limited mode goes back to the
+    /// interactive default; a mode the user chose stays.
     func applyAccessModeLimits() {
-        let onlyReadOnly = settings.defaultProvider == .local || settings.usageMode == .api
-        if onlyReadOnly {
+        if settings.defaultProvider == .local {
+            if requestedAccessMode == .interactiveManualApproval {
+                requestedAccessMode = .readOnly
+                accessModeWasLimitedToReadOnly = true
+            } else if requestedAccessMode == .isolatedChanges {
+                accessModeWasLimitedToReadOnly = false
+            }
+        } else if settings.usageMode == .api {
             if requestedAccessMode != .readOnly {
                 requestedAccessMode = .readOnly
                 accessModeWasLimitedToReadOnly = true
@@ -151,6 +157,12 @@ final class AppModel {
             requestedAccessMode = .interactiveManualApproval
             accessModeWasLimitedToReadOnly = false
         }
+    }
+
+    func setRequestedAccessMode(_ accessMode: AccessMode) {
+        requestedAccessMode = accessMode
+        accessModeWasLimitedToReadOnly = false
+        applyAccessModeLimits()
     }
 
     /// Whether this app is running `sessionID` right now.
@@ -1089,8 +1101,8 @@ final class AppModel {
         guard let service else { return }
         let provider = settings.defaultProvider
         guard !repositoryPath.isEmpty else { errorMessage = "Select a Git repository first."; return }
-        guard provider != .local || requestedAccessMode == .readOnly else {
-            errorMessage = localized("Local project chat only supports read-only sessions.")
+        guard provider != .local || requestedAccessMode != .interactiveManualApproval else {
+            errorMessage = localized("Local sessions support read-only chat or isolated changes; interactive Terminal is unavailable.")
             return
         }
         guard provider == .local || requestedAccessMode != .interactiveManualApproval || settings.usageMode == .subscription else {
@@ -1211,7 +1223,7 @@ final class AppModel {
             errorMessage = "Save and explicitly approve the current work plan first."
             return
         }
-        guard settings.usageMode == .subscription else {
+        guard session.provider == .local || settings.usageMode == .subscription else {
             errorMessage = "Isolated changes support only the official CLI subscription sign-in."
             return
         }
@@ -1231,7 +1243,7 @@ final class AppModel {
         activeRunSessionID = session.id
         isRunning = true
         errorMessage = nil
-        status = "Running the approved changes in the isolated workspace…"
+        status = session.provider == .local ? "Generating selected-file changes with the Local model…" : "Running the approved changes in the isolated workspace…"
         Task { @MainActor [self] in
             var succeeded = false
             defer {
@@ -1240,6 +1252,7 @@ final class AppModel {
                 activeRunSessionID = activeRunFlags.keys.first
                 refresh()
                 refreshSelectedEvents()
+                if session.provider == .local { changes.refreshLocalPreviews() }
                 workNotifier.workFinished(FinishedWork(
                     outcome: .changeRun(succeeded: succeeded),
                     target: .session(session.id),
@@ -1249,26 +1262,106 @@ final class AppModel {
                 ), language: appLanguage)
             }
             do {
-                let output = try await service.runChanges(
-                    sessionID: session.id,
-                    prompt: promptValue,
-                    planID: plan.id,
-                    reviewedDigest: plan.reviewDigest,
-                    cancellation: cancellation
-                ) { [weak self] message in
-                    Task { @MainActor [weak self] in
-                        self?.status = message
-                        self?.refreshSelectedEvents()
+                if session.provider == .local {
+                    let result = try await service.runLocalChanges(
+                        sessionID: session.id,
+                        request: promptValue,
+                        planID: plan.id,
+                        reviewedDigest: plan.reviewDigest,
+                        filePaths: changes.selectedLocalPaths.sorted(),
+                        newFilePaths: changes.localNewFilePaths,
+                        cancellation: cancellation
+                    ) { [weak self] message in
+                        Task { @MainActor [weak self] in self?.status = message }
                     }
+                    changes.localChangeResult = result
+                    outputText = result.summary
+                } else {
+                    let output = try await service.runChanges(
+                        sessionID: session.id,
+                        prompt: promptValue,
+                        planID: plan.id,
+                        reviewedDigest: plan.reviewDigest,
+                        cancellation: cancellation
+                    ) { [weak self] message in
+                        Task { @MainActor [weak self] in
+                            self?.status = message
+                            self?.refreshSelectedEvents()
+                        }
+                    }
+                    outputText = output.text
                 }
-                outputText = output.text
                 prompt = ""
-                status = "The CLI reported the change run finished; review the full file diff."
+                status = session.provider == .local ? "The Local model changes are ready; review the full file diff." : "The CLI reported the change run finished; review the full file diff."
                 succeeded = true
             } catch {
                 errorMessage = error.localizedDescription
                 noteRunFailure(sessionID: session.id, error: error)
                 status = "The change run ended."
+            }
+        }
+    }
+
+    func fixLocalChanges() {
+        guard let service, let session = selectedSession,
+              session.provider == .local, let result = changes.verificationResult,
+              !result.succeeded, !result.wasCancelled, result.skippedReason == nil else {
+            errorMessage = localized("A failed verification is required before fixing changes with Local.")
+            return
+        }
+        guard session.changePlan != nil, session.approvedChangePlanDigest == session.changePlan?.reviewDigest else {
+            errorMessage = localized("Approve the current work plan before asking Local to fix the failed verification.")
+            return
+        }
+        guard canStartAnotherRun else {
+            errorMessage = hasActiveAutonomousWorkflow
+                ? localized("Manual provider runs are paused while an autonomous workflow is active.")
+                : "Up to three different sessions can run at once; the current session also cannot run twice."
+            return
+        }
+        let failure = LocalHelperVerificationFailure(result: result, workspacePath: session.workspacePath)
+        let cancellation = CancellationFlag()
+        activeRunFlags[session.id] = cancellation
+        activeRunSessionID = session.id
+        isRunning = true
+        errorMessage = nil
+        status = "Preparing a Local fix for the failed verification…"
+        Task { @MainActor [self] in
+            var succeeded = false
+            defer {
+                activeRunFlags.removeValue(forKey: session.id)
+                isRunning = !activeRunFlags.isEmpty
+                activeRunSessionID = activeRunFlags.keys.first
+                refresh()
+                refreshSelectedEvents()
+                changes.refreshLocalPreviews()
+                workNotifier.workFinished(FinishedWork(
+                    outcome: .changeRun(succeeded: succeeded),
+                    target: .session(session.id),
+                    repositoryPath: session.sourceRepositoryPath,
+                    providers: [.local],
+                    cancelledByUser: cancellation.isCancelled
+                ), language: appLanguage)
+            }
+            do {
+                let result = try await service.fixLocalChanges(
+                    sessionID: session.id,
+                    failure: failure,
+                    note: changes.localFixNote,
+                    filePaths: changes.selectedLocalPaths.sorted(),
+                    newFilePaths: changes.localNewFilePaths,
+                    cancellation: cancellation
+                ) { [weak self] message in
+                    Task { @MainActor [weak self] in self?.status = message }
+                }
+                changes.localChangeResult = result
+                outputText = result.summary
+                status = "The Local fix is ready; review the full file diff and verify it again."
+                succeeded = true
+            } catch {
+                errorMessage = error.localizedDescription
+                noteRunFailure(sessionID: session.id, error: error)
+                status = "The Local fix ended."
             }
         }
     }
@@ -1284,7 +1377,7 @@ final class AppModel {
             errorMessage = "Create an isolated-changes session first."
             return
         }
-        guard settings.usageMode == .subscription else {
+        guard session.provider == .local || settings.usageMode == .subscription else {
             errorMessage = "Isolated changes support only the official CLI subscription sign-in."
             return
         }
@@ -1366,6 +1459,7 @@ final class AppModel {
                 activeRunSessionID = activeRunFlags.keys.first
                 refresh()
                 refreshSelectedEvents()
+                if session.provider == .local { changes.refreshLocalPreviews() }
                 workNotifier.workFinished(FinishedWork(
                     outcome: .verification(passed: passed),
                     target: .session(session.id),
@@ -1795,7 +1889,7 @@ final class AppModel {
 
     /// The access mode of the session a provider switch selects or creates: the
     /// mode chosen for new sessions (the native interactive terminal unless the
-    /// user picked another), limited to read-only for a local model or API mode.
+    /// user picked another), defaulting to read-only on Local or API provider switches.
     /// The anchor's mode is not copied, so switching from a read-only session
     /// does not keep every later session read-only.
     func switchedSessionAccessMode(for provider: AgentProvider) -> AccessMode {

@@ -10,7 +10,7 @@ AgentBridge 0.10 在 Codex、Claude 之外新增明確的 Local 供應商。選�
 
 只接受本機回送位址，拒絕遠端主機、網址內的帳密、重新導向與隱含 HTTP 代理。Ollama 的雲端模型名稱及服務回報的遠端模型資訊也會被拒絕。AgentBridge 的網路邊界限於它與本機服務之間的連線；服務本身的轉送行為仍由其操作者負責。若要從服務層停用 Ollama 雲端功能，請依官方 FAQ 設定，AgentBridge 不會自行改動全域服務。
 
-Local 目前支援專案前的討論，以及唯讀專案對話。選取專案只會讓對話取得已同意的 App 記憶，不會因此獲得檔案或命令工具。本版的 Local 不提供隔離修改、原生 CLI 終端、自主工作流程角色、實際 Skills／MCP 或桌面控制；這些能力需要另接工具執行器。
+Local 支援專案前的討論、唯讀專案對話，以及經計畫核准的隔離變更。唯讀對話只取得已同意的 App 記憶；選取專案不會因此獲得檔案或命令工具。Local 變更工作階段只會把核准計畫、使用者需求、選取檔案的完整內容，以及明確列出的新路徑傳給本機回送模型。模型沒有工具，也不會執行命令。Local 仍不支援原生 CLI 終端、自主工作流程角色、實際 Skills／MCP 或桌面控制。
 
 ## 設定與使用
 
@@ -34,6 +34,34 @@ agentbridge chat send CHAT-ID < prompt.txt
 ```
 
 相容服務使用 `--backend openai-compatible` 及其服務根位址，例如 `http://127.0.0.1:1234/v1`。`local preview project SESSION-ID` 可預覽唯讀專案組成的輸入。保存設定與預覽不會啟動推論；只有送出聊天或執行專案回合才會呼叫模型。
+
+## Local 隔離變更
+
+Local 隔離變更可在訂閱或 Claude API 用量模式下使用。建立專案工作階段時選擇「隔離變更」；Local 不提供原生互動終端。第一次「草擬計畫」只會傳送使用者需求與工作區候選路徑清單，不會傳送檔案內容。檢視並保存計畫後，還要明確核准才能執行。Local 變更執行不包含共享記憶。
+
+在 **Changes** 選取既有候選檔案、加入新的相對路徑、輸入需求，並先檢視位元組數預覽。預覽會列出完整提示大小與輸入預算：設定的上下文視窗減去輸出保留量與 512 token 緩衝，以一 token 對一位元組估算，最高 2 MiB。變更需求與計畫草稿上限為 8 KiB；修復備註也相同。修復執行只會加入失敗驗證輸出的最後 12 KiB。超出預算的輸入會在連線模型前拒絕。
+
+模型沒有工具，不能執行命令。既有輸入必須是隔離工作區內未被 Git 忽略、無符號連結且為 UTF-8 的一般檔案，每個最多 256 KiB。模型最多可回傳 200 個檔案操作；每個路徑都必須已選取或明確列為新檔；每個輸出檔最多 256 KiB，所有輸出內容合計最多 1 MiB，完整 JSON 回應最多 2 MiB。路徑必須為相對路徑；拒絕絕對路徑、空元件、. 與 .. 元件、控制字元及 .git 元件。全部操作會先驗證再寫入。寫檔使用暫存檔，若任一寫入失敗就回復。
+
+模型回覆必須完全符合以下 JSON 物件，不可包含說明文字、Markdown 圍欄或 diff：
+
+~~~json
+{"summary":"變更摘要","files":[{"path":"相對路徑","action":"modify|create|delete","content":"完整的新檔案內容"}]}
+~~~
+
+每個檔案項目只能包含 path、action、content。modify 與 create 必須提供完整 UTF-8 檔案內容；delete 可省略 content 或使用 null。App 會把結果顯示為 diff 供檢視。驗證失敗後會顯示「以 Local 模型修復」及選填備註；按鈕本身不會執行驗證。每次修復都會消耗目前計畫核准，下次執行前必須重新核准檢視過的計畫。
+
+CLI 使用相同流程：
+
+~~~sh
+agentbridge session create --provider local --repo /path/to/repo --changes
+printf '%s' '支援新的檔案格式。' | agentbridge changes draft SESSION-ID
+agentbridge changes plan SESSION-ID --title '更新 parser' --summary '支援新格式。' --step '更新解碼'
+printf '%s\n' 'APPROVE REVIEW_DIGEST' | agentbridge changes approve SESSION-ID PLAN-ID REVIEW_DIGEST
+printf '%s' '依核准計畫完成修改。' | agentbridge changes run SESSION-ID PLAN-ID REVIEW_DIGEST --file Sources/Parser.swift --new-file Sources/NewFormat.swift --preview
+~~~
+
+正式執行時重複最後一個命令並移除 --preview。修復時將失敗驗證輸出透過標準輸入提供給 agentbridge changes fix SESSION-ID；可用 --file 和 --new-file 選取額外輸入、用 --note 提供有限長度備註，並以 --command／--exit-code 標示失敗檢查。模型寫檔前仍須完成預覽與計畫核准；Local 輸出不會傳給 Codex 或 Claude。
 
 ## Ollama 引導設定
 

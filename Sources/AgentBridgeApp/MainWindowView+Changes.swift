@@ -8,7 +8,9 @@ extension MainWindowView {
             VStack(alignment: .leading, spacing: 10) {
                 GroupBox("Isolated changes · review before writing") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("This session writes only inside its isolated workspace. Each change run requires an editable plan, an explicit approval, and official CLI subscription mode. The source repository is not changed by the run.")
+                        Text(session.provider == .local
+                            ? "This session writes only in its isolated workspace. Local receives the approved plan, your request, and files you select; it has no tools. Review and verify every result."
+                            : "This session writes only inside its isolated workspace. Each change run requires an editable plan, an explicit approval, and official CLI subscription mode. The source repository is not changed by the run.")
                             .font(.caption).foregroundStyle(.secondary)
                         changePlanDraftRequest(session)
                         Group {
@@ -24,11 +26,13 @@ extension MainWindowView {
                         }
                         // The draft fills these fields, so they wait until it is done.
                         .disabled(model.changes.isDraftingSelectedPlan)
-                        Toggle("Include shared memory in the change run", isOn: Bindable(model.changes).changePlanIncludesSharedMemory)
-                            .font(.caption)
-                        Text("Off by default. Earlier runs write shared memory, and its folder can be synced, so a run that edits files sees it only when you include it. Approval covers the memory as it is then; if it changes, approve again.")
-                            .font(.caption2).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if session.provider != .local {
+                            Toggle("Include shared memory in the change run", isOn: Bindable(model.changes).changePlanIncludesSharedMemory)
+                                .font(.caption)
+                            Text("Off by default. Earlier runs write shared memory, and its folder can be synced, so a run that edits files sees it only when you include it. Approval covers the memory as it is then; if it changes, approve again.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         HStack {
                             Button("Save plan for review") { model.changes.saveChangePlan() }
                             if let plan = session.changePlan {
@@ -55,23 +59,33 @@ extension MainWindowView {
                     }
                 }
 
-                GroupBox("Run request") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        TextEditor(text: $model.prompt)
-                            .font(.system(.body, design: .rounded))
-                            .frame(minHeight: 70, maxHeight: 120)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-                        HStack {
-                            Button("Run approved changes") { model.runApprovedChanges() }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.changePlan == nil || !model.changes.selectedChangePlanDraftMatchesSaved || !model.changes.selectedChangePlanIsApproved || model.settings.usageMode != .subscription)
-                            if model.selectedSessionIsRunning { Button("Cancel this session") { model.cancelSession(session.id) } }
-                            Spacer()
+                if session.provider == .local {
+                    localChangeInputPanel(session)
+                } else {
+                    GroupBox("Run request") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextEditor(text: $model.prompt)
+                                .font(.system(.body, design: .rounded))
+                                .frame(minHeight: 70, maxHeight: 120)
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                            HStack {
+                                Button("Run approved changes") { model.runApprovedChanges() }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.changePlan == nil || !model.changes.selectedChangePlanDraftMatchesSaved || !model.changes.selectedChangePlanIsApproved || model.settings.usageMode != .subscription)
+                                if model.selectedSessionIsRunning { Button("Cancel this session") { model.cancelSession(session.id) } }
+                                Spacer()
+                            }
                         }
                     }
                 }
 
                 verificationPanel(session)
+                if session.provider == .local, let result = model.changes.localChangeResult {
+                    GroupBox("Local model change summary") {
+                        Text(result.summary).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
                 changeDiffPanel(session)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -86,7 +100,7 @@ extension MainWindowView {
                 .disabled(model.changes.isDraftingSelectedPlan)
             HStack {
                 Button("Draft plan") { model.changes.requestChangePlanDraft() }
-                    .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.changes.changeRequestText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.settings.usageMode != .subscription)
+                    .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.changes.changeRequestText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (session.provider != .local && model.settings.usageMode != .subscription))
                 if model.changes.isDraftingSelectedPlan {
                     ProgressView().controlSize(.small)
                     Text("Drafting…").font(.caption).foregroundStyle(.secondary)
@@ -106,6 +120,86 @@ extension MainWindowView {
         } message: {
             Text(model.localized("The title, summary and steps already have text. The draft replaces them; nothing is saved until you save the plan."))
         }
+    }
+
+    func localChangeInputPanel(_ session: SessionRecord) -> some View {
+        GroupBox("Selected files for Local model") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Choose regular UTF-8 workspace files to send in full. Tracked and non-ignored untracked paths are listed; no files are sent until you select them.")
+                    .font(.caption).foregroundStyle(.secondary)
+                TextField("Search workspace files", text: Bindable(model.changes).localFileSearchText)
+                if model.changes.isLoadingLocalFileCandidates {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Loading workspace files…").font(.caption).foregroundStyle(.secondary)
+                    }
+                } else if let error = model.changes.localFileCandidatesError {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(model.localized(error)).font(.caption).foregroundStyle(.orange)
+                        Button("Retry file list") { model.changes.reloadLocalFileCandidates() }
+                            .font(.caption)
+                            .disabled(model.selectedSessionIsRunning)
+                    }
+                }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(model.changes.filteredLocalFileCandidates) { candidate in
+                            Toggle(isOn: Binding(
+                                get: { model.changes.selectedLocalPaths.contains(candidate.path) },
+                                set: { selected in
+                                    if selected { model.changes.selectedLocalPaths.insert(candidate.path) }
+                                    else { model.changes.selectedLocalPaths.remove(candidate.path) }
+                                }
+                            )) {
+                                HStack {
+                                    Text(candidate.path).font(.system(.caption, design: .monospaced))
+                                    Spacer()
+                                    Text(candidate.byteCount.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? model.localized("Unavailable"))
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
+                            .disabled(!candidate.isSelectable || model.selectedSessionIsRunning)
+                        }
+                    }
+                }
+                .frame(minHeight: 80, maxHeight: 180)
+                Text("New file paths · one relative path per line")
+                    .font(.caption.weight(.semibold))
+                TextEditor(text: Bindable(model.changes).localNewFilePathsText)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(minHeight: 38, maxHeight: 70)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                if let error = model.changes.localChangePreviewError {
+                    Text(model.localized(error)).font(.caption).foregroundStyle(.orange)
+                } else if model.changes.localChangePreview == nil {
+                    Text("Approve the current plan and select files to preview the Local input budget.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                } else if let preview = model.changes.localChangePreview {
+                    Text(model.localizedFormat("Input: %@ / %@ bytes", String(preview.totalInputBytes), String(preview.budgetBytes)))
+                        .font(.caption.monospacedDigit())
+                    if preview.overBudgetBytes > 0 {
+                        Text(model.localizedFormat("Over budget by %@ bytes", String(preview.overBudgetBytes)))
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                }
+                TextEditor(text: $model.prompt)
+                    .font(.system(.body, design: .rounded))
+                    .frame(minHeight: 70, maxHeight: 120)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                    .onChange(of: model.prompt) { _, _ in model.changes.refreshLocalPreviews() }
+                HStack {
+                    Button("Generate changes with Local model") { model.runApprovedChanges() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.changes.selectedLocalPaths.isEmpty && model.changes.localNewFilePaths.isEmpty) || !model.changes.selectedChangePlanDraftMatchesSaved || !model.changes.selectedChangePlanIsApproved || model.changes.localChangePreview?.fitsBudget != true)
+                    if model.selectedSessionIsRunning { Button("Cancel") { model.cancelSession(session.id) } }
+                    if model.changes.isLoadingLocalChangePreview { ProgressView().controlSize(.small) }
+                    Spacer()
+                }
+            }
+        }
+        .onChange(of: model.changes.selectedLocalPaths) { _, _ in model.changes.refreshLocalPreviews() }
+        .onChange(of: model.changes.localNewFilePathsText) { _, _ in model.changes.refreshLocalPreviews() }
+        .onChange(of: model.changes.localFixNote) { _, _ in model.changes.refreshLocalPreviews() }
     }
 
     func verificationPanel(_ session: SessionRecord) -> some View {
@@ -155,6 +249,28 @@ extension MainWindowView {
                         Text("Standard error").font(.caption.weight(.semibold))
                         Text(result.standardError).font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if session.provider == .local, !result.succeeded, !result.wasCancelled, result.skippedReason == nil {
+                        TextField("Optional note for the Local fix", text: Bindable(model.changes).localFixNote, axis: .vertical)
+                            .lineLimit(1...3)
+                        Button("Fix with Local model") { model.fixLocalChanges() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || !model.changes.selectedChangePlanIsApproved || model.changes.localFixPreview?.fitsBudget != true)
+                        if model.changes.isLoadingLocalFixPreview {
+                            ProgressView().controlSize(.small)
+                        }
+                        if let error = model.changes.localFixPreviewError {
+                            Text(model.localized(error)).font(.caption).foregroundStyle(.orange)
+                        } else if let preview = model.changes.localFixPreview {
+                            Text(model.localizedFormat("Input: %@ / %@ bytes", String(preview.totalInputBytes), String(preview.budgetBytes)))
+                                .font(.caption.monospacedDigit())
+                            if preview.overBudgetBytes > 0 {
+                                Text(model.localizedFormat("Over budget by %@ bytes", String(preview.overBudgetBytes)))
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
+                        }
+                        Text("Approve the current plan, choose any additional files above, then review and verify the result again.")
+                            .font(.caption2).foregroundStyle(.secondary)
                     }
                     if !result.succeeded, !result.wasCancelled, result.skippedReason == nil, model.localHelper.allows(.explainFailure) {
                         failureExplanation(session, result: result)

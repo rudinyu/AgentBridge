@@ -37,8 +37,8 @@ extension BridgeService {
             throw AgentBridgeError.invalidInput("The change request must be text of up to 8,000 bytes.")
         }
         let initialSession = try loadSession(sessionID)
-        guard initialSession.provider != .local else {
-            throw AgentBridgeError.sessionMismatch("Local models do not support isolated changes or work plans yet.")
+        if initialSession.provider == .local {
+            return try await draftLocalChangePlan(sessionID: sessionID, request: trimmedRequest, cancellation: cancellation, onProgress: onProgress)
         }
 
         let lease = try await acquireProviderRunLease(for: sessionID, waitsForRunSlot: false, cancellation: cancellation)
