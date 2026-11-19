@@ -71,7 +71,7 @@ CLI=build/swiftpm/debug/agentbridge
 
 模型與推理強度：建立按鈕上方的「模型」與「推理強度」決定新的 Codex 或 Claude 工作階段使用什麼。模型可自由輸入，清單按鈕提供幾個建議名稱；CLI 接受的名稱都能輸入。推理強度第一個選項是「CLI 預設」，後面是 CLI 接受的等級（Codex：low、medium、high、xhigh、max、ultra；Claude：low、medium、high、xhigh、max）。兩者都留空就使用 CLI 自己的預設值，AgentBridge 不會猜測那是哪個模型。這個選擇和帳戶一樣綁定在工作階段上：套用於唯讀執行、修改執行與原生終端，之後無法更改，並在工作階段的供應商與帳戶旁顯示，例如「gpt-x · high」或「CLI 預設」。若 CLI 拒絕該模型，執行會失敗並顯示 CLI 的訊息；AgentBridge 不會改用其他模型重試。用量終端永遠不設定模型，本機模型仍使用自己的模型設定。新工作階段與新對話的預設值在「助理」>「新工作階段的預設模型」。新對話也有相同的兩個欄位；對話切換到其他供應商時會回到 CLI 預設。CLI 用法：`session create … --model NAME --effort LEVEL`、`chat new … --model NAME --effort LEVEL`，以及 `settings model codex|claude [--model NAME] [--effort LEVEL]`。
 
-每個工作階段固定建立時的來源 `HEAD`，並在 `<你選擇的資料夾>/workspaces/<工作階段 ID>/` 中的專屬隔離複本執行。未提交和未追蹤的檔案不會複製。來源提交後續改變時，既有工作階段仍使用原來的固定版本；建立新工作階段會以新的來源提交建立新的記憶範圍。AgentBridge 不會自動合併或推送工作區變更。
+每個工作階段固定建立時的來源 `HEAD`，並在 `<你選擇的資料夾>/workspaces/<工作階段 ID>/` 中的專屬隔離複本執行。未提交和未追蹤的檔案不會複製。來源提交後續改變時，既有工作階段仍使用原來的固定版本；建立新工作階段會以新的來源提交建立新的記憶範圍。AgentBridge 不會自動合併或推送工作區變更；只有透過第 9 節經你確認的拉取要求動作才會提交與推送。
 
 以此建立新工作階段：若想用其他模型、推理強度或帳戶處理同一個任務，在任一工作階段清單的工作階段上按右鍵，選擇「以此建立新工作階段…」。Codex 或 Claude 執行因 CLI 錯誤而失敗時，錯誤提示會提供「改用其他模型…」，失敗的工作階段標題旁也會顯示同一個按鈕。表單會預先帶入來源工作階段的模型、推理強度與帳戶（只列出同一供應商的帳戶），並沿用其供應商、Repository 與存取模式（唯讀、隔離變更或互動式終端機）。選擇「相同提交」會固定在來源工作階段的提交版本；選擇「來源儲存庫目前的 HEAD」則固定在 Repository 現在的版本。核准、驗證結果、變更與已啟用的擴充功能不會複製。隔離變更工作階段的變更計畫（標題、摘要、步驟及是否包含共享記憶）會以未核准狀態儲存在新工作階段，必須重新檢視並核准；若無法儲存，例如所選帳戶不允許共享記憶，新工作階段仍會建立，錯誤訊息會說明計畫未複製。唯讀對話中，你在這次 App 啟動期間於來源工作階段最後送出的提示詞會放進新工作階段的輸入框，但絕不會自動送出。來源工作階段可以是已失敗、已取消或已移除的工作階段。CLI 用法：`session create --like SESSION-ID [--model NAME] [--effort LEVEL] [--latest-commit] [--profile PROFILE-ID]`；`--provider`、`--repo`、`--changes` 與 `--interactive` 不能和 `--like` 一起使用，未指定 `--model` 或 `--effort` 時沿用來源工作階段的值。
 
@@ -197,7 +197,7 @@ printf '%s' '依核准計畫完成修改。' | \
   "$CLI" changes run "$SESSION_ID" PLAN_ID REVIEW_DIGEST
 ```
 
-在 **Changes** 檢視完整檔案清單與 diff。拒絕某個變更時還原該檔，或將全部檔案還原到基準快照，也可匯出 patch。差異超過 1 MiB 的檔案不會顯示，非 UTF-8 文字會以替代字元顯示；兩者在 patch 中都完整保留，請匯出以檢視。接受與套用需要針對該差異另行確認：App 使用核取方塊，CLI 使用 `--confirm-partial DIFF-DIGEST`，摘要由 `changes diff` 印出。檢視畫面也會列出工作區中被 Git 忽略的路徑；驗證看不到它們，它們也不在 patch 內，不會進入你的分支。**Verify** 在由基準提交加上 patch 建立的拋棄式副本中執行，並位於 macOS 沙箱內：家目錄遭封鎖，但可使用網路，因此建置不含快取，而會自行啟動沙箱的指令碼須在設定 `AGENTBRIDGE_VERIFICATION_SANDBOX` 時關閉該功能。只有按下後才會執行 `.codex/ci.sh`，且會拒絕與固定提交版本不同的指令碼；請還原它，或以已核准的自訂驗證執行。自訂驗證需先明確核准，並以 executable 和分開的 argv 傳入；AgentBridge 不會組合 shell 命令。結果顯示 executable、參數、工作目錄、退出代碼、耗時及遮蔽後的 stdout/stderr。接受與套用只適用於已成功驗證的目前完整 diff。套用時須輸入本機 branch 名稱；AgentBridge 先檢查來源 Repository 仍有此工作階段的 base commit，再從該提交建立未提交 worktree；即使來源之後已前進也可以套用。AgentBridge 不會 commit、push 或 merge。
+在 **Changes** 檢視完整檔案清單與 diff。拒絕某個變更時還原該檔，或將全部檔案還原到基準快照，也可匯出 patch。差異超過 1 MiB 的檔案不會顯示，非 UTF-8 文字會以替代字元顯示；兩者在 patch 中都完整保留，請匯出以檢視。接受與套用需要針對該差異另行確認：App 使用核取方塊，CLI 使用 `--confirm-partial DIFF-DIGEST`，摘要由 `changes diff` 印出。檢視畫面也會列出工作區中被 Git 忽略的路徑；驗證看不到它們，它們也不在 patch 內，不會進入你的分支。**Verify** 在由基準提交加上 patch 建立的拋棄式副本中執行，並位於 macOS 沙箱內：家目錄遭封鎖，但可使用網路，因此建置不含快取，而會自行啟動沙箱的指令碼須在設定 `AGENTBRIDGE_VERIFICATION_SANDBOX` 時關閉該功能。只有按下後才會執行 `.codex/ci.sh`，且會拒絕與固定提交版本不同的指令碼；請還原它，或以已核准的自訂驗證執行。自訂驗證需先明確核准，並以 executable 和分開的 argv 傳入；AgentBridge 不會組合 shell 命令。結果顯示 executable、參數、工作目錄、退出代碼、耗時及遮蔽後的 stdout/stderr。接受與套用只適用於已成功驗證的目前完整 diff。套用時須輸入本機 branch 名稱；AgentBridge 先檢查來源 Repository 仍有此工作階段的 base commit，再從該提交建立未提交 worktree；即使來源之後已前進也可以套用。AgentBridge 不會自行 commit、push 或 merge；唯一會 commit 與 push 的方式是下方經確認的拉取要求動作，且絕不 merge。
 
 **Activity** 時間軸呈現排序後、已遮蔽的稽核事件，包括可取得的進度、計畫核准、取消、錯誤、diff 變化與驗證結果。只有官方 CLI 實際回報的 provider 輸出才會顯示。**Parallel task board** 列出所有工作階段實際啟動的操作、狀態、核准、進度、取消及 diff／驗證參照。App、CLI 與自主流程合計最多同時進行三個供應商執行（唯讀、變更與驗證執行），第四個會被拒絕，直到有一個結束；檢視差異、核准計畫、接受變更等操作不受此上限阻擋；共用的程序鎖也會阻止同一工作階段重複執行。請在對應任務按 **Cancel this session**。
 
@@ -224,6 +224,25 @@ CLI 也提供對應操作：
 ```
 
 `changes apply` 會回傳未提交的本機 worktree。自訂 `changes verify` 會直接將 argv 傳給 executable。CLI 同樣受訂閱模式、計畫核准、驗證、來源 commit 和帳戶共享記憶同意檢查，不會繞過這些限制。
+
+#### 提交、推送並開啟拉取要求
+
+套用之後，**Changes** 會顯示 branch 與 worktree，以及「提交、推送並開啟 PR…」按鈕。按下後會開啟一個視窗，讓你檢視並可修改：遠端（每個都附上網址；有 `origin` 時預設選它）、基準 branch（遠端預設 branch，取自 `refs/remotes/REMOTE/HEAD`，否則用 `gh repo view` 取得 GitHub 預設 branch，再否則用已存在的 `main` 或 `master`；都沒有時請自行輸入）、提交訊息、拉取要求標題與說明，以及「草稿拉取要求」（預設開啟）。訊息與說明由計畫的標題、摘要、步驟及驗證結果組成；不含提示詞或模型輸出，也不會呼叫任何模型。在你確認之前不會執行任何動作；確認後會在套用 worktree 中提交、將 branch 推送到遠端，並在 GitHub 開啟拉取要求。你的程式碼會離開這台 Mac。不會合併任何內容。
+
+- **提交：** 只有在 worktree 仍完全等於已驗證的 diff 時才會進行；驗證後若有修改或新增檔案就會停止。只會暫存並提交已驗證的檔案，使用 Repository 或你的 Git 設定中的身分。因為檔案來自模型，hook 一律不執行。
+- **推送：** `git push -u REMOTE BRANCH:BRANCH`，絕不使用 force；branch 是基準 branch 或遠端預設 branch 時會拒絕。
+- **拉取要求：** 以 `gh pr create` 搭配 `--base`、`--head`、標題、說明，除非你關閉，否則加上 `--draft`。若該 branch 已有開啟中的拉取要求，會記錄它而不再開新的。
+
+必須安裝 GitHub CLI（`gh`，會在 PATH、`/opt/homebrew/bin` 與 `/usr/local/bin` 中尋找）並已登入。AgentBridge 只看 `gh auth status` 的結束代碼，絕不替你登入；若尚未登入，請在終端機執行 `gh auth login` 後再試一次。每個步驟成功時都會記錄在工作階段上。若某一步失敗，視窗會顯示是哪一步，「重試」會從該步繼續，不會產生第二個提交或拉取要求。重新套用到新 branch 會從頭開始。活動時間軸會記錄 `change.pr.committed`、`change.pr.pushed`、`change.pr.opened` 與 `change.pr.failed`，錯誤內容會先遮蔽。
+
+AgentBridge 其他的 Git 指令使用私人 home 資料夾且不讀全域 Git 設定；這些指令則不同，會以你的 home 資料夾、PATH（另加 Homebrew 資料夾）、SSH agent（`SSH_AUTH_SOCK`）、gh 設定與 token 變數、GnuPG home 及 proxy 設定執行你自己的 Git 與 `gh`，讓身分、credential helper、SSH 金鑰、提交簽章與 gh 登入和在終端機中一樣運作。提示輸入已關閉，因此需要輸入的憑證會直接失敗而不會等待。不會傳入其他環境變數，provider 執行仍使用各自經過清理的環境。
+
+```sh
+"$CLI" changes pr "$SESSION_ID"            # 只列出將會執行的內容，不做任何變更
+"$CLI" changes pr "$SESSION_ID" --base main --message-file msg.txt --body-file body.md --confirm
+```
+
+選項：`--remote NAME`、`--base BRANCH`、`--title TEXT`、`--body-file PATH`、`--message-file PATH`、`--no-draft`。沒有 `--confirm` 時只會列出預覽。失敗後再執行一次即可繼續。
 
 ### 10. 自主工作流程
 

@@ -52,6 +52,20 @@ final class ChangeReviewModel {
     /// A finished draft waiting for the user to agree to replace newer text.
     private(set) var pendingDraft: DraftedChangePlan?
     private var partiallyShownFilesConfirmedDigest: String?
+    /// The commit, push and pull request sheet. Nothing runs until its confirm button.
+    var isShowingPullRequestSheet = false
+    var pullRequestPreview: PullRequestPreview?
+    var isLoadingPullRequestPreview = false
+    var pullRequestRemote = ""
+    var pullRequestBase = ""
+    var pullRequestCommitMessage = ""
+    var pullRequestTitle = ""
+    var pullRequestBody = ""
+    var pullRequestDraft = true
+    var isOpeningPullRequest = false
+    var pullRequestRunningStep: PullRequestStep?
+    var pullRequestFailedStep: PullRequestStep?
+    var pullRequestError: String?
 
     var isDraftingSelectedPlan: Bool {
         draftingSessionID != nil && draftingSessionID == app.selectedSession?.id
@@ -307,6 +321,106 @@ final class ChangeReviewModel {
                 self?.app.refresh()
             } catch { self?.app.errorMessage = error.localizedDescription }
         }
+    }
+
+    var pullRequestForm: PullRequestPresentation.Form {
+        PullRequestPresentation.Form(remote: pullRequestRemote, base: pullRequestBase, commitMessage: pullRequestCommitMessage, title: pullRequestTitle)
+    }
+
+    var canStartPullRequest: Bool {
+        PullRequestPresentation.canStart(preview: pullRequestPreview, form: pullRequestForm, isRunning: isOpeningPullRequest || isLoadingPullRequestPreview)
+    }
+
+    /// Opens the sheet with the proposed remote, base, message, title and body.
+    /// Building the preview runs Git and `gh auth status` only.
+    func showPullRequestSheet() {
+        guard !app.hasActiveAutonomousWorkflow else {
+            app.errorMessage = app.localized("Changes are locked while an autonomous workflow is active.")
+            return
+        }
+        guard let session = app.selectedSession, session.appliedBranchName != nil else { return }
+        pullRequestPreview = nil
+        pullRequestRunningStep = nil
+        pullRequestFailedStep = nil
+        pullRequestError = nil
+        pullRequestDraft = true
+        isShowingPullRequestSheet = true
+        loadPullRequestPreview(sessionID: session.id, remote: nil, fillText: true)
+    }
+
+    /// A different remote can have a different default branch, so the base is proposed again.
+    func selectPullRequestRemote(_ remote: String) {
+        guard remote != pullRequestRemote, let sessionID = pullRequestPreview?.sessionID else { return }
+        pullRequestRemote = remote
+        loadPullRequestPreview(sessionID: sessionID, remote: remote, fillText: false)
+    }
+
+    private func loadPullRequestPreview(sessionID: UUID, remote: String?, fillText: Bool) {
+        guard let service = app.service else { return }
+        isLoadingPullRequestPreview = true
+        Task { @MainActor [weak self] in
+            defer { self?.isLoadingPullRequestPreview = false }
+            do {
+                let preview = try await service.pullRequestPreview(sessionID: sessionID, remote: remote)
+                guard let self else { return }
+                self.pullRequestPreview = preview
+                self.pullRequestRemote = preview.selectedRemote ?? ""
+                self.pullRequestBase = preview.proposedBase ?? ""
+                if fillText {
+                    self.pullRequestCommitMessage = preview.commitMessage
+                    self.pullRequestTitle = preview.pullRequestTitle
+                    self.pullRequestBody = preview.pullRequestBody
+                }
+            } catch {
+                self?.pullRequestError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Runs the steps that are not done yet; after a failure the same button retries.
+    func openPullRequest() {
+        guard canStartPullRequest, let service = app.service, let preview = pullRequestPreview else { return }
+        let request = PullRequestRequest(
+            remote: pullRequestRemote,
+            base: pullRequestBase.trimmingCharacters(in: .whitespacesAndNewlines),
+            commitMessage: pullRequestCommitMessage,
+            title: pullRequestTitle,
+            body: pullRequestBody,
+            draft: pullRequestDraft
+        )
+        let sessionID = preview.sessionID
+        isOpeningPullRequest = true
+        pullRequestFailedStep = nil
+        pullRequestError = nil
+        pullRequestRunningStep = .commit
+        // The model lives as long as the App window, so holding it until a step reports is fine.
+        let onStepStarted: @Sendable (PullRequestStep) -> Void = { [self] step in
+            Task { @MainActor in
+                if self.isOpeningPullRequest { self.pullRequestRunningStep = step }
+            }
+        }
+        Task { @MainActor [weak self] in
+            do {
+                let outcome = try await service.openPullRequest(sessionID: sessionID, request: request, onStepStarted: onStepStarted)
+                self?.app.status = "Opened pull request \(outcome.pullRequestURL). Nothing was merged."
+            } catch {
+                self?.pullRequestFailedStep = PullRequestPresentation.failedStep(of: error)
+                self?.pullRequestError = error.localizedDescription
+            }
+            guard let self else { return }
+            self.isOpeningPullRequest = false
+            self.pullRequestRunningStep = nil
+            if let refreshed = try? await service.pullRequestPreview(sessionID: sessionID, remote: request.remote, base: request.base) {
+                self.pullRequestPreview = refreshed
+            }
+            self.app.refreshSelectedEvents()
+            self.app.refresh()
+        }
+    }
+
+    func openPullRequestInBrowser(_ text: String?) {
+        guard let url = PullRequestPresentation.browserURL(text) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @ObservationIgnored private weak var owner: AppModel?

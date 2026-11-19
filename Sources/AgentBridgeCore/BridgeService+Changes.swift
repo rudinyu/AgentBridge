@@ -183,6 +183,13 @@ extension BridgeService {
                 diff: currentDiff
             )
             session.changesAcceptedAt = Date()
+            // A new worktree starts the commit, push and pull request over.
+            session.appliedBranchName = result.branchName
+            session.appliedWorktreePath = result.worktreePath
+            session.appliedCommit = nil
+            session.pushedRemote = nil
+            session.pushedAt = nil
+            session.pullRequestURL = nil
             session.updatedAt = Date()
             try store.saveSession(session)
             try store.appendEvent(AuditEvent(
@@ -245,7 +252,7 @@ extension BridgeService {
         session.changesAcceptedAt = nil
     }
 
-    private func requireSuccessfulChangeVerification(_ session: SessionRecord) throws {
+    func requireSuccessfulChangeVerification(_ session: SessionRecord) throws {
         guard session.verificationPassed == true,
               let verificationAt = session.verificationCompletedAt,
               let lastChangeAt = session.lastChangeRunAt,

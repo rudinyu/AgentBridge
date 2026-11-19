@@ -112,7 +112,7 @@ MUST-10 尚未完成使用者自訂提醒門檻，以及選擇高用量門檻後
 ### 明確不做
 
 - 不複製 Antigravity、Codex 或 Claude 的完整 IDE/TUI；AgentBridge 負責跨 provider 的專案、權限、記憶、審查和預算控制。
-- 不自動 commit、push、merge、升權、切換至 API 付費模式或在未經使用者明確同意時擴大 memory 分享範圍。
+- 不自動 commit、push、merge、升權、切換至 API 付費模式或在未經使用者明確同意時擴大 memory 分享範圍。提交並推送已套用的 worktree 及開啟拉取要求屬於明確同意：使用者檢視遠端、基準 branch、訊息、標題與說明後另行確認才會執行；永遠不會 merge。
 - 不從官方 CLI 複製 OAuth token，不解析 provider 私有 transcript，不將本機 Git clone/worktree 宣稱為 macOS OS sandbox。
 - 不把 AgentBridge 的 US$140 本機帳本宣稱為 Anthropic 帳戶整體硬上限。
 

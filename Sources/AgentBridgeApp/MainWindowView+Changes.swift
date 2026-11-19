@@ -231,8 +231,43 @@ extension MainWindowView {
                     Button("Apply to branch as an uncommitted worktree") { model.changes.applyChangesToBranch() }
                         .disabled(!model.changes.verifiedCurrentDiff || model.changes.changeDiff?.files.isEmpty != false || model.changes.awaitingPartiallyShownFilesConfirmation || model.changes.branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                Text("Applying checks the source base commit for conflicts and creates an uncommitted isolated worktree. AgentBridge never commits, pushes, or merges.")
+                Text("Applying checks the source base commit for conflicts and creates an uncommitted isolated worktree. AgentBridge commits, pushes or opens a pull request only when you confirm it below, and never merges.")
                     .font(.caption2).foregroundStyle(.secondary)
+                appliedBranchSection(session)
+            }
+        }
+        .sheet(isPresented: Bindable(model.changes).isShowingPullRequestSheet) {
+            PullRequestSheet(model: model)
+                .environment(\.locale, model.appLanguage.locale)
+                .interactiveDismissDisabled(model.changes.isOpeningPullRequest)
+        }
+    }
+
+    /// The branch and worktree the verified changes were applied to, and the
+    /// explicit way to commit, push and open a pull request from them.
+    @ViewBuilder
+    func appliedBranchSection(_ session: SessionRecord) -> some View {
+        if let branch = session.appliedBranchName, let worktree = session.appliedWorktreePath {
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Applied to a local branch").font(.caption.weight(.semibold))
+                Text(model.localizedFormat("Branch: %@", branch)).font(.caption.monospaced()).textSelection(.enabled)
+                Text(model.localizedFormat("Worktree: %@", worktree)).font(.caption.monospaced()).textSelection(.enabled)
+                if let url = session.pullRequestURL {
+                    HStack {
+                        Text(model.localizedFormat("Pull request: %@", url)).font(.caption.monospaced()).textSelection(.enabled)
+                        Button("Open in Browser") { model.changes.openPullRequestInBrowser(url) }
+                    }
+                } else if session.appliedCommit != nil {
+                    Text("Some steps are done. Open the sheet to see them and continue.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button("Commit, Push and Open PR…") { model.changes.showPullRequestSheet() }
+                        .disabled(model.changes.isOpeningPullRequest || model.hasActiveAutonomousWorkflow)
+                    Text("Shows everything first; nothing leaves this Mac until you confirm.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
             }
         }
     }

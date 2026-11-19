@@ -5,7 +5,7 @@ import AgentBridgeCore
 extension AgentBridgeCLI {
     static func changesCommand(_ arguments: [String], service: BridgeService) async throws {
         guard let action = arguments.first else {
-            throw AgentBridgeError.invalidInput("Usage: agentbridge changes draft|plan|approve|run|diff|restore|restore-all|export|verify|accept|apply ...")
+            throw AgentBridgeError.invalidInput("Usage: agentbridge changes draft|plan|approve|run|diff|restore|restore-all|export|verify|accept|apply|pr ...")
         }
         switch action {
         case "draft":
@@ -82,9 +82,142 @@ extension AgentBridgeCLI {
             )
             print("Created a worktree: \(result.worktreePath) (branch \(result.branchName), \(result.changedFileCount) file(s)).")
             print("The worktree is left uncommitted; AgentBridge did not commit, push or merge.")
+            print("To commit, push and open a pull request, run `agentbridge changes pr \(sessionID.uuidString.lowercased())` to review it first.")
+        case "pr":
+            try await changesPullRequest(arguments, service: service)
         default:
             throw AgentBridgeError.invalidInput("Unknown changes subcommand \(action).")
         }
+    }
+
+    /// Without `--confirm` this prints what would be committed, pushed and opened
+    /// and changes nothing. With it, it runs the steps that are not done yet.
+    static func changesPullRequest(_ arguments: [String], service: BridgeService) async throws {
+        let usage = "Usage: agentbridge changes pr SESSION-ID [--remote NAME] [--base BRANCH] [--title TEXT] [--body-file PATH] [--message-file PATH] [--no-draft] [--confirm]"
+        guard arguments.count >= 2, let sessionID = UUID(uuidString: arguments[1]) else {
+            throw AgentBridgeError.invalidInput(usage)
+        }
+        var remote: String?
+        var base: String?
+        var title: String?
+        var bodyPath: String?
+        var messagePath: String?
+        var draft = true
+        var confirmed = false
+        var index = 2
+        while index < arguments.count {
+            let option = arguments[index]
+            index += 1
+            switch option {
+            case "--no-draft": draft = false; continue
+            case "--confirm": confirmed = true; continue
+            default: break
+            }
+            guard index < arguments.count else { throw AgentBridgeError.invalidInput("\(option) needs a value.") }
+            let value = arguments[index]
+            index += 1
+            switch option {
+            case "--remote": remote = value
+            case "--base": base = value
+            case "--title": title = value
+            case "--body-file": bodyPath = value
+            case "--message-file": messagePath = value
+            default: throw AgentBridgeError.invalidInput("Unknown changes pr option \(option).")
+            }
+        }
+        let preview = try await service.pullRequestPreview(sessionID: sessionID, remote: remote, base: base)
+        guard let selectedRemote = preview.selectedRemote else {
+            throw AgentBridgeError.invalidInput("The source repository has no remote to push to. Add one with `git remote add`, then try again.")
+        }
+        guard let chosenBase = preview.proposedBase else {
+            throw AgentBridgeError.invalidInput("The remote's default branch could not be found. Pass the base branch with --base.")
+        }
+        let request = PullRequestRequest(
+            remote: selectedRemote,
+            base: chosenBase,
+            commitMessage: try messagePath.map { try readPullRequestTextFile($0, label: "Commit message") } ?? preview.commitMessage,
+            title: title ?? preview.pullRequestTitle,
+            body: try bodyPath.map { try readPullRequestTextFile($0, label: "Pull request body") } ?? preview.pullRequestBody,
+            draft: draft
+        )
+        printPullRequestPreview(preview, request: request)
+        guard confirmed else {
+            print("\nNothing was committed, pushed or opened. Run the same command with --confirm to do it.")
+            return
+        }
+        switch preview.gitHubCLI {
+        case .notInstalled:
+            throw AgentBridgeError.invalidInput("The GitHub CLI (gh) is not installed. Install it with `brew install gh`, then try again.")
+        case .notAuthenticated:
+            throw AgentBridgeError.invalidInput("The GitHub CLI is not signed in. Sign in with `gh auth login` in Terminal, then try again.")
+        case .ready:
+            break
+        }
+        let cancellation = CancellationFlag()
+        let signalSources = makeCancellationSignalSources(cancellation)
+        defer { signalSources.forEach { $0.cancel() } }
+        print("")
+        let outcome = try await service.openPullRequest(sessionID: sessionID, request: request, cancellation: cancellation) { step in
+            FileHandle.standardError.write(Data("• \(pullRequestStepName(step))…\n".utf8))
+        }
+        for result in outcome.steps {
+            let state = switch result.outcome {
+            case .done: "done"
+            case .alreadyDone: "already done earlier"
+            case .reusedExisting: "an open pull request already existed"
+            }
+            print("\(pullRequestStepName(result.step)): \(state) (\(result.detail))")
+        }
+        print("Pull request: \(outcome.pullRequestURL)")
+        print("Nothing was merged.")
+    }
+
+    static func pullRequestStepName(_ step: PullRequestStep) -> String {
+        switch step {
+        case .commit: "Commit"
+        case .push: "Push"
+        case .pullRequest: "Pull request"
+        }
+    }
+
+    private static func printPullRequestPreview(_ preview: PullRequestPreview, request: PullRequestRequest) {
+        let remoteURL = preview.remotes.first(where: { $0.name == request.remote })?.pushURL ?? ""
+        print("Branch: \(preview.branchName)")
+        print("Worktree: \(preview.worktreePath)")
+        print("Remotes:")
+        for remote in preview.remotes {
+            print("  \(remote.name == request.remote ? "*" : " ") \(remote.name)  \(remote.pushURL)")
+        }
+        print("Push: \(preview.branchName) to \(request.remote) (\(remoteURL)), without force")
+        print("Base branch: \(request.base)")
+        print("Draft: \(request.draft ? "yes" : "no")")
+        switch preview.gitHubCLI {
+        case .notInstalled: print("GitHub CLI: not installed (install it with `brew install gh`)")
+        case .notAuthenticated: print("GitHub CLI: not signed in (sign in with `gh auth login` in Terminal)")
+        case .ready(let path): print("GitHub CLI: signed in (\(path))")
+        }
+        if !preview.completedSteps.isEmpty {
+            print("Already done: \(preview.completedSteps.map(pullRequestStepName).joined(separator: ", "))")
+        }
+        if preview.appliedCommit == nil {
+            print("Files to commit (\(preview.changedFiles.count)):")
+            preview.changedFiles.forEach { print("  \($0)") }
+        }
+        if !preview.worktreeMatchesVerifiedDiff {
+            print("Warning: the apply worktree no longer matches the verified changes, so the commit will be refused.")
+        }
+        print("\n--- Commit message ---\n\(request.commitMessage)")
+        print("--- Pull request title ---\n\(request.title)")
+        print("--- Pull request body ---\n\(request.body)")
+        print("This commits in the apply worktree, pushes the branch to \(remoteURL) and opens a pull request on GitHub. Your code leaves this Mac. Nothing is merged.")
+    }
+
+    private static func readPullRequestTextFile(_ path: String, label: String) throws -> String {
+        guard !path.isEmpty else { throw AgentBridgeError.invalidInput("\(label) needs a file path.") }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let data = try BoundedDescriptorFileReader.read(at: url, maximumBytes: 60_000)
+        guard let text = String(data: data, encoding: .utf8) else { throw AgentBridgeError.invalidInput("\(label) must be UTF-8 text.") }
+        return text
     }
 
     static func requireSession(_ id: UUID, service: BridgeService) throws -> SessionRecord {
