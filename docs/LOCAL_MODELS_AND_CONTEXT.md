@@ -4,7 +4,7 @@
 
 ## Provider boundary
 
-AgentBridge 0.10 adds an explicit Local provider alongside Codex and Claude. Selecting Local connects directly to an already running model server on this Mac. It does not change the default cloud provider, use a CLI subscription, collect an API key, download a model or fall back to a paid service.
+AgentBridge 0.10 adds an explicit Local provider alongside Codex and Claude. Selecting Local connects directly to an already running model server on this Mac. It does not change the default cloud provider, use a CLI subscription, collect an API key or fall back to a paid service. It downloads a model only when you click **Download model** in the guided Ollama setup or run `agentbridge local pull MODEL --confirm`.
 
 The supported protocols are Ollama's native chat API and an OpenAI-compatible local chat-completions API, including LM Studio. Default service roots are `http://127.0.0.1:11434` and `http://127.0.0.1:1234/v1`, respectively. Model discovery runs only after an explicit action. A server with no installed models is reported as such.
 
@@ -34,6 +34,63 @@ agentbridge chat send CHAT-ID < prompt.txt
 ```
 
 For a compatible server, select `--backend openai-compatible` and its service root, such as `http://127.0.0.1:1234/v1`. `local preview project SESSION-ID` previews a read-only project's composed input. Configuration and previews do not start inference; `chat send` or a project run does.
+
+## Guided Ollama setup
+
+**Guided Ollama setup**, at the top of the Local model settings, helps when Ollama is not set up yet. **Check Ollama setup** looks for the `ollama` command on your PATH, in `/opt/homebrew/bin` and `/usr/local/bin`, and inside `/Applications/Ollama.app`, and asks the Ollama endpoint for its model list: the configured endpoint when the backend is Ollama, otherwise `http://127.0.0.1:11434`. Nothing else happens until you click:
+
+- **Not installed:** **Open the Ollama download page** opens <https://ollama.com/download> in your browser. You install Ollama yourself.
+- **Installed but not running:** **Start Ollama** runs `open -a` on the Ollama app, so it runs on its own like any app you open, not as a hidden child of AgentBridge. Without the app bundle, the setup shows `ollama serve` for you to run in Terminal.
+- **Running:** the setup recommends a code model for this Mac's physical memory and lets you type any other name. **Download model** runs `ollama pull NAME` (as arguments, never through a shell) against the Ollama endpoint, shows its progress and can be cancelled. When it finishes, the Local settings switch to the Ollama backend and that model, are saved, and the connection test runs.
+
+| Physical memory | Recommended model | Download |
+| --- | --- | --- |
+| under 12 GB | `qwen2.5-coder:3b` | about 1.9 GB |
+| 12 GB or more | `qwen2.5-coder:7b` | about 4.7 GB |
+| 24 GB or more | `qwen2.5-coder:14b` | about 9 GB |
+| 48 GB or more | `qwen2.5-coder:32b` | about 20 GB |
+
+The table is one constant in Core (`OllamaSetup.recommendations`); the names are checked against the [Ollama library](https://ollama.com/library) before each release. The CLI has the same steps:
+
+```sh
+agentbridge local setup-check
+agentbridge local pull qwen2.5-coder:7b --confirm
+```
+
+## Local model helper
+
+The local model helper lets the configured Local model draft text for small tasks in Codex and Claude work. It is not a provider and never calls Codex or Claude. It uses the same endpoint, model, context window and output reserve as Local, and the same limits: each helper request is one authorized attempt against the Local profile's 200 per rolling 24 hours, and against the 50 per session for the session it helps with. Token counts the server reports are recorded for the Local profile, apart from Codex and Claude.
+
+**Local model helper** in the Local model settings is the master switch, with one switch for each task under it. All are off by default. Turning the master switch on runs the connection test on the saved Local settings and stays off unless the server lists the configured model. The CLI is `agentbridge local helper show|on|off [--commit-text] [--explain-failure] [--handoff] [--change-summary]`; `on` and `off` with task flags switch those tasks, and without them the master switch.
+
+| Task | Where | What is sent | Answer |
+| --- | --- | --- | --- |
+| Commit and pull request text | **Rewrite with local model** in the **Commit, Push and Open PR…** sheet; `changes pr SESSION-ID --draft-text-with-local` | The plan's title, summary and steps; the changed files with their added and removed line counts; the verification command and result AgentBridge recorded; the verified diff of the apply worktree | One JSON object with exactly `commitSubject`, `commitBody`, `prTitle` and `prBody` |
+| Explain a failed verification | **Explain this failure** under a failed verification in **Changes**; `changes explain SESSION-ID` | The verification command, its exit code, the last part of its output (at most 12 KiB) and the changed file list, without the diff | Plain text: what went wrong and files to check |
+| Handoff summary | **Draft with local model** in **Quick continue in another provider → Optional handoff details** | The conversation's last saved turns (at most 8, each side at most 4 KiB) and the repository folder name | One JSON object with exactly `done`, `next` and `prompt` |
+| Summarize changes | **Summarize with local model** in the **Full file diff** panel of **Changes**; `changes summarize SESSION-ID` | The changed files with line counts and the diff | Plain text: a summary and things to check |
+
+### Consent
+
+Turning on the helper and a task's switch is the consent for that task's requests. Unlike Local conversations, helper requests do **not** need the shared-memory consent of the source account or of the Local profile. This is a deliberate exception: the requests go only to the loopback endpoint on this Mac, and nothing a helper request sends or returns is written to shared memory, project memory, handoff files or provider history. The audit log records `local_helper.started`, `local_helper.finished` and `local_helper.failed` with the task, byte counts and whether the input was truncated, never the prompt or the answer.
+
+### What is sent and how it fits
+
+Everything sent is redacted the same way as other output. The diff is sent in full by default. To fit the Local context window, AgentBridge keeps the same byte budget as the Local context preview: the context window less the output reserve and a 512-token margin, one byte per token. The instructions, the plan, the verification record and the full file list always go; then the file diffs follow in order for as long as they fit. When some do not, the note says "Truncated: only the first N of M files were sent." When not even the first fits, the start of it is sent, cut at a line. A file whose diff is too long to show is not sent, nor anything after it. For a failure, only the last part of the output that fits is sent; for a handoff, the newest turns that fit.
+
+Each entry point has **What will be sent**, which shows the files with their byte counts, the other parts, the truncation notes and the exact text, without sending anything. In the CLI, `changes explain` and `changes summarize` take `--preview`, and `changes pr --draft-text-with-local --preview` does the same for the commit and pull request text.
+
+### Drafts only
+
+Every answer is a draft. Nothing is applied, saved, sent or committed by the helper. The commit and pull request text fills the sheet's fields: while they still hold the text AgentBridge proposed, the draft replaces it; if you edited them, the sheet asks first. The commit subject must be one line of up to 200 bytes, and the sheet notes when it is longer than 72 characters. If the description does not state the verification AgentBridge recorded, that line is added, so the description cannot claim more testing than ran. The CLI never combines a draft with `--confirm`: save the text you want and confirm with `--message-file`, `--body-file` and `--title`.
+
+The failure explanation is shown under the verification result with **Use as change request**, which copies it into the **What should change?** field used by **Draft plan** (asking first if that field has text) and sends nothing. The handoff draft fills **What is done?**, **What should happen next?** and the suggested prompt, asking first if any of them has text. The change summary is labeled as the model's opinion; it is not a substitute for verification. None of these is saved.
+
+Answers that fill fields are read strictly: exactly one JSON object with exactly the listed keys, all text, with no prose or code fence around it and no repair. Plain-text answers must be at most 32 KiB.
+
+### When there is no draft
+
+If the helper or the task is off, the server cannot be reached, the request times out, a limit is reached or the answer is not in the expected form, AgentBridge keeps the existing text (for the pull request, the proposed commit message, title and description) and shows a short note with the reason instead of an error dialog. Every request can be cancelled.
 
 ## Compression that remains readable
 

@@ -130,6 +130,56 @@ struct RunGate {
         }
     }
 
+    /// A local model helper request counts like any other Local request: against
+    /// the Local profile's rolling 24-hour limit, and against the per-session
+    /// limit for the session it helps with. Its attempt is recorded in the helper
+    /// usage stream, marked with the profile and that session.
+    func authorizeLocalHelperRun(
+        profile: AccountProfile,
+        settings: LocalModelSettings,
+        sourceID: UUID,
+        task: LocalHelperTask,
+        now: Date = Date()
+    ) throws {
+        guard profile.provider == .local else {
+            throw AccountProfileError.providerMismatch(profile.id, .local)
+        }
+        let stream = LocalModelHelper.usageStreamID
+        let profileMarker = "account_profile_id=\(profile.id.uuidString.lowercased());"
+        let sourceMarker = "source_id=\(sourceID.uuidString.lowercased());"
+        try usageControlStore.withRunAuthorization(provider: .local, accountProfileID: profile.id) { _ in
+            do {
+                let usage = try loadStatistics(.local, profile.id, stream, now)
+                try enforceRunLimit(
+                    used: usage.localDailyRuns,
+                    limit: LocalModelClient.defaultDailyRunLimit,
+                    window: .rolling24Hours
+                )
+                let sourceRuns = try store.events(sessionID: stream).filter {
+                    $0.kind == "local.run.started" && $0.message.contains(profileMarker) && $0.message.contains(sourceMarker)
+                }.count
+                try enforceRunLimit(
+                    used: sourceRuns,
+                    limit: LocalModelClient.defaultSessionRunLimit,
+                    window: .currentSession
+                )
+                try store.appendEvent(AuditEvent(
+                    timestamp: now,
+                    sessionID: stream,
+                    kind: "local.run.started",
+                    message: "\(profileMarker) \(sourceMarker) local_helper=\(task.rawValue); backend=\(settings.backend.rawValue); model=\(OutputRedactor.redact(settings.model)); local-only helper request passed AgentBridge local run limits."
+                ))
+            } catch let error as UsageControlError {
+                try? store.appendEvent(AuditEvent(
+                    sessionID: sourceID,
+                    kind: "usage.run.blocked",
+                    message: error.localizedDescription
+                ))
+                throw error
+            }
+        }
+    }
+
     /// Tokens count in every usage mode, so one set of limits covers both.
     private func enforceTokenLimits(_ statistics: UsageStatisticsSnapshot, controls: UsageControlSettings) throws {
         for (used, limit, window) in [

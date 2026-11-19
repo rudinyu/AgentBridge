@@ -4,7 +4,7 @@
 
 ## 供應商邊界
 
-AgentBridge 0.10 在 Codex、Claude 之外新增明確的 Local 供應商。選擇 Local 會直接連到這台 Mac 上已啟動的模型服務，不會變更預設雲端供應商、使用 CLI 訂閱、收集 API key、下載模型或退回付費服務。
+AgentBridge 0.10 在 Codex、Claude 之外新增明確的 Local 供應商。選擇 Local 會直接連到這台 Mac 上已啟動的模型服務，不會變更預設雲端供應商、使用 CLI 訂閱、收集 API key 或退回付費服務。只有在 Ollama 引導設定中按「下載模型」，或執行 `agentbridge local pull MODEL --confirm` 時，才會下載模型。
 
 支援 Ollama 原生聊天 API，以及包含 LM Studio 在內的 OpenAI 相容本機聊天介面。預設服務根位址分別為 `http://127.0.0.1:11434` 與 `http://127.0.0.1:1234/v1`。只有明確操作才查詢模型；服務沒有已安裝模型時，會如實顯示。
 
@@ -34,6 +34,63 @@ agentbridge chat send CHAT-ID < prompt.txt
 ```
 
 相容服務使用 `--backend openai-compatible` 及其服務根位址，例如 `http://127.0.0.1:1234/v1`。`local preview project SESSION-ID` 可預覽唯讀專案組成的輸入。保存設定與預覽不會啟動推論；只有送出聊天或執行專案回合才會呼叫模型。
+
+## Ollama 引導設定
+
+Local 模型設定最上方的「Ollama 引導設定」，適合還沒設定 Ollama 時使用。「檢查 Ollama 設定」會在 PATH、`/opt/homebrew/bin`、`/usr/local/bin` 與 `/Applications/Ollama.app` 內尋找 `ollama` 指令，並向 Ollama 端點查詢模型清單：後端是 Ollama 時用設定的端點，否則用 `http://127.0.0.1:11434`。除此之外，沒有你的點按就不會做任何事：
+
+- **尚未安裝：**「開啟 Ollama 下載頁面」會在瀏覽器開啟 <https://ollama.com/download>，由你自行安裝。
+- **已安裝但未執行：**「啟動 Ollama」會對 Ollama 應用程式執行 `open -a`，讓它像你自己開啟的 App 一樣獨立執行，不是 AgentBridge 底下的隱藏子程序。沒有 App 套件時，會顯示 `ollama serve` 讓你在「終端機」執行。
+- **執行中：**依這台 Mac 的實體記憶體建議程式碼模型，也可以輸入其他任何名稱。「下載模型」會對 Ollama 端點執行 `ollama pull NAME`（以參數傳遞，絕不經過 shell），顯示進度且可取消。完成後，Local 設定會改用 Ollama 後端與這個模型並儲存，然後執行連線測試。
+
+| 實體記憶體 | 建議模型 | 下載量 |
+| --- | --- | --- |
+| 少於 12 GB | `qwen2.5-coder:3b` | 約 1.9 GB |
+| 12 GB 以上 | `qwen2.5-coder:7b` | 約 4.7 GB |
+| 24 GB 以上 | `qwen2.5-coder:14b` | 約 9 GB |
+| 48 GB 以上 | `qwen2.5-coder:32b` | 約 20 GB |
+
+這張表是 Core 中的單一常數（`OllamaSetup.recommendations`），每次發布前都會對照 [Ollama 模型庫](https://ollama.com/library) 檢查名稱。CLI 也有相同步驟：
+
+```sh
+agentbridge local setup-check
+agentbridge local pull qwen2.5-coder:7b --confirm
+```
+
+## 本機模型輔助
+
+本機模型輔助讓設定好的 Local 模型，在 Codex 與 Claude 工作中為小型工作撰寫文字草稿。它不是供應商，也絕不呼叫 Codex 或 Claude。它使用與 Local 相同的端點、模型、上下文視窗與輸出保留量，也使用相同的上限：每次輔助要求都算一次已授權嘗試，計入 Local 設定檔滾動 24 小時 200 次的上限，以及所協助工作階段每個 50 次的上限。服務回報的 token 數會記在 Local 設定檔下，與 Codex、Claude 分開。
+
+Local 模型設定中的「本機模型輔助」是總開關，下方每項工作各有一個開關，預設全部關閉。開啟總開關時，會用已儲存的 Local 設定執行連線測試；服務沒有列出設定的模型時就維持關閉。CLI 是 `agentbridge local helper show|on|off [--commit-text] [--explain-failure] [--handoff] [--change-summary]`；`on`、`off` 加上工作旗標時切換那些工作，不加時切換總開關。
+
+| 工作 | 位置 | 送出的內容 | 回答 |
+| --- | --- | --- | --- |
+| 提交與拉取要求文字 | 「提交、推送並開啟 PR…」視窗中的「用本機模型改寫」；`changes pr SESSION-ID --draft-text-with-local` | 計畫的標題、摘要與步驟；變更檔案及其新增、刪除行數；AgentBridge 記錄的驗證指令與結果；套用工作樹中已驗證的差異 | 一個剛好含 `commitSubject`、`commitBody`、`prTitle`、`prBody` 的 JSON 物件 |
+| 說明失敗的驗證 | 「變更」中失敗驗證下方的「說明這次失敗」；`changes explain SESSION-ID` | 驗證指令、結束代碼、輸出的最後部分（最多 12 KiB）與變更檔案清單，不含差異 | 純文字：出了什麼問題、要檢查哪些檔案 |
+| 交接摘要 | 「快速切換並接續到其他供應商 → 選填交接內容」中的「用本機模型草擬」 | 這段對話最近已儲存的回合（最多 8 個，每邊最多 4 KiB）與儲存庫資料夾名稱 | 一個剛好含 `done`、`next`、`prompt` 的 JSON 物件 |
+| 摘要變更 | 「完整檔案差異」面板中的「用本機模型摘要」；`changes summarize SESSION-ID` | 變更檔案及行數，以及差異 | 純文字：摘要與需要檢查的事項 |
+
+### 同意
+
+開啟輔助與某項工作的開關，就是同意該工作送出要求。與 Local 對話不同，輔助要求**不**需要來源帳戶或 Local 設定檔的共享記憶同意。這是刻意的例外：要求只會送到這台 Mac 的迴路端點，而且輔助要求送出或收到的任何內容，都不會寫入共享記憶、專案記憶、交接檔案或供應商歷史。稽核紀錄會記下 `local_helper.started`、`local_helper.finished`、`local_helper.failed`，內容只有工作種類、位元組數與輸入是否被截短，絕不包含提示或回答。
+
+### 送出什麼、如何放進上下文
+
+所有送出的內容都會像其他輸出一樣先遮蔽敏感資訊。差異預設完整送出。為了放進 Local 上下文視窗，AgentBridge 使用與 Local 上下文預覽相同的位元組預算：上下文視窗減去輸出保留量與 512 token 安全邊際，以一個位元組對一個 token 估算。指示、計畫、驗證紀錄與完整檔案清單一定會送出；接著依序放入各檔案的差異，直到放不下為止。有檔案沒送出時，提示會寫「已截短：只送出前 N 個檔案（共 M 個）。」連第一個都放不下時，會送出它的開頭並在行尾截斷。差異太長而無法顯示的檔案不會送出，它之後的檔案也不會。失敗說明只送出放得下的輸出最後部分；交接摘要則送出放得下的最新回合。
+
+每個入口都有「將送出的內容」，可在不送出任何東西的情況下，查看檔案及其位元組數、其他部分、截短提示與確切文字。CLI 的 `changes explain` 與 `changes summarize` 可加 `--preview`，`changes pr --draft-text-with-local --preview` 則對提交與拉取要求文字做同樣的事。
+
+### 只是草稿
+
+每個回答都是草稿。輔助不會套用、儲存、送出或提交任何東西。提交與拉取要求文字會填入視窗欄位：欄位仍是 AgentBridge 提議的文字時直接取代；你編輯過時會先詢問。提交主旨必須是一行、最多 200 個位元組，超過 72 個字元時視窗會提示。若說明沒有寫出 AgentBridge 記錄的驗證，會補上那一行，因此說明不會宣稱比實際更多的測試。CLI 絕不把草稿和 `--confirm` 一起使用：請把想用的文字存成檔案，再用 `--message-file`、`--body-file` 與 `--title` 確認。
+
+失敗說明會顯示在驗證結果下方，並附「用作變更要求」：它會把說明複製到「草擬計畫」使用的「要變更什麼？」欄位（欄位已有文字時先詢問），不會送出任何內容。交接草稿會填入「已完成哪些工作？」、「接下來要做什麼？」與「建議下一個提示詞」，任一欄已有文字時先詢問。變更摘要會標示為模型的意見，不能取代驗證。這些內容都不會儲存。
+
+要填入欄位的回答會嚴格讀取：必須剛好是一個 JSON 物件、剛好包含列出的鍵、值都是文字，前後不能有說明文字或程式碼框，也不做修補。純文字回答最多 32 KiB。
+
+### 沒有草稿時
+
+輔助或該工作已關閉、無法連到服務、要求逾時、達到上限，或回答格式不符時，AgentBridge 會保留現有文字（拉取要求則保留提議的提交訊息、標題與說明），並以簡短提示說明原因，而不是跳出錯誤對話框。每個要求都可以取消。
 
 ## 壓縮後仍可理解的內容
 

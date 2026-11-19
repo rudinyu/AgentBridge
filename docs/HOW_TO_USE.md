@@ -41,7 +41,7 @@ The setup wizard opens automatically when the app has no usable workspace folder
 
 ### 2. Choose a language and check CLI sign-in
 
-For Local models, use the local backend and model controls instead of CLI sign-in. Start your existing server, configure its loopback endpoint, refresh models and select a model. Context and output limits determine the conservative input budget; **Context preview** shows the exact prepared history and any refusal. See [Local Models and Context](LOCAL_MODELS_AND_CONTEXT.md) for the supported scope.
+For Local models, use the local backend and model controls instead of CLI sign-in. Start your existing server, configure its loopback endpoint, refresh models and select a model. Context and output limits determine the conservative input budget; **Context preview** shows the exact prepared history and any refusal. If Ollama is not set up yet, **Guided Ollama setup** at the top of the Local model settings checks whether it is installed and running, opens its download page or starts the app when you click, recommends a code model for this Mac's memory and downloads it only when you click **Download model**. See [Local Models and Context](LOCAL_MODELS_AND_CONTEXT.md) for the supported scope.
 
 Fresh installs use English. Choose **English** or **Traditional Chinese** in the setup wizard or from the app header; the selection is saved and takes effect immediately. For an explicit sign-in check, choose Codex or Claude under **Assistant**, then click **Check Sign-in and Plan** in the upper-right corner. The app displays only account and plan fields confirmed by the official CLI. If the Codex CLI does not report a plan name, AgentBridge does not guess one.
 
@@ -225,7 +225,7 @@ The CLI offers focused counterparts:
 
 #### Commit, push and open a pull request
 
-After applying, **Changes** shows the branch and worktree and a **Commit, Push and Open PR…** button. It opens a sheet where you review and can edit the remote (each listed with its URL; `origin` is chosen when it exists), the base branch (the remote's default branch from `refs/remotes/REMOTE/HEAD`, else GitHub's default from `gh repo view`, else an existing `main` or `master`; otherwise type it), the commit message, the pull request title and body, and **Draft pull request** (on by default). The message and body are built from the plan's title, summary and steps and the verification result; no prompt or model output is included, and no model is called. Nothing runs until you confirm: the sheet then commits in the apply worktree, pushes the branch to the remote and opens a pull request on GitHub. Your code leaves this Mac. Nothing is merged.
+After applying, **Changes** shows the branch and worktree and a **Commit, Push and Open PR…** button. It opens a sheet where you review and can edit the remote (each listed with its URL; `origin` is chosen when it exists), the base branch (the remote's default branch from `refs/remotes/REMOTE/HEAD`, else GitHub's default from `gh repo view`, else an existing `main` or `master`; otherwise type it), the commit message, the pull request title and body, and **Draft pull request** (on by default). The message and body are built from the plan's title, summary and steps and the verification result; no prompt or model output is included, and no model is called unless you click **Rewrite with local model** (see the local model helper below). Nothing runs until you confirm: the sheet then commits in the apply worktree, pushes the branch to the remote and opens a pull request on GitHub. Your code leaves this Mac. Nothing is merged.
 
 - **Commit:** only when the worktree still holds exactly the verified diff; anything edited or added after verification stops it. Exactly the verified files are staged and committed with your own Git identity from the repository or your Git config. Hooks never run, because the files came from a model.
 - **Push:** `git push -u REMOTE BRANCH:BRANCH`, never with force, and never when the branch is the base or the remote's default branch.
@@ -241,6 +241,27 @@ Unlike AgentBridge's other Git commands, which use a private home folder and no 
 ```
 
 Options: `--remote NAME`, `--base BRANCH`, `--title TEXT`, `--body-file PATH`, `--message-file PATH`, `--no-draft`. Without `--confirm` the command only prints the preview. Run it again after a failure to continue.
+
+#### Local model helper
+
+The local model helper lets your configured Local model draft text inside Codex and Claude work, without calling Codex or Claude. Turn on **Local model helper** in the Local model settings (this runs the connection test first) and the switch of each task you want; all are off by default, and turning a task on is the consent for its requests. Each entry point appears only while its task is on:
+
+- **Rewrite with local model** in the **Commit, Push and Open PR…** sheet drafts the commit message and the pull request title and description from the plan, the file list, the recorded verification and the verified diff.
+- **Explain this failure** under a failed verification result in **Changes** explains it in plain language with files to check. **Use as change request** copies the explanation into **What should change?** for **Draft plan**, without sending it.
+- **Draft with local model** in **Quick continue in another provider → Optional handoff details** fills **What is done?**, **What should happen next?** and the suggested prompt from the conversation's recent saved turns.
+- **Summarize with local model** at the top of **Full file diff** shows a summary of the diff and things to check, labeled as the model's opinion.
+
+**What will be sent** under each button shows the files, byte counts, what was left out to fit the context window and the exact text, without sending anything. Every answer is a draft: text you edited is replaced only after you agree, and nothing is applied, saved or sent. If there is no draft (the helper is off, the server does not answer, it times out, a Local limit is reached or the answer is malformed), the existing text stays and a short note gives the reason. Requests count against the Local limits and are recorded in the activity log without their content; they do not need shared-memory consent because nothing is written to shared memory, project memory or handoff files.
+
+```sh
+"$CLI" local helper on                        # runs the connection test first
+"$CLI" local helper on --commit-text --explain-failure --change-summary
+"$CLI" changes pr "$SESSION_ID" --draft-text-with-local     # prints the draft; changes nothing
+"$CLI" changes verify "$SESSION_ID" 2>&1 | "$CLI" changes explain "$SESSION_ID" --exit-code 1
+"$CLI" changes summarize "$SESSION_ID" --preview            # what would be sent; sends nothing
+```
+
+See [Local Models and Context](LOCAL_MODELS_AND_CONTEXT.md#local-model-helper) for what each task sends and how it is truncated.
 
 ### 10. Autonomous workflows
 

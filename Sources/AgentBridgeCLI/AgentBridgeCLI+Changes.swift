@@ -5,7 +5,7 @@ import AgentBridgeCore
 extension AgentBridgeCLI {
     static func changesCommand(_ arguments: [String], service: BridgeService) async throws {
         guard let action = arguments.first else {
-            throw AgentBridgeError.invalidInput("Usage: agentbridge changes draft|plan|approve|run|diff|restore|restore-all|export|verify|accept|apply|pr ...")
+            throw AgentBridgeError.invalidInput("Usage: agentbridge changes draft|plan|approve|run|diff|restore|restore-all|export|verify|accept|apply|pr|explain|summarize ...")
         }
         switch action {
         case "draft":
@@ -85,6 +85,10 @@ extension AgentBridgeCLI {
             print("To commit, push and open a pull request, run `agentbridge changes pr \(sessionID.uuidString.lowercased())` to review it first.")
         case "pr":
             try await changesPullRequest(arguments, service: service)
+        case "explain":
+            try await changesExplain(arguments, service: service)
+        case "summarize":
+            try await changesSummarize(arguments, service: service)
         default:
             throw AgentBridgeError.invalidInput("Unknown changes subcommand \(action).")
         }
@@ -93,7 +97,7 @@ extension AgentBridgeCLI {
     /// Without `--confirm` this prints what would be committed, pushed and opened
     /// and changes nothing. With it, it runs the steps that are not done yet.
     static func changesPullRequest(_ arguments: [String], service: BridgeService) async throws {
-        let usage = "Usage: agentbridge changes pr SESSION-ID [--remote NAME] [--base BRANCH] [--title TEXT] [--body-file PATH] [--message-file PATH] [--no-draft] [--confirm]"
+        let usage = "Usage: agentbridge changes pr SESSION-ID [--remote NAME] [--base BRANCH] [--title TEXT] [--body-file PATH] [--message-file PATH] [--no-draft] [--draft-text-with-local [--preview]] [--confirm]"
         guard arguments.count >= 2, let sessionID = UUID(uuidString: arguments[1]) else {
             throw AgentBridgeError.invalidInput(usage)
         }
@@ -104,6 +108,8 @@ extension AgentBridgeCLI {
         var messagePath: String?
         var draft = true
         var confirmed = false
+        var draftTextWithLocal = false
+        var previewLocal = false
         var index = 2
         while index < arguments.count {
             let option = arguments[index]
@@ -111,6 +117,8 @@ extension AgentBridgeCLI {
             switch option {
             case "--no-draft": draft = false; continue
             case "--confirm": confirmed = true; continue
+            case "--draft-text-with-local": draftTextWithLocal = true; continue
+            case "--preview": previewLocal = true; continue
             default: break
             }
             guard index < arguments.count else { throw AgentBridgeError.invalidInput("\(option) needs a value.") }
@@ -125,6 +133,14 @@ extension AgentBridgeCLI {
             default: throw AgentBridgeError.invalidInput("Unknown changes pr option \(option).")
             }
         }
+        if previewLocal {
+            guard draftTextWithLocal, !confirmed else { throw AgentBridgeError.invalidInput("--preview goes with --draft-text-with-local and without --confirm.") }
+            printLocalHelperPreview(try await service.localHelperPullRequestPreview(sessionID: sessionID))
+            return
+        }
+        guard !(draftTextWithLocal && confirmed) else {
+            throw AgentBridgeError.invalidInput("A local model draft is never committed unread. Run without --confirm to see the draft, save the text you want in files, then confirm with --message-file, --body-file and --title.")
+        }
         let preview = try await service.pullRequestPreview(sessionID: sessionID, remote: remote, base: base)
         guard let selectedRemote = preview.selectedRemote else {
             throw AgentBridgeError.invalidInput("The source repository has no remote to push to. Add one with `git remote add`, then try again.")
@@ -132,12 +148,30 @@ extension AgentBridgeCLI {
         guard let chosenBase = preview.proposedBase else {
             throw AgentBridgeError.invalidInput("The remote's default branch could not be found. Pass the base branch with --base.")
         }
+        // The local model drafts only the text that no option or file gave; without
+        // a draft, the proposed text is kept and the reason is printed.
+        var proposed = PullRequestDraftText(commitMessage: preview.commitMessage, title: preview.pullRequestTitle, body: preview.pullRequestBody)
+        if draftTextWithLocal {
+            let cancellation = CancellationFlag()
+            let signalSources = makeCancellationSignalSources(cancellation)
+            defer { signalSources.forEach { $0.cancel() } }
+            FileHandle.standardError.write(Data("• Asking the local model to draft the commit and pull request text…\n".utf8))
+            let outcome = try await service.draftPullRequestTextWithLocalModel(sessionID: sessionID, cancellation: cancellation)
+            if let note = outcome.preview?.truncationNotes.first { print(note) }
+            if let text = outcome.draft {
+                proposed = text
+                print("The commit message, title and description below are the local model's draft. Read them before you confirm.")
+                if text.commitSubjectIsLong { print("The commit subject is longer than 72 characters.") }
+            } else {
+                print("Kept the proposed text. \(outcome.fallbackReason ?? "")")
+            }
+        }
         let request = PullRequestRequest(
             remote: selectedRemote,
             base: chosenBase,
-            commitMessage: try messagePath.map { try readPullRequestTextFile($0, label: "Commit message") } ?? preview.commitMessage,
-            title: title ?? preview.pullRequestTitle,
-            body: try bodyPath.map { try readPullRequestTextFile($0, label: "Pull request body") } ?? preview.pullRequestBody,
+            commitMessage: try messagePath.map { try readPullRequestTextFile($0, label: "Commit message") } ?? proposed.commitMessage,
+            title: title ?? proposed.title,
+            body: try bodyPath.map { try readPullRequestTextFile($0, label: "Pull request body") } ?? proposed.body,
             draft: draft
         )
         printPullRequestPreview(preview, request: request)

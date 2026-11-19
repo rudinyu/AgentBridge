@@ -89,12 +89,22 @@ extension BridgeService {
                     && event.message.contains(discussionProfileMarker)
             })
         }
+        var additionalIDs = Set(matchingDiscussions.map(\.id))
+        if provider == .local {
+            // Local model helper requests help Codex and Claude sessions, so their
+            // attempts and tokens are kept in their own stream, marked by profile.
+            additionalIDs.insert(LocalModelHelper.usageStreamID)
+            events.append(contentsOf: try store.events(sessionID: LocalModelHelper.usageStreamID).filter { event in
+                ["local.run.started", "usage.tokens"].contains(event.kind)
+                    && event.message.contains(discussionProfileMarker + ";")
+            })
+        }
         return UsageStatisticsAggregator.aggregate(
             provider: provider,
             accountProfileID: profile.id,
             sessions: matchingSessions,
             events: events,
-            additionalActivitySessionIDs: Set(matchingDiscussions.map(\.id)),
+            additionalActivitySessionIDs: additionalIDs,
             selectedSessionID: selectedSessionID,
             now: now
         )
@@ -260,6 +270,16 @@ extension BridgeService {
         now: Date = Date()
     ) throws {
         try runGate.authorizeLocalModelRun(runID: runID, profile: profile, settings: settings, now: now)
+    }
+
+    func authorizeLocalHelperRun(
+        profile: AccountProfile,
+        settings: LocalModelSettings,
+        sourceID: UUID,
+        task: LocalHelperTask,
+        now: Date = Date()
+    ) throws {
+        try runGate.authorizeLocalHelperRun(profile: profile, settings: settings, sourceID: sourceID, task: task, now: now)
     }
 
     func apiSpendLimits(for profileID: UUID, controls: UsageControlSettings) throws -> APISpendLimits {

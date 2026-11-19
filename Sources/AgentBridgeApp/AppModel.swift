@@ -23,6 +23,7 @@ final class AppModel {
     let usage = UsageModel()
     let chats = DiscussionModel()
     let changes = ChangeReviewModel()
+    let localHelper = LocalHelperModel()
     let extensions = ExtensionsModel()
     let terminal = TerminalModel()
     var settings = BridgeSettings()
@@ -232,6 +233,7 @@ final class AppModel {
         usage.attach(to: self)
         chats.attach(to: self)
         changes.attach(to: self)
+        localHelper.attach(to: self)
         extensions.attach(to: self)
         terminal.attach(to: self)
         chats.loadSavedPreferences()
@@ -266,6 +268,7 @@ final class AppModel {
         usage.attach(to: self)
         chats.attach(to: self)
         changes.attach(to: self)
+        localHelper.attach(to: self)
         extensions.attach(to: self)
         terminal.attach(to: self)
         self.store = store
