@@ -112,7 +112,7 @@ Every item below is a release requirement. Do not claim safe code modification i
 ### Explicit non-goals
 
 - Do not clone the full Antigravity, Codex, or Claude IDE/TUI. AgentBridge owns the cross-provider project, permission, memory, review, and budget workflow.
-- Never auto-commit, push, merge, elevate permissions, switch to paid API mode, or widen memory sharing without explicit user consent.
+- Never auto-commit, push, merge, elevate permissions, switch to paid API mode, or widen memory sharing without explicit user consent. Committing and pushing an applied worktree and opening a pull request is that kind of consent: a separate action the user confirms after reviewing the remote, base, message, title and body; nothing is ever merged.
 - Do not copy OAuth tokens from official CLIs, parse provider-private transcripts, or describe a local Git clone/worktree as a macOS OS sandbox.
 - Do not describe AgentBridge's US$140 local ledger as an account-wide Anthropic hard cap.
 

@@ -652,6 +652,30 @@ public final class WorkspaceManager: @unchecked Sendable {
         }
     }
 
+    /// The worktree that verified changes were applied to, checked to still be a
+    /// plain folder inside AgentBridge's workspaces, named for this session.
+    func validatedApplyWorktree(for session: SessionRecord) throws -> URL {
+        guard let path = session.appliedWorktreePath, path.hasPrefix("/"), !path.contains("\0") else {
+            throw AgentBridgeError.invalidInput("Apply the verified changes to a local branch first.")
+        }
+        let worktree = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        guard worktree.lastPathComponent.hasPrefix("apply-\(session.id.uuidString.lowercased())-"),
+              isWithinManagedWorkspaces(worktree), isDirectory(worktree), !isSymbolicLink(worktree) else {
+            throw AgentBridgeError.sessionMismatch("The apply worktree no longer exists or is not the folder AgentBridge created. Apply the changes to a local branch again.")
+        }
+        return worktree
+    }
+
+    /// The apply worktree's changes against the session's base commit, read the way
+    /// the review reads the workspace, so its digest compares with the verified one.
+    /// This reads the work tree's files, not its index or commits.
+    func applyWorktreeDiff(for session: SessionRecord) async throws -> WorkspaceChangeDiff {
+        let worktree = try validatedApplyWorktree(for: session)
+        return try await withReviewRepository(session, workTree: worktree) { review in
+            try await changeDiff(review, baseCommit: session.snapshotCommit)
+        }
+    }
+
     private func validateVerifiedDiff(_ diff: WorkspaceChangeDiff, for session: SessionRecord) throws {
         guard diff.baseCommit == session.snapshotCommit,
               session.verificationPassed == true,

@@ -1072,6 +1072,11 @@ extension BridgeService {
             session.status = previousStatus
             session.verificationPassed = result.succeeded
             session.verificationDiffDigest = result.succeeded ? diffBeforeVerification.digest : nil
+            session.verificationCommandLabel = result.succeeded
+                ? (executableURL.path.hasPrefix(workspacePrefix)
+                    ? String(executableURL.path.dropFirst(workspacePrefix.count))
+                    : executableURL.lastPathComponent)
+                : nil
             session.verificationCompletedAt = Date()
             if !result.succeeded { session.changesAcceptedAt = nil }
             session.updatedAt = Date()
@@ -1094,6 +1099,7 @@ extension BridgeService {
             session.status = previousStatus
             session.verificationPassed = false
             session.verificationDiffDigest = nil
+            session.verificationCommandLabel = nil
             session.verificationCompletedAt = Date()
             session.changesAcceptedAt = nil
             session.updatedAt = Date()

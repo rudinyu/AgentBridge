@@ -20,6 +20,8 @@ public final class BridgeService: @unchecked Sendable {
     let usageControlStore: UsageControlStore
     let providerUsageReportStore: ProviderUsageReportStore
     let runtimeProxyExecutableURL: URL?
+    /// Where `gh` is looked for after the PATH; tests clear it.
+    var gitHubCLISearchDirectories = BridgeService.gitHubCLIFallbackDirectories
 
     public init(
         store: AuditStore,

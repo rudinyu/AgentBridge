@@ -243,6 +243,19 @@ public struct SessionRecord: Codable, Equatable, Identifiable, Sendable {
     /// list and cannot be loaded or run; its record and audit events are kept so
     /// usage statistics still count its runs.
     public var removedAt: Date?
+    /// What the last successful verification ran, as shown in a commit message:
+    /// `.codex/ci.sh`, a path inside the workspace, or a custom program's file name.
+    public var verificationCommandLabel: String?
+    /// The local branch and worktree that the verified changes were last applied to.
+    public var appliedBranchName: String?
+    public var appliedWorktreePath: String?
+    /// Progress of the user-confirmed commit, push and pull request from that worktree.
+    /// Each is set once its step succeeds, so a retry continues from the first step
+    /// that is not done. All of these stay out of records that never used them.
+    public var appliedCommit: String?
+    public var pushedRemote: String?
+    public var pushedAt: Date?
+    public var pullRequestURL: String?
 
     public init(
         id: UUID = UUID(),
@@ -673,6 +686,7 @@ public enum AgentBridgeError: Error, LocalizedError, Equatable {
     case processLaunchFailed(String)
     case persistence(String)
     case git(String)
+    case pullRequestStepFailed(PullRequestStep, String)
 
     public var errorDescription: String? {
         switch self {
@@ -695,6 +709,9 @@ public enum AgentBridgeError: Error, LocalizedError, Equatable {
         case .processLaunchFailed(let message): "Could not launch the child process: \(message)"
         case .persistence(let message): "Could not save session data: \(message)"
         case .git(let message): "Could not create the isolated Git workspace: \(message)"
+        case .pullRequestStepFailed(.commit, let reason): "The commit step failed: \(reason)"
+        case .pullRequestStepFailed(.push, let reason): "The push step failed: \(reason)"
+        case .pullRequestStepFailed(.pullRequest, let reason): "Opening the pull request failed: \(reason)"
         }
     }
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- After verified changes are applied to a local branch, **Changes** shows the branch and worktree and a **Commit, Push and Open PR…** button, and the CLI has `changes pr SESSION-ID`. Both first show everything that would happen: the remotes with their URLs, the base branch (the remote's default branch when it is known), the files, and a commit message and pull request title and body built from the plan and the verification result, all editable, with the pull request a draft by default. Only after you confirm (the sheet's button, or `--confirm`) does AgentBridge commit exactly the verified files in the apply worktree with your Git identity, push the branch without force and open the pull request with the GitHub CLI; your code leaves the Mac, and nothing is merged. It refuses when the worktree no longer matches the verified diff, when the branch is the base or the remote's default branch, and when `gh` is missing or not signed in (it never signs you in). Each finished step is kept on the session, so after a failure **Retry** (or running the command again) continues from the failed step without a second commit or pull request, and an open pull request for the branch is reused. These commands use your own Git config, SSH agent and gh sign-in, with hooks and prompts off; no model is called.
+
 ## 0.17.1 — 2026-11-18
 
 ### Fixed
