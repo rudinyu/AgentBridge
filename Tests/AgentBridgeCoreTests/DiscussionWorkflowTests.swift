@@ -487,6 +487,45 @@ final class DiscussionWorkflowTests: XCTestCase {
         XCTAssertEqual(session.policy.accessMode, .interactiveManualApproval)
     }
 
+    func testLocalHandoffCanCreateIsolatedChangesSessionInAPIModeButNotInteractive() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let destination = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+            .appendingPathComponent("AgentBridge-Discussion-Local-Changes-\(UUID().uuidString.lowercased())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let localProfileID = AccountProfile.defaultID(for: .local)
+        let discussion = try fixture.service.createDiscussion(provider: .codex)
+        var settings = try fixture.service.settings()
+        settings.usageMode = .api
+        try fixture.service.saveSettings(settings)
+
+        do {
+            _ = try await fixture.service.prepareDiscussionProjectHandoff(
+                discussionID: discussion.id, destinationPath: destination.path, mode: .createNew,
+                targetProvider: .local, targetProfileID: localProfileID, selectedTurnIDs: [],
+                accessMode: .interactiveManualApproval
+            )
+            XCTFail("Local handoffs must refuse interactive Terminal.")
+        } catch let error as AgentBridgeError {
+            guard case .sessionMismatch = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+
+        let handoff = try await fixture.service.prepareDiscussionProjectHandoff(
+            discussionID: discussion.id, destinationPath: destination.path, mode: .createNew,
+            targetProvider: .local, targetProfileID: localProfileID, selectedTurnIDs: [],
+            accessMode: .isolatedChanges
+        )
+        let session = try await fixture.service.createOrAttachProjectFromDiscussion(
+            handoffID: handoff.id, reviewedDigest: handoff.reviewedDigest, explicitConfirmation: true
+        )
+
+        XCTAssertEqual(session.provider, .local)
+        XCTAssertEqual(session.accountProfileID, localProfileID)
+        XCTAssertEqual(session.policy.accessMode, .isolatedChanges)
+        XCTAssertEqual(try fixture.service.settings().usageMode, .api)
+    }
+
     func testRemovingAChatDeletesItButKeepsTheProjectSessionMadeFromIt() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

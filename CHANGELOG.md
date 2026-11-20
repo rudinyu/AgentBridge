@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Local models can now make plan-approved changes in an isolated project session without provider tools or a native terminal. In **Changes**, select complete UTF-8 workspace files and explicitly listed new paths, preview the bounded input, and review the resulting diff. The response must be one strict JSON object; every operation is validated before atomic writes with rollback on failure. The feature supports repair after a failed verification and the same flow is available in the CLI with file selection and a no-send preview. Because the model returns each changed file in full, the preview also checks the output reserve (every selected file in full plus a small allowance per file entry and for the summary), and a run that cannot fit is refused before contacting the model. A fix adds the changed files that can be sent and lists the ones it leaves out (binary, over 256 KiB, ignored or not selectable), which the model cannot change that round. Verification and acceptance are reset only when a run writes to the workspace, so a fix that fails without writing can be approved and tried again. Previews do not hold the session's run lock and wait for a pause in typing, so they never block a run. Local sessions may use isolated changes in subscription or Claude API usage mode. The English and Traditional Chinese interfaces and guides describe the path, schema and limits.
+
 ### Fixed
 
 - Settings saved from the CLI, or from another AgentBridge window, while the App was open were overwritten the next time the App saved any setting, because the App wrote back its whole in-memory copy. For example, a Local model set up with `agentbridge local configure` went back to the default Ollama settings after the provider was changed in the App. The App and the CLI now change only the setting being saved, on top of the latest saved settings, under one lock. A Local model draft you have typed but not saved stays in the form and is no longer saved by another change, and CLI paths are written only when you edited them.

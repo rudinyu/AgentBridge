@@ -203,7 +203,7 @@ struct DiscussionHandoffReviewView: View {
                 }
                 .onChange(of: targetProvider) { previous, provider in
                     targetProfileID = model.chats.preferredDiscussionProfileID(for: provider)
-                    // Local allows only read-only; leaving it restores the default.
+                    // Local defaults to read-only; leaving it restores the provider default.
                     if provider == .local || previous == .local {
                         accessMode = Self.defaultAccessMode(for: provider, usageMode: model.settings.usageMode)
                     }
@@ -224,7 +224,12 @@ struct DiscussionHandoffReviewView: View {
                 }
                 .disabled(targetProfiles.isEmpty)
                 if targetProvider == .local {
-                    Label("Local project chat is read-only.", systemImage: "lock.fill")
+                    Picker("Session access", selection: $accessMode) {
+                        Text("Isolated changes · review and explicit approval required").tag(AccessMode.isolatedChanges)
+                        Text("Read-only").tag(AccessMode.readOnly)
+                    }
+                    .onChange(of: accessMode) { _, _ in clearPreview() }
+                    Label("Local supports read-only chat and plan-approved isolated changes. Interactive Terminal, autonomy, Skills, and MCP are unavailable.", systemImage: "lock.fill")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     Picker("Session access", selection: $accessMode) {
@@ -245,8 +250,11 @@ struct DiscussionHandoffReviewView: View {
 
     @ViewBuilder
     private var sessionAccessNotice: some View {
-        if targetProvider == .local {
+        if targetProvider == .local && accessMode == .readOnly {
             Label("Read-only session · local model", systemImage: "desktopcomputer")
+                .font(.caption).foregroundStyle(.secondary)
+        } else if targetProvider == .local {
+            Label("Each change run will require an editable plan and your explicit approval. No autonomous workflow is started.", systemImage: "checkmark.shield")
                 .font(.caption).foregroundStyle(.secondary)
         } else if accessMode == .readOnly && targetProvider == .claude && model.settings.usageMode == .api {
             Label("Claude API runs stay behind the existing budget and explicit confirmation controls. This handoff does not call the provider.", systemImage: "exclamationmark.triangle")

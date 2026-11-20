@@ -10,7 +10,7 @@ The supported protocols are Ollama's native chat API and an OpenAI-compatible lo
 
 Only loopback endpoints are accepted. Remote hosts, URL credentials, redirects and implicit HTTP proxies are refused. Ollama cloud-model names and reported remote-model metadata are rejected. AgentBridge's network boundary covers its connection to the local service; the operator of that service remains responsible for its own routing. To disable Ollama's cloud features at the server level, see its official FAQ rather than changing global server settings from AgentBridge.
 
-Local currently supports project-independent discussions and read-only project conversations. A read-only local conversation receives approved App-owned context; it does not gain filesystem or command tools simply because a project is selected. Isolated edits, native CLI terminals, autonomous workflow roles, active Skills/MCP and desktop control require separate tool runtimes and are unavailable for Local in this version.
+Local supports project-independent discussions, read-only project conversations, and plan-approved isolated changes. A read-only local conversation receives approved App-owned context; it does not gain filesystem or command tools simply because a project is selected. Local change sessions send only the approved plan, the user's request, selected complete file contents, and explicitly listed new paths to the loopback model. The model receives no tools and never runs commands. Native CLI terminals, autonomous workflow roles, active Skills/MCP and desktop control remain unavailable for Local.
 
 ## Configure and use
 
@@ -34,6 +34,34 @@ agentbridge chat send CHAT-ID < prompt.txt
 ```
 
 For a compatible server, select `--backend openai-compatible` and its service root, such as `http://127.0.0.1:1234/v1`. `local preview project SESSION-ID` previews a read-only project's composed input. Configuration and previews do not start inference; `chat send` or a project run does.
+
+## Local patch mode
+
+Local isolated changes work with either subscription or Claude API usage mode. Create a project session with **Isolated changes** access; Local does not offer a native interactive terminal. The first **Draft plan** request sends the user request and the workspace's candidate path list, not file contents. Review and save that plan, then explicitly approve it before running. Local change runs do not include shared memory.
+
+In **Changes**, select existing candidate files, add any new relative paths, enter the change request and inspect the byte-count preview before running. The preview includes the exact prompt size and the input budget: the configured context window minus its output reserve and 512-token margin, using one byte per token, capped at 2 MiB. Requests and plan drafts are limited to 8 KiB; fix notes have the same limit. A fix run also includes only the last 12 KiB of failed verification output. Input that exceeds the calculated budget is refused before contacting the model. The model must return complete file contents, so the preview also estimates the output: every selected file in full, plus the path and 48 bytes for each file entry (new paths included) and 512 bytes for the summary and JSON wrapper. That estimate is checked against the output reserve (`maxOutputTokens`, one byte per token); a run that cannot fit is refused before contacting the model and recorded as `local.change.rejected` with `reason=output_over_budget`. Select fewer or smaller files, or raise the reserve with `agentbridge local configure --max-output N`. Previews and the candidate file list only read the workspace and do not hold the session's run lock, so a preview never blocks a run; the App waits for a short pause in typing before refreshing them and pauses them while the session runs.
+
+The model receives no tools and cannot run commands. Existing inputs must be regular UTF-8 files inside the isolated workspace, tracked or untracked but not Git-ignored, with no symlinks; each file is limited to 256 KiB. The model may return at most 200 file operations, each path must be selected or explicitly listed as new, each output file is limited to 256 KiB, all output contents together are limited to 1 MiB, and the complete JSON response is limited to 2 MiB. Paths are relative; absolute paths, empty components, dot/dot-dot components, controls and .git components are rejected. All operations are validated before writing. Writes use temporary files and rollback if any write fails.
+
+The response must be exactly one JSON object with summary and files, with no prose, markdown fence or diff:
+
+~~~json
+{"summary":"what changed","files":[{"path":"relative/path","action":"modify|create|delete","content":"full new file content"}]}
+~~~
+
+Each file entry contains only path, action and content. Modify and create require the complete new UTF-8 content. Delete omits content or uses null. The App shows the result as a diff for review. A failed verification exposes **Fix with Local model** and an optional note; it does not run verification itself. A fix adds the files changed in the workspace only when they are selectable candidates under the same rules as the file list; the others (binary, over 256 KiB, Git-ignored or not listed) are reported as left out and cannot be modified in that round, while a file you select explicitly must still be selectable. Every fix run consumes the current plan approval, so approve the reviewed plan again before the next run. Verification and acceptance are reset only when a run writes to the workspace; a run that writes nothing keeps them, so a failed fix can be approved and tried again.
+
+The CLI accepts the same flow:
+
+~~~sh
+agentbridge session create --provider local --repo /path/to/repo --changes
+printf '%s' 'Handle the new file format.' | agentbridge changes draft SESSION-ID
+agentbridge changes plan SESSION-ID --title 'Update parser' --summary 'Support the new format.' --step 'Update decoding'
+printf '%s\n' 'APPROVE REVIEW_DIGEST' | agentbridge changes approve SESSION-ID PLAN-ID REVIEW_DIGEST
+printf '%s' 'Implement the approved plan.' | agentbridge changes run SESSION-ID PLAN-ID REVIEW_DIGEST --file Sources/Parser.swift --new-file Sources/NewFormat.swift --preview
+~~~
+
+Repeat the final command without --preview to run it. For a fix, pass failed verification output on standard input to agentbridge changes fix SESSION-ID; optional --file and --new-file flags choose additional inputs, --note supplies the bounded note, and --command/--exit-code identify the failed check. Preview and plan approval are required before model writes; local output is never passed to Codex or Claude.
 
 ## Guided Ollama setup
 

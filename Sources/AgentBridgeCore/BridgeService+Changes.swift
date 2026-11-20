@@ -9,14 +9,13 @@ extension BridgeService {
         steps: [String],
         includesSharedMemory: Bool = false
     ) throws -> ChangePlan {
-        let initialSession = try loadSession(sessionID)
-        guard initialSession.provider != .local else {
-            throw AgentBridgeError.sessionMismatch("Local models do not support isolated changes or work plans yet.")
-        }
         let lease = try store.acquireRunLease(for: sessionID)
         defer { withExtendedLifetime(lease) {} }
         var session = try loadSession(sessionID)
         try requireIsolatedChangesSession(session)
+        guard session.provider != .local || !includesSharedMemory else {
+            throw AgentBridgeError.invalidChangePlan("A Local change plan cannot include shared memory.")
+        }
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSteps = steps.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -220,7 +219,7 @@ extension BridgeService {
     }
 
     func requireIsolatedChangesSession(_ session: SessionRecord) throws {
-        guard session.provider == .codex || session.provider == .claude,
+        guard session.provider == .codex || session.provider == .claude || session.provider == .local,
               session.policy.accessMode == .isolatedChanges,
               !session.policy.workspaceReadOnly else {
             throw AgentBridgeError.sessionMismatch("Create an isolated-change session; read-only and native interactive sessions do not run this operation.")

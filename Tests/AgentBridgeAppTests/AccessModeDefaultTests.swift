@@ -17,10 +17,24 @@ final class AccessModeDefaultTests: XCTestCase {
         model.settings.defaultProvider = .local
         model.applyAccessModeLimits()
         XCTAssertEqual(model.requestedAccessMode, .readOnly)
+        model.applyAccessModeLimits()
+        XCTAssertEqual(model.requestedAccessMode, .readOnly)
 
         model.settings.defaultProvider = .codex
         model.applyAccessModeLimits()
         XCTAssertEqual(model.requestedAccessMode, .interactiveManualApproval)
+    }
+
+    func testLocalIsolatedChangesSelectionSurvivesSettingsPersistenceAndRefresh() throws {
+        let model = try makeTestAppModel()
+        model.settings.defaultProvider = .local
+        model.applyAccessModeLimits()
+        model.setRequestedAccessMode(.isolatedChanges)
+
+        try model.persistSettings { $0.defaultProvider = .local }
+        model.applyAccessModeLimits()
+
+        XCTAssertEqual(model.requestedAccessMode, .isolatedChanges)
     }
 
     func testClaudeAPIModeLimitsItToReadOnlyUntilSubscriptionModeIsBack() throws {
@@ -37,11 +51,11 @@ final class AccessModeDefaultTests: XCTestCase {
 
     func testAModeTheUserChoseIsKept() throws {
         let model = try makeTestAppModel()
-        model.requestedAccessMode = .readOnly
+        model.setRequestedAccessMode(.readOnly)
         model.applyAccessModeLimits()
         XCTAssertEqual(model.requestedAccessMode, .readOnly)
 
-        model.requestedAccessMode = .isolatedChanges
+        model.setRequestedAccessMode(.isolatedChanges)
         model.refresh()
         XCTAssertEqual(model.requestedAccessMode, .isolatedChanges)
     }

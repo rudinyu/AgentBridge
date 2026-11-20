@@ -22,7 +22,7 @@ AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登
 
 ## 快速開始
 
-選 **Local** 可連到已啟動的 Ollama 或 OpenAI 相容本機回送服務，不需要雲端 API key。Local 支援討論與唯讀專案對話，本機模型的修改／工具執行尚未提供。上下文壓縮保留可讀且有來源的段落與完整當前要求，可預覽；受保護內容放不下時會停止送出。詳見[本機模型指南](docs/LOCAL_MODELS_AND_CONTEXT.zh-TW.md)。
+選 **Local** 可連到已啟動的 Ollama 或 OpenAI 相容本機回送服務，不需要雲端 API key。Local 支援討論、唯讀專案對話，以及經計畫核准的隔離變更。執行變更時，使用者選取要提供的檔案、檢視並核准計畫，再檢查產生的 diff；模型不會取得工具，也無法執行命令。上下文壓縮保留可讀且有來源的段落與完整當前要求，可預覽；受保護內容放不下時會停止送出。詳見[本機模型指南](docs/LOCAL_MODELS_AND_CONTEXT.zh-TW.md)。
 
 需求：macOS 14 或更新版本、Swift 6 與 Xcode toolchain。請先安裝並登入想使用的官方 provider CLI；登入由各 CLI 管理。SwiftTerm 1.20.0 以固定版本作為 App 內嵌終端的依賴，授權見 [LICENSES/SwiftTerm-LICENSE.txt](LICENSES/SwiftTerm-LICENSE.txt)。
 

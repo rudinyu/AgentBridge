@@ -279,7 +279,7 @@ struct MainWindowView: View {
                 .padding(14)
         case .autonomous:
             if model.isLocalProviderContext {
-                ContentUnavailableView("Not available for local models", systemImage: "desktopcomputer", description: Text("Local mode supports read-only project chat and discussion. Autonomy, write access, terminal, Skills, and MCP are unavailable for this local session."))
+                ContentUnavailableView("Not available for local models", systemImage: "desktopcomputer", description: Text("Local mode supports read-only chat and plan-approved isolated changes. Autonomy, terminal, Skills, and MCP are unavailable for this local session."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 AutonomousWorkflowView(model: model) { sessionID in

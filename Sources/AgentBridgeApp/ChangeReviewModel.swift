@@ -40,6 +40,27 @@ final class ChangeReviewModel {
     var changePlanIncludesSharedMemory = false
     var changeDiff: WorkspaceChangeDiff?
     var verificationResult: VerificationResult?
+    var localFileCandidates: [LocalChangeFileCandidate] = []
+    var localFileCandidatesError: String?
+    var isLoadingLocalFileCandidates = false
+    var selectedLocalPaths: Set<String> = []
+    var localFileSearchText = ""
+    var localNewFilePathsText = ""
+    var localFixNote = ""
+    var localChangePreview: LocalChangeInputPreview?
+    var localFixPreview: LocalChangeInputPreview?
+    var localChangePreviewError: String?
+    var localFixPreviewError: String?
+    var localChangeResult: LocalChangeRunResult?
+    var isLoadingLocalChangePreview = false
+    var isLoadingLocalFixPreview = false
+    @ObservationIgnored private var localChangePreviewRevision = 0
+    @ObservationIgnored private var localFixPreviewRevision = 0
+    /// Preview refreshes wait for a short pause in typing, and a newer refresh,
+    /// a run or a fix supersedes one in flight.
+    @ObservationIgnored let localPreviewDebouncer = DebouncedTask(delayNanoseconds: 300_000_000)
+    @ObservationIgnored private var localFileCandidatesRevision = 0
+    @ObservationIgnored private var localFileCandidatesTask: Task<Void, Never>?
     var branchName = ""
     var customVerifierPath = ""
     var customVerifierArgumentsText = ""
@@ -120,6 +141,223 @@ final class ChangeReviewModel {
             changePlanSummary = ""
             changePlanStepsText = ""
             changePlanIncludesSharedMemory = false
+        }
+        selectedLocalPaths = []
+        localNewFilePathsText = ""
+        localFixNote = ""
+        localChangePreviewRevision += 1
+        localFixPreviewRevision += 1
+        localChangePreview = nil
+        localFixPreview = nil
+        localChangePreviewError = nil
+        localFixPreviewError = nil
+        localChangeResult = nil
+        isLoadingLocalChangePreview = false
+        isLoadingLocalFixPreview = false
+        localFileCandidates = []
+        reloadLocalFileCandidates()
+    }
+
+    func reloadLocalFileCandidates() {
+        localFileCandidatesRevision += 1
+        let candidatesRevision = localFileCandidatesRevision
+        localFileCandidatesTask?.cancel()
+        localFileCandidatesTask = nil
+        localFileCandidatesError = nil
+        isLoadingLocalFileCandidates = false
+        if let session = app.selectedSession, session.provider == .local, session.policy.accessMode == .isolatedChanges {
+            isLoadingLocalFileCandidates = true
+            localFileCandidatesTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Selecting an isolated-changes session also starts an initial
+                // diff load; let that read finish before fetching the picker's
+                // file list so the list matches the diff shown.
+                while self.app.changeDiffLoadsInFlight.contains(session.id) {
+                    guard !Task.isCancelled,
+                          self.localFileCandidatesRevision == candidatesRevision,
+                          self.app.selectedSessionID == session.id else { return }
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                }
+                guard !Task.isCancelled,
+                      self.localFileCandidatesRevision == candidatesRevision,
+                      self.app.selectedSessionID == session.id,
+                      let service = self.app.service else { return }
+                do {
+                    let candidates = try await service.localChangeFileCandidates(sessionID: session.id)
+                    guard !Task.isCancelled,
+                          self.localFileCandidatesRevision == candidatesRevision,
+                          self.app.selectedSessionID == session.id else { return }
+                    self.localFileCandidates = candidates
+                    self.localFileCandidatesError = nil
+                    self.isLoadingLocalFileCandidates = false
+                    self.refreshLocalPreviews()
+                } catch {
+                    guard !Task.isCancelled,
+                          self.localFileCandidatesRevision == candidatesRevision,
+                          self.app.selectedSessionID == session.id else { return }
+                    self.localFileCandidatesError = error.localizedDescription
+                    self.isLoadingLocalFileCandidates = false
+                }
+            }
+        }
+    }
+
+    var localNewFilePaths: [String] {
+        localNewFilePathsText.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    var filteredLocalFileCandidates: [LocalChangeFileCandidate] {
+        let query = localFileSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return localFileCandidates }
+        return localFileCandidates.filter { $0.path.localizedCaseInsensitiveContains(query) }
+    }
+
+    /// A Local run or fix is in progress for the shown session, so previews wait
+    /// for it to finish instead of reporting what the run is changing.
+    var localPreviewIsPaused: Bool {
+        guard let session = app.selectedSession, session.provider == .local else { return false }
+        return app.selectedSessionIsRunning
+    }
+
+    func refreshLocalPreviews() {
+        localChangePreviewRevision += 1
+        localFixPreviewRevision += 1
+        let changeRevision = localChangePreviewRevision
+        let fixRevision = localFixPreviewRevision
+        localChangePreview = nil
+        localFixPreview = nil
+        localChangePreviewError = nil
+        localFixPreviewError = nil
+        isLoadingLocalFixPreview = false
+        guard !localPreviewIsPaused else {
+            localPreviewDebouncer.cancel()
+            isLoadingLocalChangePreview = false
+            return
+        }
+        isLoadingLocalChangePreview = true
+        localPreviewDebouncer.schedule { [weak self] isCurrent in
+            guard let self, isCurrent(),
+                  self.localChangePreviewRevision == changeRevision,
+                  self.localFixPreviewRevision == fixRevision else { return }
+            await self.loadLocalPreview(forFix: false, revision: changeRevision)
+            guard isCurrent(),
+                  self.localChangePreviewRevision == changeRevision,
+                  self.localFixPreviewRevision == fixRevision else { return }
+            await self.loadLocalPreview(forFix: true, revision: fixRevision)
+        }
+    }
+
+    /// Called when a Local run or fix starts: any preview in flight is dropped,
+    /// and the previews shown so far stay until the run refreshes them.
+    func cancelLocalPreviews() {
+        localPreviewDebouncer.cancel()
+        localChangePreviewRevision += 1
+        localFixPreviewRevision += 1
+        isLoadingLocalChangePreview = false
+        isLoadingLocalFixPreview = false
+    }
+
+    private func loadLocalPreview(forFix: Bool, revision: Int) async {
+        guard let service = app.service, let session = app.selectedSession,
+              session.provider == .local, let plan = session.changePlan,
+              session.approvedChangePlanDigest == plan.reviewDigest else {
+            if forFix {
+                localFixPreview = nil
+                localFixPreviewError = nil
+                isLoadingLocalFixPreview = false
+            } else {
+                localChangePreview = nil
+                localChangePreviewError = nil
+                isLoadingLocalChangePreview = false
+            }
+            return
+        }
+        let failure: LocalHelperVerificationFailure?
+        if forFix, session.verificationPassed == false,
+           let result = verificationResult, !result.succeeded, !result.wasCancelled, result.skippedReason == nil {
+            failure = LocalHelperVerificationFailure(result: result, workspacePath: session.workspacePath)
+        } else {
+            failure = nil
+        }
+        guard !forFix || failure != nil else {
+            localFixPreview = nil
+            localFixPreviewError = nil
+            isLoadingLocalFixPreview = false
+            return
+        }
+        if forFix {
+            localFixPreview = nil
+            localFixPreviewError = nil
+            isLoadingLocalFixPreview = true
+        } else {
+            localChangePreview = nil
+            localChangePreviewError = nil
+            isLoadingLocalChangePreview = true
+        }
+        let selected = selectedLocalPaths.sorted()
+        while app.changeDiffLoadsInFlight.contains(session.id) {
+            let isCurrent = forFix
+                ? revision == localFixPreviewRevision
+                : revision == localChangePreviewRevision
+            guard isCurrent else { return }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        let isCurrent = forFix
+            ? revision == localFixPreviewRevision
+            : revision == localChangePreviewRevision
+        guard isCurrent else { return }
+        do {
+            // A fix preview lets Core add the changed files exactly as the fix run
+            // does, skipping the ones that cannot be sent, so both agree.
+            let preview: LocalChangeInputPreview
+            if forFix, let failure {
+                preview = try await service.previewLocalFixInput(
+                    sessionID: session.id,
+                    failure: failure,
+                    note: localFixNote,
+                    filePaths: selected,
+                    newFilePaths: localNewFilePaths
+                )
+            } else {
+                preview = try await service.previewLocalChangeInput(
+                    sessionID: session.id,
+                    planID: plan.id,
+                    reviewedDigest: plan.reviewDigest,
+                    request: app.prompt,
+                    filePaths: selected,
+                    newFilePaths: localNewFilePaths
+                )
+            }
+            let isCurrent = forFix
+                ? revision == localFixPreviewRevision
+                : revision == localChangePreviewRevision
+            guard isCurrent else { return }
+            if forFix {
+                localFixPreview = preview
+                isLoadingLocalFixPreview = false
+            } else {
+                localChangePreview = preview
+                isLoadingLocalChangePreview = false
+            }
+        } catch {
+            let isCurrent = forFix
+                ? revision == localFixPreviewRevision
+                : revision == localChangePreviewRevision
+            guard isCurrent else { return }
+            // A run that started meanwhile explains any failure; the panel shows
+            // the neutral paused note instead of an error.
+            let message = localPreviewIsPaused ? nil : error.localizedDescription
+            if forFix {
+                localFixPreview = nil
+                localFixPreviewError = message
+                isLoadingLocalFixPreview = false
+            } else {
+                localChangePreview = nil
+                localChangePreviewError = message
+                isLoadingLocalChangePreview = false
+            }
         }
     }
 
@@ -204,6 +442,7 @@ final class ChangeReviewModel {
             changePlanStepsText = plan.steps.joined(separator: "\n")
             app.status = "The plan was saved as awaiting review; writes are not authorized yet."
             app.refresh()
+            if session.provider == .local { refreshLocalPreviews() }
         } catch {
             app.errorMessage = error.localizedDescription
         }
@@ -226,6 +465,7 @@ final class ChangeReviewModel {
             _ = try service.approveChangePlan(sessionID: session.id, planID: plan.id, reviewedDigest: plan.reviewDigest)
             app.status = "Explicitly approved the plan shown; you can now run isolated changes."
             app.refresh()
+            if session.provider == .local { refreshLocalPreviews() }
         } catch {
             app.errorMessage = error.localizedDescription
         }

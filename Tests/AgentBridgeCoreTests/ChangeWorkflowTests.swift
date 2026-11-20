@@ -1243,7 +1243,7 @@ final class ChangeWorkflowTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: mock.arguments.path))
     }
 
-    func testDraftingIsRefusedForLocalModelsAPIModeAndReadOnlySessions() async throws {
+    func testDraftingRequiresAnIsolatedSessionAndCodexSubscriptionMode() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let mock = try installMockCodex(fixture, agentText: Self.validDraftJSON)
@@ -1252,7 +1252,7 @@ final class ChangeWorkflowTests: XCTestCase {
             _ = try await fixture.service.draftChangePlan(sessionID: local.id, request: "Plan it.")
             XCTFail("A local-model session drafted a plan.")
         } catch let error as AgentBridgeError {
-            guard case .sessionMismatch(let message) = error, message.contains("Local models") else {
+            guard case .sessionMismatch(let message) = error, message.contains("isolated-change session") else {
                 return XCTFail("Unexpected error: \(error)")
             }
         }

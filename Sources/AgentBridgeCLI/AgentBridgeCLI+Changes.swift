@@ -5,7 +5,7 @@ import AgentBridgeCore
 extension AgentBridgeCLI {
     static func changesCommand(_ arguments: [String], service: BridgeService) async throws {
         guard let action = arguments.first else {
-            throw AgentBridgeError.invalidInput("Usage: agentbridge changes draft|plan|approve|run|diff|restore|restore-all|export|verify|accept|apply|pr|explain|summarize ...")
+            throw AgentBridgeError.invalidInput("Usage: agentbridge changes draft|plan|approve|run|fix|diff|restore|restore-all|export|verify|accept|apply|pr|explain|summarize ...")
         }
         switch action {
         case "draft":
@@ -16,6 +16,8 @@ extension AgentBridgeCLI {
             try await changesApprove(arguments, service: service)
         case "run":
             try await changesRun(arguments, service: service)
+        case "fix":
+            try await changesFix(arguments, service: service)
         case "diff":
             guard arguments.count == 2, let sessionID = UUID(uuidString: arguments[1]) else {
                 throw AgentBridgeError.invalidInput("Usage: agentbridge changes diff SESSION-ID")
@@ -387,9 +389,60 @@ extension AgentBridgeCLI {
     }
 
     static func changesRun(_ arguments: [String], service: BridgeService) async throws {
-        guard arguments.count == 4,
+        guard arguments.count >= 4,
               let sessionID = UUID(uuidString: arguments[1]),
               let planID = UUID(uuidString: arguments[2]) else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge changes run SESSION-ID PLAN-ID REVIEW-DIGEST [--file PATH ...] [--new-file PATH ...] [--preview] < request.txt")
+        }
+        let session = try requireSession(sessionID, service: service)
+        if session.provider == .local {
+            var files: [String] = []
+            var newFiles: [String] = []
+            var previewOnly = false
+            var index = 4
+            while index < arguments.count {
+                let option = arguments[index]
+                index += 1
+                switch option {
+                case "--file": files.append(try nextOptionValue(option, arguments: arguments, index: &index))
+                case "--new-file": newFiles.append(try nextOptionValue(option, arguments: arguments, index: &index))
+                case "--preview": previewOnly = true
+                default: throw AgentBridgeError.invalidInput("Unknown Local changes run option \(option).")
+                }
+            }
+            let request = try readBoundedStandardInput(maximumBytes: 8_000, label: "Change request")
+            let digest = arguments[3].lowercased()
+            if previewOnly {
+                let preview = try await service.previewLocalChangeInput(
+                    sessionID: sessionID,
+                    planID: planID,
+                    reviewedDigest: digest,
+                    request: request,
+                    filePaths: files,
+                    newFilePaths: newFiles
+                )
+                printLocalChangePreview(preview)
+                return
+            }
+            let cancellation = CancellationFlag()
+            let signalSources = makeCancellationSignalSources(cancellation)
+            defer { signalSources.forEach { $0.cancel() } }
+            let result = try await service.runLocalChanges(
+                sessionID: sessionID,
+                request: request,
+                planID: planID,
+                reviewedDigest: digest,
+                filePaths: files,
+                newFilePaths: newFiles,
+                cancellation: cancellation
+            ) { progress in
+                FileHandle.standardError.write(Data("• \(OutputRedactor.redact(progress))\n".utf8))
+            }
+            print("Local model summary: \(OutputRedactor.redact(result.summary))")
+            result.changedPaths.forEach { print("  \($0)") }
+            return
+        }
+        guard arguments.count == 4 else {
             throw AgentBridgeError.invalidInput("Usage: agentbridge changes run SESSION-ID PLAN-ID REVIEW-DIGEST < prompt.txt")
         }
         let prompt = try readPromptFromStandardInput(maximumBytes: 256_000)
@@ -406,6 +459,75 @@ extension AgentBridgeCLI {
             FileHandle.standardError.write(Data("• \(OutputRedactor.redact(progress))\n".utf8))
         }
         FileHandle.standardOutput.write(Data((OutputRedactor.redact(output.text) + "\n").utf8))
+    }
+
+    static func changesFix(_ arguments: [String], service: BridgeService) async throws {
+        guard arguments.count >= 2, let sessionID = UUID(uuidString: arguments[1]) else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge changes fix SESSION-ID [--file PATH ...] [--new-file PATH ...] [--command LABEL] [--exit-code N] [--note TEXT] < verification-output.txt")
+        }
+        var files: [String] = []
+        var newFiles: [String] = []
+        var command = ".codex/ci.sh"
+        var exitCode: Int32?
+        var note = ""
+        var index = 2
+        while index < arguments.count {
+            let option = arguments[index]
+            index += 1
+            switch option {
+            case "--file": files.append(try nextOptionValue(option, arguments: arguments, index: &index))
+            case "--new-file": newFiles.append(try nextOptionValue(option, arguments: arguments, index: &index))
+            case "--command": command = try nextOptionValue(option, arguments: arguments, index: &index)
+            case "--exit-code":
+                guard let value = Int32(try nextOptionValue(option, arguments: arguments, index: &index)) else {
+                    throw AgentBridgeError.invalidInput("--exit-code needs an integer.")
+                }
+                exitCode = value
+            case "--note": note = try nextOptionValue(option, arguments: arguments, index: &index)
+            default: throw AgentBridgeError.invalidInput("Unknown changes fix option \(option).")
+            }
+        }
+        let output = try readBoundedStandardInput(maximumBytes: 2 * 1_024 * 1_024, label: "Verification output")
+        guard !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AgentBridgeError.invalidInput("Pipe the failed verification output to standard input, as for `changes explain`.")
+        }
+        let failure = LocalHelperVerificationFailure(commandLabel: command, exitCode: exitCode, output: output)
+        let cancellation = CancellationFlag()
+        let signalSources = makeCancellationSignalSources(cancellation)
+        defer { signalSources.forEach { $0.cancel() } }
+        let result = try await service.fixLocalChanges(
+            sessionID: sessionID,
+            failure: failure,
+            note: note,
+            filePaths: files,
+            newFilePaths: newFiles,
+            cancellation: cancellation
+        ) { progress in
+            FileHandle.standardError.write(Data("• \(OutputRedactor.redact(progress))\n".utf8))
+        }
+        print("Local model summary: \(OutputRedactor.redact(result.summary))")
+        result.changedPaths.forEach { print("  \($0)") }
+        printSkippedChangedPaths(result.skippedChangedPaths)
+    }
+
+    private static func printLocalChangePreview(_ preview: LocalChangeInputPreview) {
+        print("Local model input: \(preview.totalInputBytes) / \(preview.budgetBytes) bytes")
+        for file in preview.files {
+            print("  \(file.byteCount) bytes  \(file.path)")
+        }
+        print("Output reserve: up to \(preview.estimatedOutputBytes) / \(preview.outputBudgetBytes) bytes (selected files returned in full)")
+        printSkippedChangedPaths(preview.skippedChangedPaths)
+        if preview.overBudgetBytes > 0 { print("Over budget by \(preview.overBudgetBytes) bytes; nothing was sent.") }
+        if preview.overOutputBudgetBytes > 0 {
+            print("Output reserve short by \(preview.overOutputBudgetBytes) bytes; nothing was sent. Select fewer or smaller files, or raise it with `agentbridge local configure --max-output N`.")
+        }
+        if preview.fitsAllBudgets { print("Within budget; nothing was sent.") }
+    }
+
+    private static func printSkippedChangedPaths(_ paths: [String]) {
+        guard !paths.isEmpty else { return }
+        print("Changed files left out (binary, over 256 KiB, ignored or not selectable; not modifiable this round):")
+        paths.forEach { print("  \($0)") }
     }
 
     static func changesVerify(_ arguments: [String], service: BridgeService) async throws {

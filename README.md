@@ -22,7 +22,7 @@ Start with **New Chat** to discuss an idea without a Git repository. When ready,
 
 ## Quick start
 
-Choose **Local** to connect to an existing Ollama or OpenAI-compatible loopback server without a cloud API key. Local supports discussions and read-only project conversations; local edit/tool execution is unavailable. Context compression keeps readable attributed passages and the complete current request, with a preview and a safe refusal when protected content cannot fit. See the [local-model guide](docs/LOCAL_MODELS_AND_CONTEXT.md).
+Choose **Local** to connect to an existing Ollama or OpenAI-compatible loopback server without a cloud API key. Local supports discussions, read-only project conversations, and plan-approved isolated changes. For a change run, select the files to provide, review and approve a plan, then review the generated diff; the model receives no tools and cannot run commands. Context compression keeps readable attributed passages and the complete current request, with a preview and a safe refusal when protected content cannot fit. See the [local-model guide](docs/LOCAL_MODELS_AND_CONTEXT.md).
 
 Requirements: macOS 14 or later, Swift 6, and an Xcode toolchain. Install and sign in to the official provider CLI you intend to use; each CLI manages its own login. The app's embedded terminal uses the pinned SwiftTerm 1.20.0 dependency. See [LICENSES/SwiftTerm-LICENSE.txt](LICENSES/SwiftTerm-LICENSE.txt) for its license.
 

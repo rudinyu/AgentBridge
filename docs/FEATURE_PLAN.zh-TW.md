@@ -12,7 +12,7 @@
 
 ### 本次新增 — AgentBridge 0.10.0
 
-新增明確連到本機回送位址的 Local 供應商，支援 Ollama 與相容服務，以及受管理對話共用的可讀上下文壓縮。首版聊天／唯讀範圍包含模型清單、上下文與輸出上限、取消、用量區分及上下文預覽。Local 的工具、隔離修改與自主角色尚未提供；受保護內容放不下時停止要求，不默默遺失。詳見[本機模型與上下文](LOCAL_MODELS_AND_CONTEXT.zh-TW.md)。
+新增明確連到本機回送位址的 Local 供應商，支援 Ollama 與相容服務，以及受管理對話共用的可讀上下文壓縮。模型清單、上下文與輸出上限、取消、用量區分及上下文預覽都是 Local 供應商的一部分。Local 支援唯讀對話及經明確核准計畫與嚴格路徑／內容驗證後的選檔隔離 patch；不提供工具或自主角色。受保護內容放不下時停止要求，不默默遺失。詳見[本機模型與上下文](LOCAL_MODELS_AND_CONTEXT.zh-TW.md)。
 
 ### 前版新增 — AgentBridge 0.9.0
 
@@ -53,7 +53,7 @@ MUST-10 尚未完成使用者自訂提醒門檻，以及選擇高用量門檻後
 
 以下優先順序參考 Codex、Claude Code、Cursor 和 Google Antigravity 的官方文件。摘要列出本機優先實作狀態；雲端執行與啟用 provider extension 不在此版本範圍。
 
-1. **P0 — 安全修改與交付流程（MUST-03 至 MUST-05、MUST-07）。已實作。** 唯讀為預設。隔離變更工作階段只支援訂閱模式，且寫檔前必須明確核准可審查計畫；可檢視完整逐檔 diff、還原檔案、匯出 patch，或只在目前 diff 通過驗證後接受／套用。套用前檢查來源 base commit，並在具名本機 branch 建立未提交工作樹；不會自動 commit、push 或 merge。
+1. **P0 — 安全修改與交付流程（MUST-03 至 MUST-05、MUST-07）。已實作。** 唯讀為預設。Codex 與 Claude 的隔離變更工作階段使用訂閱模式，且寫檔前必須明確核准可審查計畫。Local 可在任一用量模式使用獨立、無工具的選檔 patch 流程；寫入前會驗證固定 JSON schema、有界 UTF-8 檔案內容與工作區相對路徑。可檢視完整逐檔 diff、還原檔案、匯出 patch，或只在目前 diff 通過驗證後接受／套用。套用前檢查來源 base commit，並在具名本機 branch 建立未提交工作樹；不會自動 commit、push 或 merge。
 2. **P0 — 活動與驗證（MUST-01、MUST-06、MUST-07）。已實作。** App 顯示排序後、已遮蔽的稽核事件及已啟動的任務記錄。驗證只在使用者啟動後執行，預設使用 `.codex/ci.sh`；自訂 executable 與獨立 argv 必須先明確核准。可呈現 provider CLI 實際回報的事件與驗證 executable、argv、工作目錄、退出狀態、耗時及可取得的遮蔽輸出；AgentBridge 不會宣稱 CLI 未提供的遙測資訊。
 3. **P1 — 專案記憶與明確交接（MUST-08）。已實作。** 同一 Repository 不同 commit 間的記憶延續，必須明確選取 App 記憶回合／備註，且目標綁定帳戶允許共享記憶。只有符合目標 commit 的交接會放入目標工作階段下一次 provider 提示，作為有界、標示不可信且包含來源／目標 provenance 的歷史 JSON。原生 TUI transcript 不會匯入。
 4. **P1 — 平行工作與受控擴充。以本機任務紀錄及惰性政策中繼資料實作。** 任務看板記錄實際啟動的操作、逐工作階段進度、核准狀態、取消及 diff／驗證參照。App 最多同時執行三個不同工作階段；CLI 也使用程序層級執行鎖，避免同一工作階段重複執行。Skills/MCP descriptor 只以惰性中繼資料匯入；明確的每專案授權只保存狹窄權限資料，不會啟用 extension、連接 MCP server 或執行安裝腳本。[Codex App](https://openai.com/index/introducing-the-codex-app/) · [Claude Code subagents／擴充功能](https://code.claude.com/docs/en/features-overview) · [Cursor Projects](https://cursor.com/docs/agent/projects) · [Antigravity 功能](https://antigravity.google/docs/features)

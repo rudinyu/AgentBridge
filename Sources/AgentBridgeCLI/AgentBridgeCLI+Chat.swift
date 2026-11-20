@@ -98,7 +98,7 @@ extension AgentBridgeCLI {
           agentbridge chat project apply HANDOFF-ID --digest REVIEW-DIGEST --confirm
 
         `chat new` needs a selected user data root but no Git repository. `chat send` reads the UTF-8 prompt from standard input only, up to \(DiscussionStore.maximumTextBytes) bytes; the prompt is never placed in process arguments. Turns are shareable for later shared context and handoffs by default, and `--share` is an explicit alias; `--no-share` keeps the turn in the chat transcript but excludes it from later context and handoffs. If the source or target account does not allow shared memory, that consent setting keeps the turn out of shared context. When a project preview omits `--turn` and `--no-context`, it selects every complete turn that satisfies the sharing consent; repeating `--turn` selects only the listed turns, and an ineligible turn makes the preview fail; `--no-context` explicitly transfers no turns and cannot be combined with `--turn`. `--access` defaults to read-only. A new project starts with an empty initial Git commit that contains no chat content; apply copies only the approved content listed in the preview into the destination session's AgentBridge memory, and the original chat is kept. No project is created or linked before the preview is done; apply needs the preview digest and `--confirm`. No remote Git call or push is made.
-        Codex and Claude chats use only the bound official CLI subscription sign-in; Local chats connect only to the explicitly configured local model. Local project sessions are always read-only. Chat has no API key or budget parameters and no API-credits fallback.
+        Codex and Claude chats use only the bound official CLI subscription sign-in; Local chats connect only to the explicitly configured local model. Local project sessions support read-only or plan-approved isolated changes, but never interactive Terminal. Chat has no API key or budget parameters and no API-credits fallback.
         `chat new --profile`, `chat target` and `project preview` can use a configured account of the matching provider; if `--profile` is omitted for a new chat, the provider's currently selected account is used.
         `chat new --model` and `--effort` choose the Codex or Claude model and reasoning effort for the chat; without them the defaults from `settings model` apply, and an empty value means the CLI default. They stay with the chat; `chat target` to another provider clears them. Local chats use the model from the local model settings.
 
@@ -313,8 +313,8 @@ extension AgentBridgeCLI {
         guard let mode, let destinationPath, let provider, let profileID else {
             throw AgentBridgeError.invalidInput("Specify --mode, --path, --provider and --profile.")
         }
-        guard provider != .local || accessMode == .readOnly else {
-            throw AgentBridgeError.invalidInput("Local project chat only supports read-only sessions.")
+        guard provider != .local || accessMode != .interactiveManualApproval else {
+            throw AgentBridgeError.invalidInput("Local sessions support read-only chat or isolated changes; interactive Terminal is unavailable.")
         }
         let handoff = try await service.prepareDiscussionProjectHandoff(
             discussionID: discussionID,
