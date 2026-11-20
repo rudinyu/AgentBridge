@@ -2148,6 +2148,11 @@
 "The Local change request must be text of up to 8,000 bytes." = "The Local change request must be text of up to 8,000 bytes.";
 "Verification output must be text no longer than 2 MiB, with a short command label." = "Verification output must be text no longer than 2 MiB, with a short command label.";
 "The Local model input is over budget by %@ bytes (total %@; budget %@)." = "The Local model input is over budget by %@ bytes (total %@; budget %@).";
+"Preview is paused while the session is running." = "Preview is paused while the session is running.";
+"Output reserve: up to %@ / %@ bytes" = "Output reserve: up to %@ / %@ bytes";
+"The output reserve is short by %@ bytes for returning the selected files in full. Select fewer or smaller files, or raise the output reserve." = "The output reserve is short by %@ bytes for returning the selected files in full. Select fewer or smaller files, or raise the output reserve.";
+"Changed files left out of this fix (binary, over 256 KiB, ignored or not selectable; the model cannot change them this round): %@" = "Changed files left out of this fix (binary, over 256 KiB, ignored or not selectable; the model cannot change them this round): %@";
+"The Local model may need %@ bytes to return the selected files in full, but the output reserve allows %@ bytes. Select fewer or smaller files, or raise the output reserve (agentbridge local configure --max-output N)." = "The Local model may need %@ bytes to return the selected files in full, but the output reserve allows %@ bytes. Select fewer or smaller files, or raise the output reserve (agentbridge local configure --max-output N).";
 "The Local model plan request is over budget by %@ bytes (total %@; budget %@)." = "The Local model plan request is over budget by %@ bytes (total %@; budget %@).";
 "Could not prepare the Local model request as UTF-8 text." = "Could not prepare the Local model request as UTF-8 text.";
 "The Local model response contains paths that were not selected or allowed: %@. Nothing was written." = "The Local model response contains paths that were not selected or allowed: %@. Nothing was written.";

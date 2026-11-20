@@ -507,6 +507,7 @@ extension AgentBridgeCLI {
         }
         print("Local model summary: \(OutputRedactor.redact(result.summary))")
         result.changedPaths.forEach { print("  \($0)") }
+        printSkippedChangedPaths(result.skippedChangedPaths)
     }
 
     private static func printLocalChangePreview(_ preview: LocalChangeInputPreview) {
@@ -514,8 +515,19 @@ extension AgentBridgeCLI {
         for file in preview.files {
             print("  \(file.byteCount) bytes  \(file.path)")
         }
+        print("Output reserve: up to \(preview.estimatedOutputBytes) / \(preview.outputBudgetBytes) bytes (selected files returned in full)")
+        printSkippedChangedPaths(preview.skippedChangedPaths)
         if preview.overBudgetBytes > 0 { print("Over budget by \(preview.overBudgetBytes) bytes; nothing was sent.") }
-        else { print("Within budget; nothing was sent.") }
+        if preview.overOutputBudgetBytes > 0 {
+            print("Output reserve short by \(preview.overOutputBudgetBytes) bytes; nothing was sent. Select fewer or smaller files, or raise it with `agentbridge local configure --max-output N`.")
+        }
+        if preview.fitsAllBudgets { print("Within budget; nothing was sent.") }
+    }
+
+    private static func printSkippedChangedPaths(_ paths: [String]) {
+        guard !paths.isEmpty else { return }
+        print("Changed files left out (binary, over 256 KiB, ignored or not selectable; not modifiable this round):")
+        paths.forEach { print("  \($0)") }
     }
 
     static func changesVerify(_ arguments: [String], service: BridgeService) async throws {

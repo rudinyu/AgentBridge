@@ -2148,6 +2148,11 @@
 "The Local change request must be text of up to 8,000 bytes." = "Local 變更要求必須是最多 8,000 位元組的文字。";
 "Verification output must be text no longer than 2 MiB, with a short command label." = "驗證輸出必須是長度不超過 2 MiB 的文字，並附上簡短的命令標籤。";
 "The Local model input is over budget by %@ bytes (total %@; budget %@)." = "Local 模型輸入超出預算 %@ 位元組（總計 %@；預算 %@）。";
+"Preview is paused while the session is running." = "工作階段執行期間會暫停預覽。";
+"Output reserve: up to %@ / %@ bytes" = "輸出保留量：最多 %@ / %@ 位元組";
+"The output reserve is short by %@ bytes for returning the selected files in full. Select fewer or smaller files, or raise the output reserve." = "輸出保留量不足 %@ 位元組，無法完整傳回所選檔案。請選取較少或較小的檔案，或提高輸出保留量。";
+"Changed files left out of this fix (binary, over 256 KiB, ignored or not selectable; the model cannot change them this round): %@" = "此次修正未納入的已變更檔案（二進位、超過 256 KiB、已忽略或無法選取；模型本輪無法變更這些檔案）：%@";
+"The Local model may need %@ bytes to return the selected files in full, but the output reserve allows %@ bytes. Select fewer or smaller files, or raise the output reserve (agentbridge local configure --max-output N)." = "Local 模型可能需要 %@ 位元組才能完整傳回所選檔案，但輸出保留量只允許 %@ 位元組。請選取較少或較小的檔案，或提高輸出保留量（agentbridge local configure --max-output N）。";
 "The Local model plan request is over budget by %@ bytes (total %@; budget %@)." = "Local 模型計畫要求超出預算 %@ 位元組（總計 %@；預算 %@）。";
 "Could not prepare the Local model request as UTF-8 text." = "無法將 Local 模型要求準備為 UTF-8 文字。";
 "The Local model response contains paths that were not selected or allowed: %@. Nothing was written." = "Local 模型回應包含未選取或不允許的路徑：%@。未寫入任何內容。";

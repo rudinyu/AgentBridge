@@ -169,18 +169,16 @@ extension MainWindowView {
                     .font(.system(.caption, design: .monospaced))
                     .frame(minHeight: 38, maxHeight: 70)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-                if let error = model.changes.localChangePreviewError {
+                if model.changes.localPreviewIsPaused {
+                    Text("Preview is paused while the session is running.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                } else if let error = model.changes.localChangePreviewError {
                     Text(model.localized(error)).font(.caption).foregroundStyle(.orange)
                 } else if model.changes.localChangePreview == nil {
                     Text("Approve the current plan and select files to preview the Local input budget.")
                         .font(.caption2).foregroundStyle(.secondary)
                 } else if let preview = model.changes.localChangePreview {
-                    Text(model.localizedFormat("Input: %@ / %@ bytes", String(preview.totalInputBytes), String(preview.budgetBytes)))
-                        .font(.caption.monospacedDigit())
-                    if preview.overBudgetBytes > 0 {
-                        Text(model.localizedFormat("Over budget by %@ bytes", String(preview.overBudgetBytes)))
-                            .font(.caption).foregroundStyle(.orange)
-                    }
+                    localChangeBudgetLines(preview)
                 }
                 TextEditor(text: $model.prompt)
                     .font(.system(.body, design: .rounded))
@@ -190,7 +188,7 @@ extension MainWindowView {
                 HStack {
                     Button("Generate changes with Local model") { model.runApprovedChanges() }
                         .buttonStyle(.borderedProminent)
-                        .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.changes.selectedLocalPaths.isEmpty && model.changes.localNewFilePaths.isEmpty) || !model.changes.selectedChangePlanDraftMatchesSaved || !model.changes.selectedChangePlanIsApproved || model.changes.localChangePreview?.fitsBudget != true)
+                        .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || model.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (model.changes.selectedLocalPaths.isEmpty && model.changes.localNewFilePaths.isEmpty) || !model.changes.selectedChangePlanDraftMatchesSaved || !model.changes.selectedChangePlanIsApproved || model.changes.localChangePreview?.fitsAllBudgets != true)
                     if model.selectedSessionIsRunning { Button("Cancel") { model.cancelSession(session.id) } }
                     if model.changes.isLoadingLocalChangePreview { ProgressView().controlSize(.small) }
                     Spacer()
@@ -200,6 +198,24 @@ extension MainWindowView {
         .onChange(of: model.changes.selectedLocalPaths) { _, _ in model.changes.refreshLocalPreviews() }
         .onChange(of: model.changes.localNewFilePathsText) { _, _ in model.changes.refreshLocalPreviews() }
         .onChange(of: model.changes.localFixNote) { _, _ in model.changes.refreshLocalPreviews() }
+    }
+
+    /// Input and output-reserve accounting for a Local run or fix preview.
+    @ViewBuilder
+    func localChangeBudgetLines(_ preview: LocalChangeInputPreview) -> some View {
+        Text(model.localizedFormat("Input: %@ / %@ bytes", String(preview.totalInputBytes), String(preview.budgetBytes)))
+            .font(.caption.monospacedDigit())
+        if preview.overBudgetBytes > 0 {
+            Text(model.localizedFormat("Over budget by %@ bytes", String(preview.overBudgetBytes)))
+                .font(.caption).foregroundStyle(.orange)
+        }
+        Text(model.localizedFormat("Output reserve: up to %@ / %@ bytes", String(preview.estimatedOutputBytes), String(preview.outputBudgetBytes)))
+            .font(.caption.monospacedDigit())
+        if preview.overOutputBudgetBytes > 0 {
+            Text(model.localizedFormat("The output reserve is short by %@ bytes for returning the selected files in full. Select fewer or smaller files, or raise the output reserve.", String(preview.overOutputBudgetBytes)))
+                .font(.caption).foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     func verificationPanel(_ session: SessionRecord) -> some View {
@@ -255,18 +271,21 @@ extension MainWindowView {
                             .lineLimit(1...3)
                         Button("Fix with Local model") { model.fixLocalChanges() }
                             .buttonStyle(.borderedProminent)
-                            .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || !model.changes.selectedChangePlanIsApproved || model.changes.localFixPreview?.fitsBudget != true)
+                            .disabled(model.isSwitchingTarget || !model.canStartAnotherRun || !model.changes.selectedChangePlanIsApproved || model.changes.localFixPreview?.fitsAllBudgets != true)
                         if model.changes.isLoadingLocalFixPreview {
                             ProgressView().controlSize(.small)
                         }
-                        if let error = model.changes.localFixPreviewError {
+                        if model.changes.localPreviewIsPaused {
+                            Text("Preview is paused while the session is running.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        } else if let error = model.changes.localFixPreviewError {
                             Text(model.localized(error)).font(.caption).foregroundStyle(.orange)
                         } else if let preview = model.changes.localFixPreview {
-                            Text(model.localizedFormat("Input: %@ / %@ bytes", String(preview.totalInputBytes), String(preview.budgetBytes)))
-                                .font(.caption.monospacedDigit())
-                            if preview.overBudgetBytes > 0 {
-                                Text(model.localizedFormat("Over budget by %@ bytes", String(preview.overBudgetBytes)))
-                                    .font(.caption).foregroundStyle(.orange)
+                            localChangeBudgetLines(preview)
+                            if !preview.skippedChangedPaths.isEmpty {
+                                Text(model.localizedFormat("Changed files left out of this fix (binary, over 256 KiB, ignored or not selectable; the model cannot change them this round): %@", preview.skippedChangedPaths.joined(separator: ", ")))
+                                .font(.caption).foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                         Text("Approve the current plan, choose any additional files above, then review and verify the result again.")

@@ -27,20 +27,61 @@ public struct LocalChangeInputFileSize: Equatable, Sendable {
     }
 }
 
-/// Byte accounting for the exact request prompt. The budget follows Local's
-/// context window less the output reserve and 512-token safety margin.
+/// Byte accounting for the exact request prompt. The input budget follows
+/// Local's context window less the output reserve and 512-token safety margin.
+///
+/// The model returns complete file contents, so the output reserve must also fit
+/// every selected file (any of them may be rewritten in full) plus the JSON
+/// wrapper and summary. Bytes are counted as tokens, the same conservative rule
+/// as the input budget.
 public struct LocalChangeInputPreview: Equatable, Sendable {
+    /// Room for the summary and the JSON object around the file entries.
+    public static let outputResponseAllowanceBytes = 512
+    /// Room for one file entry's keys, path and punctuation, besides its path.
+    public static let outputFileEntryAllowanceBytes = 48
+
     public let files: [LocalChangeInputFileSize]
     public let totalInputBytes: Int
     public let budgetBytes: Int
+    /// Bytes the model may need to return: the selected files in full, an
+    /// entry for each allowed new path, and a fixed response allowance.
+    public let estimatedOutputBytes: Int
+    /// The output reserve in bytes (`maxOutputTokens`, bytes counted as tokens).
+    public let outputBudgetBytes: Int
+    /// Changed files a fix round left out because they cannot be sent (binary,
+    /// over 256 KiB, ignored or otherwise not a selectable candidate). The model
+    /// cannot modify them in that round.
+    public let skippedChangedPaths: [String]
 
     public var fitsBudget: Bool { totalInputBytes <= budgetBytes }
     public var overBudgetBytes: Int { max(0, totalInputBytes - budgetBytes) }
+    public var fitsOutputBudget: Bool { estimatedOutputBytes <= outputBudgetBytes }
+    public var overOutputBudgetBytes: Int { max(0, estimatedOutputBytes - outputBudgetBytes) }
+    /// Both the input and the output reserve fit, so a run may be sent.
+    public var fitsAllBudgets: Bool { fitsBudget && fitsOutputBudget }
 
-    public init(files: [LocalChangeInputFileSize], totalInputBytes: Int, budgetBytes: Int) {
+    public init(
+        files: [LocalChangeInputFileSize],
+        totalInputBytes: Int,
+        budgetBytes: Int,
+        estimatedOutputBytes: Int,
+        outputBudgetBytes: Int,
+        skippedChangedPaths: [String] = []
+    ) {
         self.files = files
         self.totalInputBytes = totalInputBytes
         self.budgetBytes = budgetBytes
+        self.estimatedOutputBytes = estimatedOutputBytes
+        self.outputBudgetBytes = outputBudgetBytes
+        self.skippedChangedPaths = skippedChangedPaths
+    }
+
+    /// The output the model may need when it rewrites every selected file and
+    /// creates every allowed new path (new file contents are not known ahead).
+    public static func estimatedOutputBytes(files: [LocalChangeInputFileSize], newFilePaths: [String]) -> Int {
+        let selected = files.reduce(0) { $0 + $1.byteCount + $1.path.utf8.count + outputFileEntryAllowanceBytes }
+        let created = newFilePaths.reduce(0) { $0 + $1.utf8.count + outputFileEntryAllowanceBytes }
+        return outputResponseAllowanceBytes + selected + created
     }
 }
 
@@ -49,12 +90,15 @@ public struct LocalChangeRunResult: Equatable, Sendable {
     public let changedPaths: [String]
     public let inputBytes: Int
     public let outputBytes: Int
+    /// Changed files a fix round could not send; see `LocalChangeInputPreview`.
+    public let skippedChangedPaths: [String]
 
-    public init(summary: String, changedPaths: [String], inputBytes: Int, outputBytes: Int) {
+    public init(summary: String, changedPaths: [String], inputBytes: Int, outputBytes: Int, skippedChangedPaths: [String] = []) {
         self.summary = summary
         self.changedPaths = changedPaths
         self.inputBytes = inputBytes
         self.outputBytes = outputBytes
+        self.skippedChangedPaths = skippedChangedPaths
     }
 }
 

@@ -1243,6 +1243,7 @@ final class AppModel {
         activeRunSessionID = session.id
         isRunning = true
         errorMessage = nil
+        if session.provider == .local { changes.cancelLocalPreviews() }
         status = session.provider == .local ? "Generating selected-file changes with the Local model…" : "Running the approved changes in the isolated workspace…"
         Task { @MainActor [self] in
             var succeeded = false
@@ -1325,6 +1326,7 @@ final class AppModel {
         activeRunSessionID = session.id
         isRunning = true
         errorMessage = nil
+        changes.cancelLocalPreviews()
         status = "Preparing a Local fix for the failed verification…"
         Task { @MainActor [self] in
             var succeeded = false

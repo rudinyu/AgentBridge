@@ -256,6 +256,13 @@ public enum LocalModelHelper {
         return min(LocalModelClient.maximumResponseBytes, available)
     }
 
+    /// The UTF-8 bytes an answer may use: the output reserve, one byte per token,
+    /// the same conservative proxy as `inputByteBudget`.
+    public static func outputByteBudget(_ settings: LocalModelSettings) throws -> Int {
+        try LocalModelClient.validateSettings(settings)
+        return min(LocalModelClient.maximumResponseBytes, settings.maxOutputTokens)
+    }
+
     // MARK: Requests
 
     struct PlanInput: Equatable {

@@ -54,6 +54,8 @@ final class LocalChangePreviewTests: XCTestCase {
         }
         XCTAssertNil(model.changes.localFileCandidatesError, model.changes.localFileCandidatesError ?? "")
         XCTAssertEqual(model.changes.localFileCandidates.map(\.path), ["CHANGELOG.md", "README.md"])
+        // A changed file the picker cannot offer is left out of the fix, not forced in.
+        try Data([0x00, 0xFF, 0x00]).write(to: workspace.appendingPathComponent("logo.bin"))
         model.changes.changeDiff = diff
         model.changes.verificationResult = VerificationResult(
             command: VerificationCommand(executablePath: "/bin/false", arguments: [], workingDirectoryPath: session.workspacePath),
@@ -86,6 +88,9 @@ final class LocalChangePreviewTests: XCTestCase {
         )
         XCTAssertEqual(changePreview.files.map(\.path), ["README.md"])
         XCTAssertEqual(fixPreview.files.map(\.path), ["CHANGELOG.md", "README.md"])
+        XCTAssertEqual(fixPreview.skippedChangedPaths, ["logo.bin"])
+        XCTAssertTrue(changePreview.skippedChangedPaths.isEmpty)
+        XCTAssertTrue(changePreview.fitsAllBudgets)
         XCTAssertGreaterThan(fixPreview.totalInputBytes, changePreview.totalInputBytes)
         XCTAssertNil(model.changes.localChangePreviewError)
         XCTAssertNil(model.changes.localFixPreviewError)
@@ -112,6 +117,33 @@ final class LocalChangePreviewTests: XCTestCase {
         }
         XCTAssertNotNil(model.changes.localChangePreview, model.changes.localChangePreviewError ?? "Reapproval should refresh the change preview.")
         XCTAssertNotNil(model.changes.localFixPreview, model.changes.localFixPreviewError ?? "Reapproval should refresh the fix preview.")
+    }
+
+    func testPreviewRefreshesAreDebouncedAndCancellable() async throws {
+        let debouncer = DebouncedTask(delayNanoseconds: 50_000_000)
+        var runs: [Int] = []
+        for value in 1...5 {
+            debouncer.schedule { _ in runs.append(value) }
+        }
+        try await waitUntil { !runs.isEmpty }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(runs, [5], "Only the latest refresh in a burst runs.")
+
+        debouncer.schedule { _ in runs.append(6) }
+        debouncer.cancel()
+        try await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(runs, [5], "A cancelled refresh never starts.")
+
+        var sawSuperseded = false
+        var gateOpen = false
+        debouncer.schedule { isCurrent in
+            while !gateOpen { try? await Task.sleep(nanoseconds: 5_000_000) }
+            sawSuperseded = !isCurrent()
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        debouncer.cancel()
+        gateOpen = true
+        try await waitUntil { sawSuperseded }
     }
 
     private struct Timeout: Error {}
