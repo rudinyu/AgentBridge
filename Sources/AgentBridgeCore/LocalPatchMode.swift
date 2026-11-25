@@ -52,6 +52,12 @@ public struct LocalChangeInputPreview: Equatable, Sendable {
     /// over 256 KiB, ignored or otherwise not a selectable candidate). The model
     /// cannot modify them in that round.
     public let skippedChangedPaths: [String]
+    /// When the selection is over a budget, groups of the selected files that
+    /// each fit both budgets, to run one after another (each run needs its own
+    /// plan approval). Empty when the selection fits or cannot be split.
+    public let suggestedBatches: [[String]]
+    /// Selected files that do not fit a budget even when sent on their own.
+    public let filesTooLargeAlone: [String]
 
     public var fitsBudget: Bool { totalInputBytes <= budgetBytes }
     public var overBudgetBytes: Int { max(0, totalInputBytes - budgetBytes) }
@@ -66,7 +72,9 @@ public struct LocalChangeInputPreview: Equatable, Sendable {
         budgetBytes: Int,
         estimatedOutputBytes: Int,
         outputBudgetBytes: Int,
-        skippedChangedPaths: [String] = []
+        skippedChangedPaths: [String] = [],
+        suggestedBatches: [[String]] = [],
+        filesTooLargeAlone: [String] = []
     ) {
         self.files = files
         self.totalInputBytes = totalInputBytes
@@ -74,6 +82,8 @@ public struct LocalChangeInputPreview: Equatable, Sendable {
         self.estimatedOutputBytes = estimatedOutputBytes
         self.outputBudgetBytes = outputBudgetBytes
         self.skippedChangedPaths = skippedChangedPaths
+        self.suggestedBatches = suggestedBatches
+        self.filesTooLargeAlone = filesTooLargeAlone
     }
 
     /// The output the model may need when it rewrites every selected file and
@@ -82,6 +92,74 @@ public struct LocalChangeInputPreview: Equatable, Sendable {
         let selected = files.reduce(0) { $0 + $1.byteCount + $1.path.utf8.count + outputFileEntryAllowanceBytes }
         let created = newFilePaths.reduce(0) { $0 + $1.utf8.count + outputFileEntryAllowanceBytes }
         return outputResponseAllowanceBytes + selected + created
+    }
+}
+
+/// Splits a Local selection that is over budget into groups that each fit.
+///
+/// Every run repeats the same fixed part of the prompt (instructions, plan,
+/// request and the new paths) and adds its own files, so a group fits when the
+/// fixed part plus its files' encoded size stays within the input budget and
+/// their full contents stay within the output reserve. Files are placed largest
+/// first into the first group with room (first-fit decreasing). The split is
+/// only a suggestion: nothing runs until the user selects a group and runs it.
+public enum LocalChangeBatchPlanner {
+    public struct Item: Equatable, Sendable {
+        public let path: String
+        /// What the file adds to the prompt, as encoded there.
+        public let inputBytes: Int
+        /// What returning the file in full may take from the output reserve.
+        public let outputBytes: Int
+
+        public init(path: String, inputBytes: Int, outputBytes: Int) {
+            self.path = path
+            self.inputBytes = inputBytes
+            self.outputBytes = outputBytes
+        }
+    }
+
+    public struct Plan: Equatable, Sendable {
+        public let batches: [[String]]
+        public let tooLargeAlone: [String]
+    }
+
+    public static func plan(
+        items: [Item],
+        fixedInputBytes: Int,
+        inputBudgetBytes: Int,
+        fixedOutputBytes: Int,
+        outputBudgetBytes: Int
+    ) -> Plan {
+        let inputRoom = inputBudgetBytes - fixedInputBytes
+        let outputRoom = outputBudgetBytes - fixedOutputBytes
+        // The fixed part alone is over budget: no grouping of files can help.
+        guard inputRoom > 0, outputRoom > 0 else { return Plan(batches: [], tooLargeAlone: []) }
+
+        var tooLarge: [String] = []
+        var placeable: [Item] = []
+        for item in items {
+            if item.inputBytes > inputRoom || item.outputBytes > outputRoom {
+                tooLarge.append(item.path)
+            } else {
+                placeable.append(item)
+            }
+        }
+        placeable.sort {
+            let left = max(Double($0.inputBytes) / Double(inputRoom), Double($0.outputBytes) / Double(outputRoom))
+            let right = max(Double($1.inputBytes) / Double(inputRoom), Double($1.outputBytes) / Double(outputRoom))
+            return left == right ? $0.path < $1.path : left > right
+        }
+        var groups: [(paths: [String], input: Int, output: Int)] = []
+        for item in placeable {
+            if let index = groups.firstIndex(where: { $0.input + item.inputBytes <= inputRoom && $0.output + item.outputBytes <= outputRoom }) {
+                groups[index].paths.append(item.path)
+                groups[index].input += item.inputBytes
+                groups[index].output += item.outputBytes
+            } else {
+                groups.append(([item.path], item.inputBytes, item.outputBytes))
+            }
+        }
+        return Plan(batches: groups.map { $0.paths.sorted() }, tooLargeAlone: tooLarge.sorted())
     }
 }
 

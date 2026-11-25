@@ -305,20 +305,70 @@ extension BridgeService {
             note: note
         )
         let budget = try LocalModelHelper.inputByteBudget(settings)
+        let outputBudget = try LocalModelHelper.outputByteBudget(settings)
         let sortedSizes = sizes.sorted { $0.path < $1.path }
+        let estimatedOutput = LocalChangeInputPreview.estimatedOutputBytes(files: sortedSizes, newFilePaths: newFilePaths)
+        var batchPlan = LocalChangeBatchPlanner.Plan(batches: [], tooLargeAlone: [])
+        if prompt.utf8.count > budget || estimatedOutput > outputBudget {
+            batchPlan = try Self.localChangeBatchPlan(
+                fileContents: fileContents,
+                sizes: sortedSizes,
+                newFilePaths: newFilePaths,
+                promptBytes: prompt.utf8.count,
+                inputBudget: budget,
+                outputBudget: outputBudget
+            )
+        }
         return PreparedLocalChangeInput(
             prompt: prompt,
             preview: LocalChangeInputPreview(
                 files: sortedSizes,
                 totalInputBytes: prompt.utf8.count,
                 budgetBytes: budget,
-                estimatedOutputBytes: LocalChangeInputPreview.estimatedOutputBytes(files: sortedSizes, newFilePaths: newFilePaths),
-                outputBudgetBytes: try LocalModelHelper.outputByteBudget(settings),
-                skippedChangedPaths: skippedChangedPaths
+                estimatedOutputBytes: estimatedOutput,
+                outputBudgetBytes: outputBudget,
+                skippedChangedPaths: skippedChangedPaths,
+                // One group is the selection itself, which is already known not to fit.
+                suggestedBatches: batchPlan.batches.count > 1 ? batchPlan.batches : [],
+                filesTooLargeAlone: batchPlan.tooLargeAlone
             ),
             fileContents: fileContents,
             newFilePaths: newPathSet,
             failureTailBytes: failureTail.utf8.count
+        )
+    }
+
+    /// Groups the selected files for `LocalChangeBatchPlanner`. A file's input
+    /// cost is its entry as encoded in the prompt's file array, plus a comma; the
+    /// rest of the prompt is the fixed part every group repeats. New paths stay
+    /// in that fixed part, so the estimate holds for whichever group takes them.
+    private static func localChangeBatchPlan(
+        fileContents: [String: String],
+        sizes: [LocalChangeInputFileSize],
+        newFilePaths: [String],
+        promptBytes: Int,
+        inputBudget: Int,
+        outputBudget: Int
+    ) throws -> LocalChangeBatchPlanner.Plan {
+        var items: [LocalChangeBatchPlanner.Item] = []
+        var filesInputBytes = 0
+        for size in sizes {
+            let entry = try compactJSON(["path": size.path, "content": fileContents[size.path] ?? ""])
+            let inputBytes = entry.utf8.count + 1
+            filesInputBytes += inputBytes
+            items.append(LocalChangeBatchPlanner.Item(
+                path: size.path,
+                inputBytes: inputBytes,
+                outputBytes: size.byteCount + size.path.utf8.count + LocalChangeInputPreview.outputFileEntryAllowanceBytes
+            ))
+        }
+        let fixedOutput = LocalChangeInputPreview.estimatedOutputBytes(files: [], newFilePaths: newFilePaths)
+        return LocalChangeBatchPlanner.plan(
+            items: items,
+            fixedInputBytes: max(0, promptBytes - filesInputBytes),
+            inputBudgetBytes: inputBudget,
+            fixedOutputBytes: fixedOutput,
+            outputBudgetBytes: outputBudget
         )
     }
 

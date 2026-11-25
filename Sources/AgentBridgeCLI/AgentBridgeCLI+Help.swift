@@ -15,6 +15,7 @@ extension AgentBridgeCLI {
           agentbridge local settings
           agentbridge local configure --backend ollama|openai-compatible --endpoint URL --model NAME [--context-window TOKENS] [--max-output TOKENS]
           agentbridge local models|test
+          agentbridge local context [--apply]
           agentbridge local preview discussion CHAT-ID|project SESSION-ID < prompt.txt
           agentbridge local helper show|on|off [--commit-text] [--explain-failure] [--handoff] [--change-summary]
           agentbridge local setup-check

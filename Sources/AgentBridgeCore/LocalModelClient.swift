@@ -134,6 +134,12 @@ public final class LocalModelClient: @unchecked Sendable {
                                 "The selected model reports a context window of \(reportedContextWindow) tokens, below the currently configured \(settings.contextWindowTokens) tokens; lower the local model context setting and try again."
                             )
                         }
+                        if settings.backend == .openAICompatible {
+                            // Best effort: a server without LM Studio's REST API
+                            // reports nothing, and the request goes ahead as before.
+                            let info = await Self.lmStudioContextInfo(settings: settings, session: session, includesLegacyAPI: false)
+                            try Self.requireContextFits(settings: settings, info: info)
+                        }
                         return try await Self.readStream(
                             request: request,
                             session: session,
@@ -175,6 +181,184 @@ public final class LocalModelClient: @unchecked Sendable {
         } catch {
             throw AgentBridgeError.providerFailed(.local, "Local model connection failed: \(OutputRedactor.redact(error.localizedDescription))")
         }
+    }
+
+    /// Asks the server how much context the selected model supports and, where
+    /// it reports one, the context it is loaded with. Ollama answers through
+    /// `/api/show` and `/api/ps`; an OpenAI-compatible server answers only if it
+    /// offers LM Studio's REST API, and otherwise both values are unknown.
+    /// This only reads; it never loads or downloads a model.
+    public func contextInfo(settings: LocalModelSettings) async throws -> LocalModelContextInfo {
+        try settings.validate()
+        guard !settings.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AgentBridgeError.invalidInput("Select a local model first.")
+        }
+        try Self.requireLocalModelName(settings.model)
+        let session = sessionFactory()
+        defer { session.invalidateAndCancel() }
+        do {
+            return try await withTaskCancellationHandler {
+                switch settings.backend {
+                case .ollama:
+                    return try await Self.ollamaContextInfo(settings: settings, session: session)
+                case .openAICompatible:
+                    return await Self.lmStudioContextInfo(settings: settings, session: session)
+                }
+            } onCancel: {
+                session.invalidateAndCancel()
+            }
+        } catch is CancellationError {
+            throw AgentBridgeError.processCancelled
+        } catch let error as URLError where error.code == .cancelled {
+            throw AgentBridgeError.processCancelled
+        } catch let error as AgentBridgeError {
+            throw error
+        } catch let error as URLError where error.code == .timedOut {
+            throw AgentBridgeError.processTimedOut
+        } catch {
+            throw AgentBridgeError.providerFailed(.local, "Could not reach the configured local model endpoint: \(OutputRedactor.redact(error.localizedDescription))")
+        }
+    }
+
+    /// Refuses a request whose configured context the server cannot honor.
+    /// Only an OpenAI-compatible server is checked: it ignores a requested
+    /// context, so what it loaded is what the model gets. Ollama applies the
+    /// `num_ctx` sent with each request.
+    static func requireContextFits(settings: LocalModelSettings, info: LocalModelContextInfo) throws {
+        guard settings.backend == .openAICompatible else { return }
+        if let loaded = info.loadedTokens, settings.contextWindowTokens > loaded {
+            throw AgentBridgeError.invalidInput(
+                "LM Studio loaded the model with a context length of \(loaded) tokens, below the configured \(settings.contextWindowTokens) tokens. Lower the Local context window to \(loaded) tokens or less, or reload the model in LM Studio with a longer context length."
+            )
+        }
+        if info.loadedTokens == nil, let maximum = info.modelMaximumTokens, settings.contextWindowTokens > maximum {
+            throw AgentBridgeError.invalidInput(
+                "The selected model supports at most \(maximum) tokens of context, below the configured \(settings.contextWindowTokens) tokens; lower the Local context window and try again."
+            )
+        }
+    }
+
+    private static func ollamaContextInfo(settings: LocalModelSettings, session: URLSession) async throws -> LocalModelContextInfo {
+        let showURL = try endpointURL(settings: settings, suffix: "/api/show")
+        var showRequest = URLRequest(url: showURL, timeoutInterval: requestTimeout)
+        showRequest.httpMethod = "POST"
+        showRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        showRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        showRequest.httpBody = try JSONSerialization.data(withJSONObject: ["model": settings.model], options: [.sortedKeys])
+        let showData = try await readModelList(request: showRequest, session: session)
+        guard let show = try? JSONSerialization.jsonObject(with: showData) as? [String: Any], show["error"] == nil else {
+            throw AgentBridgeError.providerFailed(.local, "The Ollama model details format is invalid.")
+        }
+        guard !containsRemoteMetadata(show) else {
+            throw AgentBridgeError.providerFailed(.local, "Ollama reported that the model runs remotely or in the cloud; local mode stopped the reply.")
+        }
+        let maximum = (show["model_info"] as? [String: Any]).flatMap(ollamaContextLength(modelInfo:))
+
+        // What a running model was loaded with. Not every Ollama reports it, and
+        // a model that is not running has none, so a failure here is not an error.
+        var loaded: Int?
+        var isLoaded: Bool?
+        if let psURL = try? endpointURL(settings: settings, suffix: "/api/ps") {
+            var psRequest = URLRequest(url: psURL, timeoutInterval: requestTimeout)
+            psRequest.httpMethod = "GET"
+            psRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+            if let data = try? await readModelList(request: psRequest, session: session),
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let running = object["models"] as? [[String: Any]] {
+                let match = running.first { ($0["name"] as? String) == settings.model || ($0["model"] as? String) == settings.model }
+                isLoaded = match != nil
+                loaded = match.flatMap { contextTokens($0["context_length"]) }
+            }
+        }
+        return LocalModelContextInfo(modelMaximumTokens: maximum, loadedTokens: loaded, isLoaded: isLoaded)
+    }
+
+    /// The model's trained context from `/api/show`'s `model_info`, whose key is
+    /// prefixed with the architecture, such as `llama.context_length`.
+    static func ollamaContextLength(modelInfo: [String: Any]) -> Int? {
+        if let architecture = modelInfo["general.architecture"] as? String,
+           let value = contextTokens(modelInfo["\(architecture).context_length"]) {
+            return value
+        }
+        return modelInfo.keys.sorted()
+            .filter { $0.hasSuffix(".context_length") }
+            .lazy
+            .compactMap { contextTokens(modelInfo[$0]) }
+            .first
+    }
+
+    /// LM Studio's REST API: `/api/v1/models` (0.4 and later) gives the model's
+    /// maximum and the context of each loaded instance; `/api/v0/models/{id}`
+    /// (0.3.6 and later) gives the maximum and whether it is loaded.
+    ///
+    /// A run asks only the newer API, the one that reports the loaded context,
+    /// so a server without it costs one extra request per run, not two.
+    private static func lmStudioContextInfo(
+        settings: LocalModelSettings,
+        session: URLSession,
+        includesLegacyAPI: Bool = true
+    ) async -> LocalModelContextInfo {
+        if let url = try? endpointURL(settings: settings, suffix: "/api/v1/models", native: true),
+           let data = try? await readModelList(request: getRequest(url), session: session),
+           let info = parseLMStudioV1(data, model: settings.model) {
+            return info
+        }
+        guard includesLegacyAPI else {
+            return LocalModelContextInfo(modelMaximumTokens: nil, loadedTokens: nil, isLoaded: nil)
+        }
+        let encoded = settings.model.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? ""
+        if !encoded.isEmpty,
+           let url = try? endpointURL(settings: settings, suffix: "/api/v0/models", native: true),
+           let modelURL = URL(string: url.absoluteString + "/" + encoded),
+           let data = try? await readModelList(request: getRequest(modelURL), session: session),
+           let info = parseLMStudioV0(data, model: settings.model) {
+            return info
+        }
+        return LocalModelContextInfo(modelMaximumTokens: nil, loadedTokens: nil, isLoaded: nil)
+    }
+
+    private static func getRequest(_ url: URL) -> URLRequest {
+        var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return request
+    }
+
+    static func parseLMStudioV1(_ data: Data, model: String) -> LocalModelContextInfo? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = object["models"] as? [[String: Any]] else { return nil }
+        func instances(_ item: [String: Any]) -> [[String: Any]] { item["loaded_instances"] as? [[String: Any]] ?? [] }
+        guard let item = models.first(where: { item in
+            (item["key"] as? String) == model
+                || instances(item).contains { ($0["id"] as? String) == model }
+                || (item["variants"] as? [String] ?? []).contains(model)
+        }) else { return nil }
+        let loadedInstances = instances(item)
+        // An instance named exactly like the model wins; otherwise take the first.
+        let instance = loadedInstances.first { ($0["id"] as? String) == model } ?? loadedInstances.first
+        let loaded = instance.flatMap { ($0["config"] as? [String: Any]).flatMap { contextTokens($0["context_length"]) } }
+        return LocalModelContextInfo(
+            modelMaximumTokens: contextTokens(item["max_context_length"]),
+            loadedTokens: loaded,
+            isLoaded: !loadedInstances.isEmpty
+        )
+    }
+
+    static func parseLMStudioV0(_ data: Data, model: String) -> LocalModelContextInfo? {
+        guard let item = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (item["id"] as? String) == model else { return nil }
+        let state = (item["state"] as? String)?.lowercased()
+        return LocalModelContextInfo(
+            modelMaximumTokens: contextTokens(item["max_context_length"]),
+            loadedTokens: nil,
+            isLoaded: state.map { $0 == "loaded" }
+        )
+    }
+
+    private static func contextTokens(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber, !(value is Bool) else { return nil }
+        let tokens = number.intValue
+        return (1...10_000_000).contains(tokens) ? tokens : nil
     }
 
     private static func readStream(
@@ -425,7 +609,10 @@ public final class LocalModelClient: @unchecked Sendable {
         return request
     }
 
-    private static func endpointURL(settings: LocalModelSettings, suffix: String) throws -> URL {
+    /// `native` routes an OpenAI-compatible endpoint to the server's own REST
+    /// API (LM Studio's `/api/v1/…`) beside the `/v1` root: a trailing `/v1` in
+    /// the configured endpoint is dropped instead of kept.
+    private static func endpointURL(settings: LocalModelSettings, suffix: String, native: Bool = false) throws -> URL {
         guard var components = URLComponents(string: settings.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)),
               components.scheme?.lowercased() == "http",
               components.user == nil,
@@ -449,7 +636,11 @@ public final class LocalModelClient: @unchecked Sendable {
         let prefix = path == "/" ? "" : path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         var prefixSegments = prefix.split(separator: "/").map(String.init)
         var route = suffix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if settings.backend == .openAICompatible, route.hasPrefix("v1/") {
+        if settings.backend == .openAICompatible, native {
+            while prefixSegments.last?.lowercased() == "v1" {
+                prefixSegments.removeLast()
+            }
+        } else if settings.backend == .openAICompatible, route.hasPrefix("v1/") {
             // Keep one terminal /v1 whether the user entered a server root,
             // /v1, a trailing slash, or a custom prefix such as /proxy/v1.
             while prefixSegments.count > 1,

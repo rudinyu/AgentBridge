@@ -636,6 +636,66 @@ final class LocalPatchRoundStateTests: XCTestCase {
         XCTAssertTrue(fits.fitsAllBudgets)
     }
 
+    func testOverBudgetPreviewSuggestsRunsThatEachFit() async throws {
+        let body = String(repeating: "x", count: 399) + "\n"
+        let fixture = try await makeFixture(
+            "LocalPatchBatches",
+            files: [
+                "a.txt": Data(body.utf8),
+                "b.txt": Data(body.utf8),
+                "c.txt": Data(body.utf8),
+                "big.txt": Data((String(repeating: "y", count: 699) + "\n").utf8)
+            ],
+            replies: [],
+            maxOutputTokens: 1_100
+        )
+        defer { fixture.server.stop(); try? FileManager.default.removeItem(at: fixture.root) }
+
+        let preview = try await fixture.service.previewLocalChangeInput(
+            sessionID: fixture.session.id, planID: fixture.plan.id, reviewedDigest: fixture.plan.reviewDigest,
+            request: "Rewrite them.", filePaths: ["a.txt", "b.txt", "big.txt", "c.txt"]
+        )
+        XCTAssertFalse(preview.fitsOutputBudget)
+        // Each 400-byte file needs about 453 of the 588 bytes left after the
+        // response allowance, so they go one per run; big.txt never fits.
+        XCTAssertEqual(preview.suggestedBatches, [["a.txt"], ["b.txt"], ["c.txt"]])
+        XCTAssertEqual(preview.filesTooLargeAlone, ["big.txt"])
+
+        for batch in preview.suggestedBatches {
+            let single = try await fixture.service.previewLocalChangeInput(
+                sessionID: fixture.session.id, planID: fixture.plan.id, reviewedDigest: fixture.plan.reviewDigest,
+                request: "Rewrite them.", filePaths: batch
+            )
+            XCTAssertTrue(single.fitsAllBudgets, "Suggested run \(batch) must fit on its own.")
+            XCTAssertTrue(single.suggestedBatches.isEmpty)
+            XCTAssertTrue(single.filesTooLargeAlone.isEmpty)
+        }
+        XCTAssertTrue(fixture.server.requests.isEmpty, "Previews never contact the model.")
+    }
+
+    func testBatchPlannerPacksLargestFirstAndRespectsBothBudgets() {
+        let items = [
+            LocalChangeBatchPlanner.Item(path: "small", inputBytes: 10, outputBytes: 10),
+            LocalChangeBatchPlanner.Item(path: "large", inputBytes: 70, outputBytes: 20),
+            LocalChangeBatchPlanner.Item(path: "medium", inputBytes: 30, outputBytes: 30),
+            LocalChangeBatchPlanner.Item(path: "wide", inputBytes: 10, outputBytes: 90),
+            LocalChangeBatchPlanner.Item(path: "huge", inputBytes: 200, outputBytes: 1)
+        ]
+        let plan = LocalChangeBatchPlanner.plan(
+            items: items, fixedInputBytes: 20, inputBudgetBytes: 120, fixedOutputBytes: 0, outputBudgetBytes: 100
+        )
+        // Room: 100 input and 100 output. Placed in order wide, large, medium,
+        // small: large cannot join wide (output 110), medium joins large
+        // (input 100), and small still fits beside wide (output 100).
+        XCTAssertEqual(plan.tooLargeAlone, ["huge"])
+        XCTAssertEqual(plan.batches, [["small", "wide"], ["large", "medium"]])
+
+        let blocked = LocalChangeBatchPlanner.plan(
+            items: items, fixedInputBytes: 130, inputBudgetBytes: 120, fixedOutputBytes: 0, outputBudgetBytes: 100
+        )
+        XCTAssertEqual(blocked, LocalChangeBatchPlanner.Plan(batches: [], tooLargeAlone: []), "No split helps when the fixed part alone is over budget.")
+    }
+
     func testPreviewsAndFileListsDoNotTakeTheRunLease() async throws {
         let fixture = try await makeFixture(
             "LocalPatchPreviewLease",

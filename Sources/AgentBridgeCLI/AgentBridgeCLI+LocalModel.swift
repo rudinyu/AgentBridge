@@ -5,7 +5,7 @@ import AgentBridgeCore
 extension AgentBridgeCLI {
     static func localModelCommand(_ arguments: [String], service: BridgeService) async throws {
         guard let action = arguments.first else {
-            throw AgentBridgeError.invalidInput("Usage: agentbridge local settings|configure|models|test|preview discussion|project|helper|setup-check|pull …")
+            throw AgentBridgeError.invalidInput("Usage: agentbridge local settings|configure|models|test|context|preview discussion|project|helper|setup-check|pull …")
         }
         switch action {
         case "settings", "current":
@@ -47,6 +47,8 @@ extension AgentBridgeCLI {
             } else {
                 print("The local model is not ready: \(settings.endpoint). Make sure you started the local service and chose an available model.")
             }
+        case "context":
+            try await localModelContext(arguments, service: service)
         case "preview":
             try await localModelPreview(arguments, service: service)
         case "helper":
@@ -56,7 +58,7 @@ extension AgentBridgeCLI {
         case "pull":
             try await localPull(arguments, service: service)
         default:
-            throw AgentBridgeError.invalidInput("Unknown local subcommand \(action). Usage: agentbridge local settings|configure|models|test|preview|helper|setup-check|pull …")
+            throw AgentBridgeError.invalidInput("Unknown local subcommand \(action). Usage: agentbridge local settings|configure|models|test|context|preview|helper|setup-check|pull …")
         }
     }
 
@@ -153,6 +155,46 @@ extension AgentBridgeCLI {
         try service.updateSettings { $0.localModel = local }
         print("Saved the local model settings. AgentBridge never starts a service, downloads a model or switches to a cloud service on its own.")
         print("Run `agentbridge local test` to test the connection explicitly, or `agentbridge local models` to refresh the model list.")
+    }
+
+    /// Shows what the server reports about the selected model's context and the
+    /// context window AgentBridge suggests; `--apply` saves that suggestion.
+    static func localModelContext(_ arguments: [String], service: BridgeService) async throws {
+        guard arguments.count == 1 || (arguments.count == 2 && arguments[1] == "--apply") else {
+            throw AgentBridgeError.invalidInput("Usage: agentbridge local context [--apply]")
+        }
+        let settings = try service.settings().localModel
+        let info = try await service.localModelContextInfo(settings: settings)
+        print("Model: \(settings.model) · \(localBackendName(settings.backend))")
+        print("Model maximum context: \(info.modelMaximumTokens.map { "\($0) tokens" } ?? "not reported")")
+        switch (info.isLoaded, info.loadedTokens) {
+        case (_, let loaded?): print("Loaded with context: \(loaded) tokens")
+        case (true?, nil): print("Loaded; the server does not report its context length.")
+        case (false?, nil): print("Not loaded now.")
+        case (nil, nil): print("Loaded context: not reported")
+        }
+        print("Configured context window: \(settings.contextWindowTokens) tokens")
+        if settings.backend == .openAICompatible {
+            print("An OpenAI-compatible server keeps the context it loaded the model with; Local requests are refused when the configured window is larger.")
+        } else {
+            print("Ollama uses the configured context window for each request (num_ctx).")
+        }
+        guard let suggestion = info.suggestedContextWindow(
+            backend: settings.backend,
+            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+        ) else {
+            print("The server reports no context length, so there is no suggestion. Set it yourself with `agentbridge local configure --context-window N`.")
+            return
+        }
+        let updated = settings.applyingContextWindow(suggestion)
+        print("Suggested context window: \(suggestion) tokens" + (updated.maxOutputTokens != settings.maxOutputTokens ? " (output reserve \(updated.maxOutputTokens) tokens)" : ""))
+        guard arguments.count == 2 else {
+            if suggestion != settings.contextWindowTokens { print("Run `agentbridge local context --apply` to save it.") }
+            return
+        }
+        try updated.validate()
+        try service.updateSettings { $0.localModel = updated }
+        print("Saved the suggested context window.")
     }
 
     static func localModelPreview(_ arguments: [String], service: BridgeService) async throws {

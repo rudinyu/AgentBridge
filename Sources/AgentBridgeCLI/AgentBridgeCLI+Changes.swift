@@ -522,6 +522,20 @@ extension AgentBridgeCLI {
             print("Output reserve short by \(preview.overOutputBudgetBytes) bytes; nothing was sent. Select fewer or smaller files, or raise it with `agentbridge local configure --max-output N`.")
         }
         if preview.fitsAllBudgets { print("Within budget; nothing was sent.") }
+        printLocalChangeBatches(preview)
+    }
+
+    static func printLocalChangeBatches(_ preview: LocalChangeInputPreview) {
+        if !preview.suggestedBatches.isEmpty {
+            print("Suggested split: \(preview.suggestedBatches.count) runs that each fit. Run them one at a time with these --file options; each run needs the plan approved again.")
+            for (index, batch) in preview.suggestedBatches.enumerated() {
+                print("  Run \(index + 1): " + batch.map { "--file \($0)" }.joined(separator: " "))
+            }
+        }
+        if !preview.filesTooLargeAlone.isEmpty {
+            print("Too large to send even on their own (raise the context window or output reserve, or leave them out):")
+            preview.filesTooLargeAlone.forEach { print("  \($0)") }
+        }
     }
 
     private static func printSkippedChangedPaths(_ paths: [String]) {

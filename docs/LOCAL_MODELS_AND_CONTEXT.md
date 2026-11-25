@@ -35,6 +35,18 @@ agentbridge chat send CHAT-ID < prompt.txt
 
 For a compatible server, select `--backend openai-compatible` and its service root, such as `http://127.0.0.1:1234/v1`. `local preview project SESSION-ID` previews a read-only project's composed input. Configuration and previews do not start inference; `chat send` or a project run does.
 
+## Context size
+
+Each model supports a maximum context, and the server may load it with less. **Detect context size** in the Local model settings, or `agentbridge local context`, asks the configured loopback server about the selected model and shows its maximum context and the context it is loaded with, when the server reports them. It only reads: it never loads, unloads or downloads a model.
+
+- **Ollama** reports the model's maximum through `/api/show` and, for a running model, the loaded context through `/api/ps`. Ollama uses the context window AgentBridge sends with every request (`num_ctx`), so the suggestion is the model's maximum, held to what this Mac's memory can carry: 8,192 tokens under 12 GB, 16,384 under 24 GB, 32,768 under 48 GB and 65,536 above that.
+- **LM Studio** reports both through its REST API (`/api/v1/models` in LM Studio 0.4 and later; `/api/v0/models/{id}` in 0.3.6 and later gives the maximum only). An OpenAI-compatible server keeps the context it loaded the model with and ignores what a request asks for, so the suggestion is that loaded context. To use more, reload the model in LM Studio with a longer context length.
+- Other OpenAI-compatible servers report nothing; set the context window yourself.
+
+**Use N tokens** fills the suggestion into the form, lowering the output reserve to a quarter of the window if it would otherwise leave no room for input; nothing is used until you save. `agentbridge local context --apply` saves it. Suggestions stay within the App's 1,024–131,072 token range.
+
+Before each OpenAI-compatible run, AgentBridge also asks LM Studio's `/api/v1/models` for the loaded context. When the configured context window is larger than the context LM Studio loaded the model with, the run is refused before anything is sent, and the message gives both numbers. A server without that API costs one extra request per run and is not checked.
+
 ## Local patch mode
 
 Local isolated changes work with either subscription or Claude API usage mode. Create a project session with **Isolated changes** access; Local does not offer a native interactive terminal. The first **Draft plan** request sends the user request and the workspace's candidate path list, not file contents. Review and save that plan, then explicitly approve it before running. Local change runs do not include shared memory.
@@ -50,6 +62,8 @@ The response must be exactly one JSON object with summary and files, with no pro
 ~~~
 
 Each file entry contains only path, action and content. Modify and create require the complete new UTF-8 content. Delete omits content or uses null. The App shows the result as a diff for review. A failed verification exposes **Fix with Local model** and an optional note; it does not run verification itself. A fix adds the files changed in the workspace only when they are selectable candidates under the same rules as the file list; the others (binary, over 256 KiB, Git-ignored or not listed) are reported as left out and cannot be modified in that round, while a file you select explicitly must still be selectable. Every fix run consumes the current plan approval, so approve the reviewed plan again before the next run. Verification and acceptance are reset only when a run writes to the workspace; a run that writes nothing keeps them, so a failed fix can be approved and tried again.
+
+When a selection is over the input budget or the output reserve, the preview also suggests a split: groups of the selected files that each fit both, packed largest first. **Select these files** (or the `--file` options the CLI prints) selects one group. Run the groups one at a time; each run consumes the plan approval, so approve the plan again before the next one. New file paths stay in the form and are counted in every group. Files that do not fit even on their own are listed separately. The split is only a suggestion: nothing is selected or run for you.
 
 The CLI accepts the same flow:
 

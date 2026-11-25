@@ -36,6 +36,11 @@ final class AppModel {
     var localModelError: String?
     var isRefreshingLocalModels = false
     var isTestingLocalModel = false
+    var isDetectingLocalContext = false
+    /// What the server reported for the selected model. It describes the model,
+    /// so it is kept while only the context or output numbers change.
+    var localModelContextInfo: LocalModelContextInfo?
+    @ObservationIgnored private var localModelContextInfoSource: LocalModelSettings?
     /// The access mode for the next session. The native interactive terminal is
     /// the default; Local allows isolated changes, and Claude API allows only read-only.
     var requestedAccessMode: AccessMode = .interactiveManualApproval
@@ -748,6 +753,13 @@ final class AppModel {
     }
 
     private func invalidateLocalModelConnectionState() {
+        if let source = localModelContextInfoSource,
+           source.backend != settings.localModel.backend
+            || source.endpoint != settings.localModel.endpoint
+            || source.model != settings.localModel.model {
+            localModelContextInfo = nil
+            localModelContextInfoSource = nil
+        }
         localModelModels = []
         localModelStatus = localized("Connection not checked.")
         localModelError = nil
@@ -776,6 +788,46 @@ final class AppModel {
                 self.localModelError = error.localizedDescription
             }
         }
+    }
+
+    /// The context window suggested from the last detection, if any.
+    var suggestedLocalContextWindow: Int? {
+        localModelContextInfo?.suggestedContextWindow(
+            backend: settings.localModel.backend,
+            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+        )
+    }
+
+    func detectLocalModelContext() {
+        guard let service, !isDetectingLocalContext else { return }
+        let requestedSettings = settings.localModel
+        isDetectingLocalContext = true
+        localModelError = nil
+        localModelStatus = localized("Asking the local service about the model's context…")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isDetectingLocalContext = false }
+            do {
+                let info = try await service.localModelContextInfo(settings: requestedSettings)
+                guard self.settings.localModel == requestedSettings else { return }
+                self.localModelContextInfo = info
+                self.localModelContextInfoSource = requestedSettings
+                self.localModelStatus = info.reportsAnything
+                    ? self.localized("The local service reported the model's context.")
+                    : self.localized("The local service does not report a context length for this model. Set the context window yourself.")
+            } catch {
+                guard self.settings.localModel == requestedSettings else { return }
+                self.localModelStatus = self.localized("Could not read the model's context.")
+                self.localModelError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Puts the suggested context window into the settings draft; the user saves
+    /// it. The detection is kept, since the model it describes has not changed.
+    func applySuggestedLocalContextWindow() {
+        guard let suggestion = suggestedLocalContextWindow else { return }
+        settings.localModel = settings.localModel.applyingContextWindow(suggestion)
     }
 
     func testLocalModelConnectionFromUI() {

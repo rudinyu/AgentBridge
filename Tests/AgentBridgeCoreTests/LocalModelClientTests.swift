@@ -154,7 +154,9 @@ final class LocalModelClientTests: XCTestCase {
         XCTAssertEqual(response.text, "Hello world")
         XCTAssertEqual(response.usage.inputTokens, 19)
         XCTAssertEqual(response.usage.outputTokens, 2)
-        XCTAssertEqual(server.requests.map(\.path), ["/v1/models", "/v1/chat/completions"])
+        // The middle request asks LM Studio's API for the loaded context; this
+        // server is not LM Studio, so the run goes ahead.
+        XCTAssertEqual(server.requests.map(\.path), ["/v1/models", "/api/v1/models", "/v1/chat/completions"])
         let body = try XCTUnwrap(server.requests.last?.jsonBody)
         XCTAssertEqual(body["model"] as? String, "local-chat")
         XCTAssertEqual(body["stream"] as? Bool, true)
@@ -518,7 +520,8 @@ final class LocalModelClientTests: XCTestCase {
                 return XCTFail("Unexpected error for \(label): \(error)")
             }
         }
-        XCTAssertEqual(server.requests.map(\.method), ["GET", "POST"], "\(label)")
+        // An OpenAI-compatible run also asks LM Studio's API for the loaded context.
+        XCTAssertEqual(server.requests.map(\.method), backend == .ollama ? ["GET", "POST"] : ["GET", "GET", "POST"], "\(label)")
     }
 
     private func serverStallingChatBody(gate: StallGate) throws -> LoopbackHTTPServer {
@@ -532,6 +535,106 @@ final class LocalModelClientTests: XCTestCase {
                     gate: gate
                 )
         }
+    }
+
+    func testOllamaContextInfoReadsModelMaximumAndRunningContext() async throws {
+        let show = Data(#"{"model_info":{"general.architecture":"qwen2","qwen2.context_length":32768,"qwen2.embedding_length":3584}}"#.utf8)
+        let running = Data(#"{"models":[{"name":"other:1b","context_length":2048},{"name":"qwen2.5-coder:7b","model":"qwen2.5-coder:7b","context_length":8192}]}"#.utf8)
+        let server = try LoopbackHTTPServer { request in
+            request.path == "/api/show" ? .json(show) : .json(running)
+        }
+        defer { server.stop() }
+
+        let info = try await makeClient().contextInfo(settings: ollamaSettings(server: server, model: "qwen2.5-coder:7b"))
+        XCTAssertEqual(info, LocalModelContextInfo(modelMaximumTokens: 32_768, loadedTokens: 8_192, isLoaded: true))
+        XCTAssertEqual(server.requests.map(\.path), ["/api/show", "/api/ps"])
+        XCTAssertEqual(server.requests.first?.method, "POST")
+        XCTAssertEqual(server.requests.first?.jsonBody?["model"] as? String, "qwen2.5-coder:7b")
+    }
+
+    func testLMStudioContextInfoUsesTheNativeAPIBesideV1() async throws {
+        let models = Data(#"""
+        {"models":[
+          {"type":"llm","key":"other","max_context_length":4096,"loaded_instances":[]},
+          {"type":"llm","key":"google/gemma-4","max_context_length":262144,
+           "loaded_instances":[{"id":"google/gemma-4","config":{"context_length":4096}}]}
+        ]}
+        """#.utf8)
+        let server = try LoopbackHTTPServer { _ in .json(models) }
+        defer { server.stop() }
+        var settings = openAISettings(server: server, model: "google/gemma-4")
+        settings.endpoint = "http://127.0.0.1:\(server.port)/v1"
+
+        let info = try await makeClient().contextInfo(settings: settings)
+        XCTAssertEqual(info, LocalModelContextInfo(modelMaximumTokens: 262_144, loadedTokens: 4_096, isLoaded: true))
+        XCTAssertEqual(server.requests.map(\.path), ["/api/v1/models"])
+    }
+
+    func testLMStudioV0FallbackAndOtherServersReportNothing() async throws {
+        let v0 = Data(#"{"id":"meta/llama 3","state":"not-loaded","max_context_length":131072}"#.utf8)
+        let server = try LoopbackHTTPServer { request in
+            request.path.hasPrefix("/api/v0/models/") ? .json(v0) : .response(status: 404, headers: [:], body: Data())
+        }
+        defer { server.stop() }
+
+        let info = try await makeClient().contextInfo(settings: openAISettings(server: server, model: "meta/llama 3"))
+        XCTAssertEqual(info, LocalModelContextInfo(modelMaximumTokens: 131_072, loadedTokens: nil, isLoaded: false))
+        XCTAssertEqual(server.requests.map(\.path), ["/api/v1/models", "/api/v0/models/meta%2Fllama%203"])
+
+        let unknown = try await makeClient().contextInfo(settings: openAISettings(server: server, model: "plain"))
+        XCTAssertFalse(unknown.reportsAnything)
+    }
+
+    func testOpenAICompatibleRunIsRefusedWhenLMStudioLoadedASmallerContext() async throws {
+        let list = Data(#"{"data":[{"id":"local-chat"}]}"#.utf8)
+        let native = Data(#"{"models":[{"key":"local-chat","max_context_length":32768,"loaded_instances":[{"id":"local-chat","config":{"context_length":4096}}]}]}"#.utf8)
+        let server = try LoopbackHTTPServer { request in
+            switch request.path {
+            case "/v1/models": .json(list)
+            case "/api/v1/models": .json(native)
+            default: .json(Data("{}".utf8))
+            }
+        }
+        defer { server.stop() }
+        var settings = openAISettings(server: server, model: "local-chat")
+        settings.contextWindowTokens = 8_192
+
+        do {
+            _ = try await makeClient().generate(settings: settings, prompt: "Hello", cancellationRequestURL: nil)
+            XCTFail("A context window above the loaded context must be refused.")
+        } catch let error as AgentBridgeError {
+            guard case .invalidInput(let message) = error else { return XCTFail("Unexpected error: \(error)") }
+            XCTAssertTrue(message.contains("4096"), message)
+            XCTAssertTrue(message.contains("8192"), message)
+        }
+        XCTAssertFalse(server.requests.contains { $0.path == "/v1/chat/completions" }, "Nothing is sent to the model.")
+    }
+
+    func testContextSuggestionFollowsTheBackendAndMemory() {
+        let gib: UInt64 = 1_024 * 1_024 * 1_024
+        let lmStudio = LocalModelContextInfo(modelMaximumTokens: 262_144, loadedTokens: 4_096, isLoaded: true)
+        XCTAssertEqual(lmStudio.suggestedContextWindow(backend: .openAICompatible, physicalMemoryBytes: 64 * gib), 4_096)
+        XCTAssertEqual(lmStudio.suggestedContextWindow(backend: .ollama, physicalMemoryBytes: 64 * gib), 65_536)
+
+        let ollama = LocalModelContextInfo(modelMaximumTokens: 32_768, loadedTokens: nil, isLoaded: false)
+        XCTAssertEqual(ollama.suggestedContextWindow(backend: .ollama, physicalMemoryBytes: 8 * gib), 8_192)
+        XCTAssertEqual(ollama.suggestedContextWindow(backend: .ollama, physicalMemoryBytes: 16 * gib), 16_384)
+        XCTAssertEqual(ollama.suggestedContextWindow(backend: .ollama, physicalMemoryBytes: 36 * gib), 32_768)
+        XCTAssertEqual(ollama.suggestedContextWindow(backend: .ollama, physicalMemoryBytes: 128 * gib), 32_768)
+
+        XCTAssertNil(LocalModelContextInfo(modelMaximumTokens: nil, loadedTokens: nil, isLoaded: nil)
+            .suggestedContextWindow(backend: .ollama, physicalMemoryBytes: 64 * gib))
+        XCTAssertNil(LocalModelContextInfo(modelMaximumTokens: 512, loadedTokens: nil, isLoaded: nil)
+            .suggestedContextWindow(backend: .ollama, physicalMemoryBytes: 64 * gib), "Below the App's minimum there is nothing valid to suggest.")
+        XCTAssertEqual(LocalModelContextInfo(modelMaximumTokens: nil, loadedTokens: 200_000, isLoaded: true)
+            .suggestedContextWindow(backend: .openAICompatible, physicalMemoryBytes: 64 * gib), 131_072)
+
+        let settings = LocalModelSettings(contextWindowTokens: 8_192, maxOutputTokens: 2_048)
+        XCTAssertEqual(settings.applyingContextWindow(16_384).maxOutputTokens, 2_048)
+        let lowered = settings.applyingContextWindow(2_048)
+        XCTAssertEqual(lowered.contextWindowTokens, 2_048)
+        XCTAssertEqual(lowered.maxOutputTokens, 512)
+        XCTAssertNoThrow(try lowered.validate())
     }
 
     private func makeClient() -> LocalModelClient {
