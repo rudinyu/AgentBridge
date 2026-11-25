@@ -134,13 +134,17 @@ final class LocalChangePreviewTests: XCTestCase {
         try await Task.sleep(nanoseconds: 150_000_000)
         XCTAssertEqual(runs, [5], "A cancelled refresh never starts.")
 
+        var started = false
         var sawSuperseded = false
         var gateOpen = false
         debouncer.schedule { isCurrent in
+            started = true
             while !gateOpen { try? await Task.sleep(nanoseconds: 5_000_000) }
             sawSuperseded = !isCurrent()
         }
-        try await Task.sleep(nanoseconds: 100_000_000)
+        // Cancel only once the refresh is running; a fixed sleep can cancel it before
+        // the debounce delay ends on a slow machine, and then it never starts.
+        try await waitUntil { started }
         debouncer.cancel()
         gateOpen = true
         try await waitUntil { sawSuperseded }
