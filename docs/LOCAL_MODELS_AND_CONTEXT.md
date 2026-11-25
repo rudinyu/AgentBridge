@@ -1,6 +1,6 @@
 # Local models and readable context compression
 
-[Traditional Chinese](LOCAL_MODELS_AND_CONTEXT.zh-TW.md)
+[Traditional Chinese](LOCAL_MODELS_AND_CONTEXT.zh-TW.md) · [Quick start](LOCAL_MODELS_QUICKSTART.md)
 
 ## Provider boundary
 
