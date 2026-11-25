@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Detect context size** in the Local model settings, and `agentbridge local context [--apply]`, ask the loopback server for the selected model's maximum context and the context it is loaded with, and suggest a context window: for Ollama, which uses the window sent with each request, the model's maximum held to what this Mac's memory can carry; for LM Studio, which keeps the context it loaded the model with, that loaded context. Ollama answers through `/api/show` and `/api/ps`, LM Studio through `/api/v1/models` (or `/api/v0/models/{id}` for the maximum only); other servers report nothing. The suggestion fills the form and is used only after you save; the CLI's `--apply` saves it.
+- Before each OpenAI-compatible Local run, AgentBridge asks LM Studio's `/api/v1/models` for the context the model is loaded with, and refuses the run before anything is sent when the configured context window is larger, naming both numbers. Servers without that API are not checked and cost one extra request.
+- When a Local change selection is over the input budget or the output reserve, the preview suggests splitting the selected files into groups that each fit, with **Select these files** for each group in the App and `--file` options in the CLI, and lists files that cannot fit even on their own. Each group is run separately and needs the plan approved again; nothing is selected or run automatically.
+
 ## 0.19.0 — 2026-11-20
 
 ### Added

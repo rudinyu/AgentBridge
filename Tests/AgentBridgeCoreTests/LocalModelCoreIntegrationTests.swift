@@ -284,8 +284,8 @@ final class LocalModelCoreIntegrationTests: XCTestCase {
         XCTAssertEqual(snapshot.turns[1].assistantText, "Project answer")
 
         let requests = server.requests
-        XCTAssertEqual(requests.map(\.method), ["GET", "POST"])
-        XCTAssertEqual(requests.map(\.path), ["/v1/models", "/v1/chat/completions"])
+        XCTAssertEqual(requests.map(\.method), ["GET", "GET", "POST"])
+        XCTAssertEqual(requests.map(\.path), ["/v1/models", "/api/v1/models", "/v1/chat/completions"])
         XCTAssertFalse(requests.contains { $0.headers["authorization"] != nil })
         let body = try XCTUnwrap(requests.last?.jsonBody)
         let messages = try XCTUnwrap(body["messages"] as? [[String: Any]])

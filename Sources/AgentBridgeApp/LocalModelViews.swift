@@ -42,6 +42,7 @@ struct LocalModelSettingsSection: View {
                 .font(.caption)
                 Text(model.localized("Context window: 1,024–131,072 tokens. Output reserve: 1–32,768 tokens, leaving at least 513 tokens for input and safety margin. Token estimates are approximate."))
                     .font(.caption2).foregroundStyle(.secondary)
+                LocalContextDetectionView(model: model)
 
                 GroupBox(model.localized("Local run limits")) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -245,5 +246,48 @@ struct ContextPreviewSheet: View {
             Text(String(count)).font(.caption.monospacedDigit())
         }
         .font(.caption)
+    }
+}
+
+/// Reads the selected model's context from the local service and offers a
+/// context window that fits it. Nothing is saved until the user saves.
+struct LocalContextDetectionView: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Button(model.localized("Detect context size")) { model.detectLocalModelContext() }
+                    .disabled(model.isDetectingLocalContext || model.settings.localModel.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if model.isDetectingLocalContext { ProgressView().controlSize(.small) }
+                if let suggestion = model.suggestedLocalContextWindow,
+                   suggestion != model.settings.localModel.contextWindowTokens {
+                    Button(model.localizedFormat("Use %@ tokens", String(suggestion))) {
+                        model.applySuggestedLocalContextWindow()
+                    }
+                }
+            }
+            .controlSize(.small)
+            if let info = model.localModelContextInfo {
+                Text(model.localizedFormat(
+                    "Model maximum: %@ · Loaded with: %@",
+                    info.modelMaximumTokens.map(String.init) ?? model.localized("not reported"),
+                    info.loadedTokens.map(String.init) ?? model.localized(info.isLoaded == false ? "not loaded" : "not reported")
+                ))
+                .font(.caption.monospacedDigit())
+                if model.settings.localModel.backend == .openAICompatible,
+                   let loaded = info.loadedTokens,
+                   model.settings.localModel.contextWindowTokens > loaded {
+                    Text(model.localizedFormat("LM Studio loaded this model with %@ tokens of context. Local requests are refused while the context window is larger; lower it, or reload the model in LM Studio with a longer context.", String(loaded)))
+                        .font(.caption2).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Text(model.localized(model.settings.localModel.backend == .ollama
+                ? "Ollama uses this context window for every request. The suggestion is the model's maximum, held to what this Mac's memory can carry."
+                : "LM Studio keeps the context it loaded the model with, so the suggestion matches it. To use more, reload the model in LM Studio with a longer context."))
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }

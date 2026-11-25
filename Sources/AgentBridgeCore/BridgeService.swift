@@ -110,6 +110,12 @@ public final class BridgeService: @unchecked Sendable {
         return try await localModelClient.models(settings: localSettings)
     }
 
+    /// Reads what the local server reports about the selected model's context.
+    public func localModelContextInfo(settings: LocalModelSettings? = nil) async throws -> LocalModelContextInfo {
+        let localSettings = try settings ?? store.loadSettings().localModel
+        return try await localModelClient.contextInfo(settings: localSettings)
+    }
+
     @discardableResult
     public func testLocalModelConnection(settings: LocalModelSettings? = nil) async throws -> Bool {
         let localSettings = try settings ?? store.loadSettings().localModel

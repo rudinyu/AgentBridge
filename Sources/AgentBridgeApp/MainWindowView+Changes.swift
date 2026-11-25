@@ -178,7 +178,7 @@ extension MainWindowView {
                     Text("Approve the current plan and select files to preview the Local input budget.")
                         .font(.caption2).foregroundStyle(.secondary)
                 } else if let preview = model.changes.localChangePreview {
-                    localChangeBudgetLines(preview)
+                    localChangeBudgetLines(preview, canSelectBatch: !model.selectedSessionIsRunning)
                 }
                 TextEditor(text: $model.prompt)
                     .font(.system(.body, design: .rounded))
@@ -202,7 +202,7 @@ extension MainWindowView {
 
     /// Input and output-reserve accounting for a Local run or fix preview.
     @ViewBuilder
-    func localChangeBudgetLines(_ preview: LocalChangeInputPreview) -> some View {
+    func localChangeBudgetLines(_ preview: LocalChangeInputPreview, canSelectBatch: Bool = false) -> some View {
         Text(model.localizedFormat("Input: %@ / %@ bytes", String(preview.totalInputBytes), String(preview.budgetBytes)))
             .font(.caption.monospacedDigit())
         if preview.overBudgetBytes > 0 {
@@ -213,6 +213,33 @@ extension MainWindowView {
             .font(.caption.monospacedDigit())
         if preview.overOutputBudgetBytes > 0 {
             Text(model.localizedFormat("The output reserve is short by %@ bytes for returning the selected files in full. Select fewer or smaller files, or raise the output reserve.", String(preview.overOutputBudgetBytes)))
+                .font(.caption).foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if !preview.suggestedBatches.isEmpty {
+            Text(model.localizedFormat("Suggested split: %@ runs that each fit. Run them one at a time; each run needs the plan approved again.", String(preview.suggestedBatches.count)))
+                .font(.caption.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(Array(preview.suggestedBatches.enumerated()), id: \.offset) { index, batch in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(model.localizedFormat("Run %@:", String(index + 1)))
+                        .font(.caption.monospacedDigit())
+                    Text(batch.joined(separator: ", "))
+                        .font(.system(.caption2, design: .monospaced))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    if canSelectBatch {
+                        Button(model.localized("Select these files")) {
+                            model.changes.selectedLocalPaths = Set(batch)
+                        }
+                        .controlSize(.small)
+                    }
+                }
+            }
+        }
+        if !preview.filesTooLargeAlone.isEmpty {
+            Text(model.localizedFormat("Too large to send even on their own (raise the context window or output reserve, or leave them out): %@", preview.filesTooLargeAlone.joined(separator: ", ")))
                 .font(.caption).foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
         }

@@ -46,6 +46,78 @@ public struct LocalModelSettings: Codable, Equatable, Sendable {
     }
 }
 
+/// What a local server reports about the selected model's context. Each value
+/// is nil when the server does not report it.
+public struct LocalModelContextInfo: Equatable, Sendable {
+    /// The most context the model supports (trained or advertised maximum).
+    public let modelMaximumTokens: Int?
+    /// The context the server loaded the model with. For an OpenAI-compatible
+    /// server such as LM Studio this is the context requests actually get.
+    public let loadedTokens: Int?
+    /// Whether the model is loaded now; nil when the server does not say.
+    public let isLoaded: Bool?
+
+    public init(modelMaximumTokens: Int?, loadedTokens: Int?, isLoaded: Bool?) {
+        self.modelMaximumTokens = modelMaximumTokens
+        self.loadedTokens = loadedTokens
+        self.isLoaded = isLoaded
+    }
+
+    public var reportsAnything: Bool { modelMaximumTokens != nil || loadedTokens != nil }
+
+    /// The largest context the App accepts.
+    public static let settingsRange = 1_024...131_072
+
+    /// A context window that fits this Mac's memory. Larger contexts need more
+    /// memory for the model's cache, so the suggestion stays modest unless the
+    /// Mac has room for more.
+    public static func memoryCap(physicalMemoryBytes: UInt64) -> Int {
+        let gibibytes = physicalMemoryBytes / (1_024 * 1_024 * 1_024)
+        switch gibibytes {
+        case ..<12: return 8_192
+        case ..<24: return 16_384
+        case ..<48: return 32_768
+        default: return 65_536
+        }
+    }
+
+    /// The context window to suggest, or nil when nothing was reported.
+    ///
+    /// An OpenAI-compatible server keeps the context it loaded the model with,
+    /// so a loaded value is suggested as it is. Ollama applies the context sent
+    /// with each request, so the suggestion is the model's maximum, held to what
+    /// this Mac's memory can carry.
+    public func suggestedContextWindow(backend: LocalModelBackend, physicalMemoryBytes: UInt64) -> Int? {
+        let cap = Self.memoryCap(physicalMemoryBytes: physicalMemoryBytes)
+        let value: Int
+        if backend == .openAICompatible, let loadedTokens {
+            value = loadedTokens
+        } else if let modelMaximumTokens {
+            value = min(modelMaximumTokens, cap)
+        } else if let loadedTokens {
+            value = min(loadedTokens, cap)
+        } else {
+            return nil
+        }
+        guard value >= Self.settingsRange.lowerBound else { return nil }
+        return min(value, Self.settingsRange.upperBound)
+    }
+}
+
+extension LocalModelSettings {
+    /// These settings with `contextWindow` applied. The output reserve is
+    /// lowered to a quarter of the window when it would otherwise leave no room
+    /// for input, so the result stays valid.
+    public func applyingContextWindow(_ contextWindow: Int) -> LocalModelSettings {
+        var copy = self
+        copy.contextWindowTokens = contextWindow
+        if contextWindow - copy.maxOutputTokens <= 512 {
+            copy.maxOutputTokens = max(1, min(32_768, contextWindow / 4))
+        }
+        return copy
+    }
+}
+
 public struct LocalModelDescriptor: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let name: String
