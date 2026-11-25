@@ -12,6 +12,7 @@ Start with **New Chat** to discuss an idea without a Git repository. When ready,
 
 ## Documentation
 
+- [Local models quick start: Ollama and LM Studio](docs/LOCAL_MODELS_QUICKSTART.md) · [繁體中文](docs/LOCAL_MODELS_QUICKSTART.zh-TW.md)
 - [Local Models and Readable Context Compression](docs/LOCAL_MODELS_AND_CONTEXT.md) · [繁體中文](docs/LOCAL_MODELS_AND_CONTEXT.zh-TW.md)
 - [Architecture and Design](ARCHITECTURE.md) · [繁體中文](ARCHITECTURE.zh-TW.md)
 - [Chat-first Workflow](docs/CHAT_FIRST_WORKFLOW.md) · [繁體中文](docs/CHAT_FIRST_WORKFLOW.zh-TW.md)

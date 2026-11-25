@@ -12,6 +12,7 @@ AgentBridge 預設沿用官方 CLI 的訂閱登入。Codex 固定使用訂閱登
 
 ## 文件
 
+- [本機模型快速上手：Ollama 與 LM Studio](docs/LOCAL_MODELS_QUICKSTART.zh-TW.md) · [English](docs/LOCAL_MODELS_QUICKSTART.md)
 - [本機模型與可讀上下文壓縮](docs/LOCAL_MODELS_AND_CONTEXT.zh-TW.md) · [English](docs/LOCAL_MODELS_AND_CONTEXT.md)
 - [架構與設計](ARCHITECTURE.zh-TW.md)
 - [先聊天流程](docs/CHAT_FIRST_WORKFLOW.zh-TW.md) · [English](docs/CHAT_FIRST_WORKFLOW.md)

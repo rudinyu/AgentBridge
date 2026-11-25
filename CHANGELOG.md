@@ -8,6 +8,10 @@
 - Before each OpenAI-compatible Local run, AgentBridge asks LM Studio's `/api/v1/models` for the context the model is loaded with, and refuses the run before anything is sent when the configured context window is larger, naming both numbers. Servers without that API are not checked and cost one extra request.
 - When a Local change selection is over the input budget or the output reserve, the preview suggests splitting the selected files into groups that each fit, with **Select these files** for each group in the App and `--file` options in the CLI, and lists files that cannot fit even on their own. Each group is run separately and needs the plan approved again; nothing is selected or run automatically.
 
+### Documentation
+
+- New [Local models quick start](docs/LOCAL_MODELS_QUICKSTART.md) (English and Traditional Chinese): connecting Ollama and LM Studio in the App and the CLI, setting the context size, what Local can and cannot do, and troubleshooting. It is linked from both READMEs and the full local-model guides.
+
 ## 0.19.0 — 2026-11-20
 
 ### Added

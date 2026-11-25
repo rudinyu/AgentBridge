@@ -1,6 +1,6 @@
 # 本機模型與可讀的上下文壓縮
 
-[English](LOCAL_MODELS_AND_CONTEXT.md)
+[English](LOCAL_MODELS_AND_CONTEXT.md) · [快速上手](LOCAL_MODELS_QUICKSTART.zh-TW.md)
 
 ## 供應商邊界
 
