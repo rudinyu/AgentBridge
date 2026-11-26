@@ -575,7 +575,15 @@ public final class LocalModelClient: @unchecked Sendable {
         throw CancellationError()
     }
 
-    private static func chatRequest(settings: LocalModelSettings, prompt: String) throws -> URLRequest {
+    /// Ollama's `keep_alive` for these minutes: a duration such as "30m", -1 to
+    /// keep the model loaded until Ollama stops, or nil to send nothing and
+    /// leave Ollama's default.
+    static func ollamaKeepAlive(_ minutes: Int?) -> Any? {
+        guard let minutes, LocalModelSettings.isValidKeepAlive(minutes) else { return nil }
+        return minutes == LocalModelSettings.keepLoadedUntilStopped ? -1 : "\(minutes)m"
+    }
+
+    static func chatRequest(settings: LocalModelSettings, prompt: String) throws -> URLRequest {
         let url = try endpointURL(
             settings: settings,
             suffix: settings.backend == .ollama ? "/api/chat" : "/v1/chat/completions"
@@ -584,7 +592,7 @@ public final class LocalModelClient: @unchecked Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let body: [String: Any]
+        var body: [String: Any]
         switch settings.backend {
         case .ollama:
             body = [
@@ -593,6 +601,9 @@ public final class LocalModelClient: @unchecked Sendable {
                 "stream": true,
                 "options": ["num_ctx": settings.contextWindowTokens, "num_predict": settings.maxOutputTokens]
             ]
+            if let keepAlive = ollamaKeepAlive(settings.keepAliveMinutes) {
+                body["keep_alive"] = keepAlive
+            }
         case .openAICompatible:
             body = [
                 "model": settings.model,

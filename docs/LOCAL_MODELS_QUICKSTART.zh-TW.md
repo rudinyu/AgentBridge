@@ -30,6 +30,8 @@ Ollama 最容易設定，AgentBridge 有引導流程。
 
 Ollama 每次要求都會使用 AgentBridge 送出的上下文長度。因此建議值是模型的最大上下文，再依記憶體壓低：少於 12 GB 為 8k、少於 24 GB 為 16k、少於 48 GB 為 32k，以上為 64k tokens。
 
+Ollama 預設在閒置 5 分鐘後卸載模型。如果常隔一段時間才使用，可以設定「**保持模型載入**」（例如 1 小時），回應會比較快，但模型閒置時仍占用記憶體。CLI 是在 `agentbridge local configure` 加上 `--keep-alive MINUTES|forever|default`。
+
 ### 使用 CLI
 
 ```sh

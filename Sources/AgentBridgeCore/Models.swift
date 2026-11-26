@@ -20,19 +20,40 @@ public struct LocalModelSettings: Codable, Equatable, Sendable {
     public var model: String
     public var contextWindowTokens: Int
     public var maxOutputTokens: Int
+    /// How long Ollama keeps the model loaded after a request, in minutes:
+    /// nil leaves Ollama's own default (5 minutes), and
+    /// `keepLoadedUntilStopped` keeps it loaded until Ollama stops or unloads it.
+    /// A model that stays loaded keeps its cache, so the next request starts
+    /// sooner, but it holds its memory while idle. OpenAI-compatible servers
+    /// manage this themselves and are sent nothing.
+    public var keepAliveMinutes: Int?
+
+    /// `keepAliveMinutes` value that keeps the model loaded until Ollama stops.
+    public static let keepLoadedUntilStopped = -1
+    /// The longest timed keep-alive, one week.
+    public static let keepAliveMinutesRange = 1...10_080
 
     public init(
         backend: LocalModelBackend = .ollama,
         endpoint: String = "http://127.0.0.1:11434",
         model: String = "",
         contextWindowTokens: Int = 8_192,
-        maxOutputTokens: Int = 1_024
+        maxOutputTokens: Int = 1_024,
+        keepAliveMinutes: Int? = nil
     ) {
         self.backend = backend
         self.endpoint = endpoint
         self.model = model
         self.contextWindowTokens = contextWindowTokens
         self.maxOutputTokens = maxOutputTokens
+        self.keepAliveMinutes = keepAliveMinutes
+    }
+
+    /// Whether `keepAliveMinutes` is unset, `keepLoadedUntilStopped`, or a
+    /// whole number of minutes in `keepAliveMinutesRange`.
+    public static func isValidKeepAlive(_ minutes: Int?) -> Bool {
+        guard let minutes else { return true }
+        return minutes == keepLoadedUntilStopped || keepAliveMinutesRange.contains(minutes)
     }
 
     public func validate() throws {
@@ -40,7 +61,8 @@ public struct LocalModelSettings: Codable, Equatable, Sendable {
               model.utf8.count <= 256, !model.contains("\0"),
               (1_024...131_072).contains(contextWindowTokens),
               (1...32_768).contains(maxOutputTokens),
-              contextWindowTokens - maxOutputTokens > 512 else {
+              contextWindowTokens - maxOutputTokens > 512,
+              Self.isValidKeepAlive(keepAliveMinutes) else {
             throw AgentBridgeError.invalidInput("Local model settings are invalid. Check the endpoint, model name, context window, and output limit.")
         }
     }

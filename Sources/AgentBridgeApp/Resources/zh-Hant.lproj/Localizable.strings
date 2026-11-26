@@ -2191,3 +2191,10 @@
 "LM Studio loaded the model with a context length of %@ tokens, below the configured %@ tokens. Lower the Local context window to %@ tokens or less, or reload the model in LM Studio with a longer context length." = "LM Studio 以 %@ tokens 的上下文長度載入模型，小於設定的 %@ tokens。請把 Local 上下文視窗調低到 %@ tokens 以下，或在 LM Studio 以更長的上下文重新載入模型。";
 "The selected model supports at most %@ tokens of context, below the configured %@ tokens; lower the Local context window and try again." = "所選模型最多支援 %@ tokens 的上下文，小於設定的 %@ tokens；請調低 Local 上下文視窗後再試。";
 "The Ollama model details format is invalid." = "Ollama 模型詳細資料格式無效。";
+"Keep model loaded" = "保持模型載入";
+"A loaded model answers sooner and keeps its prompt cache, but holds its memory while idle. Sent to Ollama with each request." = "模型保持載入時回應較快，也會保留提示快取，但閒置時仍占用記憶體。每次要求都會送給 Ollama。";
+"Ollama default (5 minutes)" = "Ollama 預設（5 分鐘）";
+"Until Ollama stops" = "直到 Ollama 停止";
+"%d hour(s) after each request" = "每次要求後 %d 小時";
+"%d minute(s) after each request" = "每次要求後 %d 分鐘";
+"Keep model loaded must be 1–10,080 minutes, until Ollama stops, or Ollama's default." = "保持模型載入必須是 1–10,080 分鐘、直到 Ollama 停止，或 Ollama 預設值。";

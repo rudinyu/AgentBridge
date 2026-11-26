@@ -47,6 +47,10 @@ Each model supports a maximum context, and the server may load it with less. **D
 
 Before each OpenAI-compatible run, AgentBridge also asks LM Studio's `/api/v1/models` for the loaded context. When the configured context window is larger than the context LM Studio loaded the model with, the run is refused before anything is sent, and the message gives both numbers. A server without that API costs one extra request per run and is not checked.
 
+### Keeping the model loaded
+
+Ollama unloads a model 5 minutes after its last request by default, and the next request loads it again and rebuilds its prompt cache. **Keep model loaded** in the Local model settings (shown for the Ollama backend), or `agentbridge local configure ... --keep-alive MINUTES|forever|default`, sends Ollama's `keep_alive` with each chat request: a number of minutes (1–10,080), until Ollama stops, or nothing so Ollama's default applies. A model that stays loaded answers sooner, but holds its memory while idle. It is saved with the other Local settings. OpenAI-compatible servers such as LM Studio manage this themselves (in LM Studio, the model's idle TTL setting) and are sent nothing.
+
 ## Local patch mode
 
 Local isolated changes work with either subscription or Claude API usage mode. Create a project session with **Isolated changes** access; Local does not offer a native interactive terminal. The first **Draft plan** request sends the user request and the workspace's candidate path list, not file contents. Review and save that plan, then explicitly approve it before running. Local change runs do not include shared memory.

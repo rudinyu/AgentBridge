@@ -47,6 +47,10 @@ agentbridge chat send CHAT-ID < prompt.txt
 
 每次 OpenAI 相容的執行前，AgentBridge 也會向 LM Studio 的 `/api/v1/models` 查詢載入的上下文。設定的上下文視窗大於 LM Studio 載入模型時的上下文時，會在送出任何內容前拒絕執行，訊息會列出兩個數字。沒有這個 API 的服務每次執行多一個要求，不做這項檢查。
 
+### 保持模型載入
+
+Ollama 預設在最後一次要求 5 分鐘後卸載模型，下次要求時要重新載入並重建提示快取。Local 模型設定中的「**保持模型載入**」（後端為 Ollama 時顯示），或 `agentbridge local configure ... --keep-alive MINUTES|forever|default`，會在每次聊天要求中送出 Ollama 的 `keep_alive`：指定分鐘數（1–10,080）、直到 Ollama 停止，或不送出而沿用 Ollama 預設值。模型保持載入時回應較快，但閒置時仍占用記憶體。這個設定與其他 Local 設定一起保存。LM Studio 等 OpenAI 相容服務自行管理這件事（LM Studio 是模型的閒置 TTL 設定），AgentBridge 不會送出任何值。
+
 ## Local 隔離變更
 
 Local 隔離變更可在訂閱或 Claude API 用量模式下使用。建立專案工作階段時選擇「隔離變更」；Local 不提供原生互動終端。第一次「草擬計畫」只會傳送使用者需求與工作區候選路徑清單，不會傳送檔案內容。檢視並保存計畫後，還要明確核准才能執行。Local 變更執行不包含共享記憶。

@@ -651,6 +651,47 @@ final class LocalModelClientTests: XCTestCase {
         })
     }
 
+    func testKeepAliveIsSentToOllamaOnlyWhenSet() throws {
+        func body(_ settings: LocalModelSettings) throws -> [String: Any] {
+            let request = try LocalModelClient.chatRequest(settings: settings, prompt: "Hello")
+            let data = try XCTUnwrap(request.httpBody)
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+        var settings = LocalModelSettings(backend: .ollama, endpoint: "http://127.0.0.1:11434", model: "qwen2.5:7b")
+        XCTAssertNil(try body(settings)["keep_alive"], "Without a setting, Ollama's own default applies.")
+
+        settings.keepAliveMinutes = 30
+        XCTAssertEqual(try body(settings)["keep_alive"] as? String, "30m")
+
+        settings.keepAliveMinutes = LocalModelSettings.keepLoadedUntilStopped
+        XCTAssertEqual(try body(settings)["keep_alive"] as? Int, -1)
+
+        settings.backend = .openAICompatible
+        settings.endpoint = "http://127.0.0.1:1234/v1"
+        XCTAssertNil(try body(settings)["keep_alive"], "OpenAI-compatible servers are sent nothing.")
+    }
+
+    func testKeepAliveValidationAndOlderSavedSettings() throws {
+        var settings = LocalModelSettings()
+        for valid in [nil, 1, 30, 10_080, LocalModelSettings.keepLoadedUntilStopped] {
+            settings.keepAliveMinutes = valid
+            XCTAssertNoThrow(try settings.validate(), "\(String(describing: valid))")
+        }
+        for invalid in [0, -2, 10_081] {
+            settings.keepAliveMinutes = invalid
+            XCTAssertThrowsError(try settings.validate(), "\(invalid)")
+            XCTAssertNil(LocalModelClient.ollamaKeepAlive(invalid))
+        }
+
+        let saved = Data(#"{"backend":"ollama","endpoint":"http://127.0.0.1:11434","model":"m","contextWindowTokens":8192,"maxOutputTokens":1024}"#.utf8)
+        let decoded = try JSONDecoder().decode(LocalModelSettings.self, from: saved)
+        XCTAssertNil(decoded.keepAliveMinutes, "Settings saved before this option keep Ollama's default.")
+
+        settings.keepAliveMinutes = 240
+        let roundTrip = try JSONDecoder().decode(LocalModelSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(roundTrip.keepAliveMinutes, 240)
+    }
+
     private func ollamaSettings(server: LoopbackHTTPServer, model: String) -> LocalModelSettings {
         LocalModelSettings(backend: .ollama, endpoint: "http://127.0.0.1:\(server.port)", model: model)
     }

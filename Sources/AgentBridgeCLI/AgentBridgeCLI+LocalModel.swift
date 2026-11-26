@@ -23,6 +23,7 @@ extension AgentBridgeCLI {
             print("Model: \(local.model.isEmpty ? "not set" : local.model)")
             print("Context window: \(local.contextWindowTokens) tokens")
             print("Output reserve: \(local.maxOutputTokens) tokens")
+            print("Keep loaded: \(localKeepAliveDescription(local))")
         case "configure":
             try await localModelConfigure(arguments, service: service)
         case "models":
@@ -103,9 +104,18 @@ extension AgentBridgeCLI {
         }
     }
 
+    static func localKeepAliveDescription(_ settings: LocalModelSettings) -> String {
+        guard settings.backend == .ollama else { return "managed by the server" }
+        switch settings.keepAliveMinutes {
+        case nil: return "Ollama default (5 minutes)"
+        case LocalModelSettings.keepLoadedUntilStopped?: return "until Ollama stops"
+        case let minutes?: return "\(minutes) minutes after each request"
+        }
+    }
+
     static func localModelConfigure(_ arguments: [String], service: BridgeService) async throws {
         guard arguments.count > 1 else {
-            throw AgentBridgeError.invalidInput("Usage: agentbridge local configure --backend ollama|openai-compatible --endpoint URL --model NAME [--context-window TOKENS] [--max-output TOKENS]")
+            throw AgentBridgeError.invalidInput("Usage: agentbridge local configure --backend ollama|openai-compatible --endpoint URL --model NAME [--context-window TOKENS] [--max-output TOKENS] [--keep-alive MINUTES|forever|default]")
         }
         let bridgeSettings = try service.settings()
         var local = bridgeSettings.localModel
@@ -141,6 +151,19 @@ extension AgentBridgeCLI {
                     throw AgentBridgeError.invalidInput("--max-output must be a positive token count.")
                 }
                 local.maxOutputTokens = parsed
+            case "--keep-alive":
+                let value = try nextOptionValue(option, arguments: arguments, index: &index)
+                switch value {
+                case "default":
+                    local.keepAliveMinutes = nil
+                case "forever":
+                    local.keepAliveMinutes = LocalModelSettings.keepLoadedUntilStopped
+                default:
+                    guard let parsed = Int(value), LocalModelSettings.keepAliveMinutesRange.contains(parsed) else {
+                        throw AgentBridgeError.invalidInput("--keep-alive must be a number of minutes from 1 to 10080, forever, or default.")
+                    }
+                    local.keepAliveMinutes = parsed
+                }
             case "--api-key", "--api-key-env":
                 throw AgentBridgeError.invalidInput("Local models do not use API keys. This option is unsupported.")
             default:
@@ -153,6 +176,9 @@ extension AgentBridgeCLI {
             throw AgentBridgeError.invalidInput("The context window must be 1,024–131,072 tokens, the output reserve must be 1–32,768 tokens, and at least 513 tokens must remain beyond the output reserve for input and a safety margin.")
         }
         try service.updateSettings { $0.localModel = local }
+        if local.keepAliveMinutes != nil, local.backend != .ollama {
+            print("Note: the keep-loaded time is sent to Ollama only; OpenAI-compatible servers such as LM Studio manage it themselves.")
+        }
         print("Saved the local model settings. AgentBridge never starts a service, downloads a model or switches to a cloud service on its own.")
         print("Run `agentbridge local test` to test the connection explicitly, or `agentbridge local models` to refresh the model list.")
     }

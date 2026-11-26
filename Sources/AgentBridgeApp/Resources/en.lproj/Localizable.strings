@@ -2191,3 +2191,10 @@
 "LM Studio loaded the model with a context length of %@ tokens, below the configured %@ tokens. Lower the Local context window to %@ tokens or less, or reload the model in LM Studio with a longer context length." = "LM Studio loaded the model with a context length of %@ tokens, below the configured %@ tokens. Lower the Local context window to %@ tokens or less, or reload the model in LM Studio with a longer context length.";
 "The selected model supports at most %@ tokens of context, below the configured %@ tokens; lower the Local context window and try again." = "The selected model supports at most %@ tokens of context, below the configured %@ tokens; lower the Local context window and try again.";
 "The Ollama model details format is invalid." = "The Ollama model details format is invalid.";
+"Keep model loaded" = "Keep model loaded";
+"A loaded model answers sooner and keeps its prompt cache, but holds its memory while idle. Sent to Ollama with each request." = "A loaded model answers sooner and keeps its prompt cache, but holds its memory while idle. Sent to Ollama with each request.";
+"Ollama default (5 minutes)" = "Ollama default (5 minutes)";
+"Until Ollama stops" = "Until Ollama stops";
+"%d hour(s) after each request" = "%d hour(s) after each request";
+"%d minute(s) after each request" = "%d minute(s) after each request";
+"Keep model loaded must be 1–10,080 minutes, until Ollama stops, or Ollama's default." = "Keep model loaded must be 1–10,080 minutes, until Ollama stops, or Ollama's default.";
