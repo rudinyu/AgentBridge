@@ -30,6 +30,8 @@ Ollama is the easiest to set up, and AgentBridge has a guided flow for it.
 
 Ollama uses the context length AgentBridge sends with each request. The suggestion is therefore the model's maximum context, capped by memory: 8k under 12 GB, 16k under 24 GB, 32k under 48 GB, and 64k tokens above that.
 
+Ollama unloads an idle model after 5 minutes by default. If you come back to it often, set **Keep model loaded** (for example 1 hour) so it answers sooner; the model then holds its memory while idle. CLI: `--keep-alive MINUTES|forever|default` with `agentbridge local configure`.
+
 ### With the CLI
 
 ```sh

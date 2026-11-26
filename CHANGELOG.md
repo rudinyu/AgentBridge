@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Keep model loaded** in the Local model settings (Ollama backend), and `agentbridge local configure --keep-alive MINUTES|forever|default`, send Ollama's `keep_alive` with each chat request so the model and its prompt cache stay loaded between requests: a number of minutes (1–10,080), until Ollama stops, or Ollama's own 5-minute default when unset. A loaded model holds its memory while idle. OpenAI-compatible servers are sent nothing. Settings saved before this keep Ollama's default.
+
 ## 0.20.0 — 2026-11-25
 
 ### Added

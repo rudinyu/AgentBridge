@@ -43,6 +43,9 @@ struct LocalModelSettingsSection: View {
                 Text(model.localized("Context window: 1,024–131,072 tokens. Output reserve: 1–32,768 tokens, leaving at least 513 tokens for input and safety margin. Token estimates are approximate."))
                     .font(.caption2).foregroundStyle(.secondary)
                 LocalContextDetectionView(model: model)
+                if localSettings.backend == .ollama {
+                    LocalKeepAlivePicker(model: model)
+                }
 
                 GroupBox(model.localized("Local run limits")) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -288,6 +291,45 @@ struct LocalContextDetectionView: View {
                 : "LM Studio keeps the context it loaded the model with, so the suggestion matches it. To use more, reload the model in LM Studio with a longer context."))
                 .font(.caption2).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// How long Ollama keeps the model loaded after each request. Saved with the
+/// other Local model settings.
+struct LocalKeepAlivePicker: View {
+    @Bindable var model: AppModel
+
+    private static let presets: [Int?] = [nil, 30, 60, 240, 1_440, LocalModelSettings.keepLoadedUntilStopped]
+
+    private var choices: [Int?] {
+        let current = model.settings.localModel.keepAliveMinutes
+        return Self.presets.contains(current) ? Self.presets : Self.presets + [current]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Picker(model.localized("Keep model loaded"), selection: $model.settings.localModel.keepAliveMinutes) {
+                ForEach(choices, id: \.self) { minutes in
+                    Text(label(minutes)).tag(minutes)
+                }
+            }
+            .pickerStyle(.menu)
+            Text(model.localized("A loaded model answers sooner and keeps its prompt cache, but holds its memory while idle. Sent to Ollama with each request."))
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func label(_ minutes: Int?) -> String {
+        switch minutes {
+        case nil:
+            return model.localized("Ollama default (5 minutes)")
+        case LocalModelSettings.keepLoadedUntilStopped?:
+            return model.localized("Until Ollama stops")
+        case let minutes? where minutes % 60 == 0:
+            return model.localizedFormat("%d hour(s) after each request", minutes / 60)
+        case let minutes?:
+            return model.localizedFormat("%d minute(s) after each request", minutes)
         }
     }
 }

@@ -733,6 +733,10 @@ final class AppModel {
             localModelError = localized("Context window must be 1,024–131,072 tokens and leave at least 513 tokens after the output reserve. Output reserve must be 1–32,768 tokens.")
             return
         }
+        guard LocalModelSettings.isValidKeepAlive(settings.localModel.keepAliveMinutes) else {
+            localModelError = localized("Keep model loaded must be 1–10,080 minutes, until Ollama stops, or Ollama's default.")
+            return
+        }
         do {
             let previousSavedLocalModel = savedLocalModelSettings
             let draft = settings.localModel
